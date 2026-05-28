@@ -1,0 +1,6 @@
+{
+  "name": "Planless",
+  "description": "An interactive task manager and social productivity planner with simulated mobile viewports & AI assistant capabilities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

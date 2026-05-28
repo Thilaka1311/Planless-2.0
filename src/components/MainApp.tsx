@@ -1,0 +1,10538 @@
+import React, { useState, useRef } from "react";
+import {
+  Home, Calendar, Plus, Users, Wallet, Bell, MapPin,
+  Clock, Check, CircleAlert, Landmark, DollarSign,
+  Send, UserPlus, LogOut, CheckCircle, Smartphone, Share2,
+  ArrowLeft, Film, Trophy, Utensils, Sparkles, ChevronRight,
+  Database, Camera, FileCode, Search, Settings, CreditCard,
+  Shield, HelpCircle, ChevronLeft, User as UserIcon
+} from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  UserProfile, Plan, Circle, NotificationItem, Transaction,
+  User, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory
+} from "../core/types";
+import {
+  initialPlans, initialCircles, initialNotifications, initialTransactions, getInitialsAvatar,
+  initialUsers, initialCircleMembers, initialPlanParticipants, initialMemories,
+  mapPlansToLegacyPlans, mapCirclesToLegacyCircles, mapTransactionsToLegacy
+} from "../demo/seedData";
+import { usePlansStore } from "../features/plans/state/PlansContext";
+
+import { SportsIcon, MoviesIcon, FoodIcon } from "../shared/components/Icons";
+
+interface PlanReelCardProps {
+  key?: any;
+  plan: Plan;
+  userProfile: UserProfile;
+  interestedPlanIds: string[];
+  setSelectedPlan: (plan: Plan | null) => void;
+  setPaymentConfirmationPlan: (plan: Plan | null) => void;
+  walletBalance: number;
+  handleToggleJoin: (plan: Plan) => void;
+  setShowPaymentSuccess: (plan: Plan | null) => void;
+  setShowWaitlistSuccess?: (plan: Plan | null) => void;
+  setNotifications: React.Dispatch<React.SetStateAction<any[]>>;
+  triggerToast: (msg: string) => void;
+  activeCardId: string | null;
+  onSelectCard: (planId: string) => void;
+  handleSnoozePlan: (planId: string) => void;
+  waitlistPlan?: (planId: string, userProfile: any) => void;
+}
+
+const PlanReelCard = ({
+  plan,
+  userProfile,
+  interestedPlanIds,
+  setSelectedPlan,
+  setPaymentConfirmationPlan,
+  walletBalance,
+  handleToggleJoin,
+  setShowPaymentSuccess,
+  setShowWaitlistSuccess,
+  setNotifications,
+  triggerToast,
+  activeCardId,
+  onSelectCard,
+  handleSnoozePlan,
+  waitlistPlan
+}: PlanReelCardProps) => {
+  const HOLD_DURATION = 1400; // ms
+  const [holdProgress, setHoldProgress] = useState(0); // 0 to 100
+  const [isHolding, setIsHolding] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMode, setSuccessMode] = useState<"join" | "waitlist">("join");
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Touch / Pointer gesture variables for vertical drag-down (Snooze = Revisit later)
+  const startYRef = useRef<number>(0);
+  const [dragY, setDragY] = useState<number>(0);
+  const isDraggingRef = useRef<boolean>(false);
+
+  // Dynamic layout metrics that auto-scale font-size and spacing based on title length
+  const getDynamicTitleStyle = (text: string) => {
+    const len = text.length;
+    let fontSize = "clamp(2rem, 9.5vw, 3rem)";
+    let letterSpacing = "-0.02em";
+    let lineHeight = "0.95";
+
+    if (len <= 6) {
+      fontSize = "clamp(2.25rem, 10vw, 3rem)";
+      letterSpacing = "-0.03em";
+      lineHeight = "0.95";
+    } else if (len <= 10) {
+      fontSize = "clamp(1.95rem, 8.5vw, 2.6rem)";
+      letterSpacing = "-0.025em";
+      lineHeight = "0.95";
+    } else if (len <= 14) {
+      fontSize = "clamp(1.65rem, 7.5vw, 2.2rem)";
+      letterSpacing = "-0.02em";
+      lineHeight = "0.95";
+    } else if (len <= 18) {
+      fontSize = "clamp(1.45rem, 6.5vw, 1.9rem)";
+      letterSpacing = "-0.015em";
+      lineHeight = "1.0";
+    } else {
+      fontSize = "clamp(1.25rem, 5.5vw, 1.6rem)";
+      letterSpacing = "-0.01em";
+      lineHeight = "1.05";
+    }
+
+    return {
+      fontSize,
+      letterSpacing,
+      lineHeight,
+    };
+  };
+
+  const holdStartTimeRef = useRef<number>(0);
+  const progressRef = useRef<number>(0);
+  const animationFrameRef = useRef<number | null>(null);
+  const isHoldTriggeredRef = useRef<boolean>(false);
+
+  // References to support clean separation of tap vs. hold-to-join with a delay threshold
+  const holdDelayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerDownTimeRef = useRef<number>(0);
+  const hasHoldStartedRef = useRef<boolean>(false);
+
+  const isJoined = plan.joinedUsers.some(u => {
+    if (u.joinState === "waitlist") return false;
+    const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
+    const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
+    return cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU);
+  });
+
+  const isWaitlisted = plan.joinedUsers.some(u => {
+    if (u.joinState !== "waitlist") return false;
+    const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
+    const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
+    return cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU);
+  });
+
+  // Consistently format date and times in "SAT, 25 MAY • 8:00" style
+  const getFormattedDateAndTime = () => {
+    const rawDate = (plan.date || "TODAY").trim().toUpperCase();
+    const rawTime = (plan.time || "8:30 PM").trim().toUpperCase();
+
+    // Remove any redundant characters/prefixes
+    let cleanTime = rawTime.replace(/⏰/g, "").replace(/TODAY\s*•\s*/g, "").trim();
+
+    if (rawDate === "TODAY") {
+      return `TUE, 26 MAY • ${cleanTime}`;
+    }
+    if (rawDate === "TOMORROW") {
+      return `WED, 27 MAY • ${cleanTime}`;
+    }
+    if (rawDate === "FRI" || rawDate === "FRIDAY") {
+      return `FRI, 29 MAY • ${cleanTime}`;
+    }
+    if (rawDate === "SAT" || rawDate === "SATURDAY") {
+      return `SAT, 30 MAY • ${cleanTime}`;
+    }
+    if (rawDate === "SUN" || rawDate === "SUNDAY") {
+      return `SUN, 31 MAY • ${cleanTime}`;
+    }
+    if (rawDate === "THU" || rawDate === "THURSDAY") {
+      return `THU, 28 MAY • ${cleanTime}`;
+    }
+
+    // Handle existing formats such as "Sat, 25 May" -> uppercase and keep it
+    if (rawDate.includes(",")) {
+      return `${rawDate} • ${cleanTime}`;
+    }
+
+    return `${rawDate} • ${cleanTime}`;
+  };
+
+  // Dynamic presence list groups for live momentum synchronization
+  // Refined participant state system for cinematic social alignment
+  const getParticipantStatusList = () => {
+    const host = {
+      name: plan.creatorName || "Raghavan",
+      avatar: plan.creatorAvatar || getInitialsAvatar(plan.creatorName || "Raghavan"),
+      status: "Going",
+      isHost: true
+    };
+
+    const allGoing = [
+      host,
+      ...plan.joinedUsers
+        .filter(u => u.name !== host.name)
+        .map(u => ({
+          name: u.name,
+          avatar: u.avatar || getInitialsAvatar(u.name),
+          status: "Going",
+          isHost: false
+        }))
+    ];
+
+    if (allGoing.length === 1) {
+      allGoing.push(
+        { name: "Medhaj", avatar: getInitialsAvatar("Medhaj"), status: "Going", isHost: false },
+        { name: "Rahul", avatar: getInitialsAvatar("Rahul"), status: "Going", isHost: false }
+      );
+    }
+
+    const going = allGoing.slice(0, maxSpots);
+    const overflowToWaitlist = allGoing.slice(maxSpots).map(u => ({
+      name: u.name,
+      avatar: u.avatar,
+      status: "Waitlist"
+    }));
+
+    const waitlist = [
+      ...overflowToWaitlist,
+      ...(plan.waitlistUsers || []),
+      ...(plan.interestedUsers || [])
+    ].map(u => ({
+      name: u.name,
+      avatar: u.avatar || getInitialsAvatar(u.name),
+      status: "Waitlist"
+    }));
+
+    if (waitlist.length === 0 && (plan.category === "sports" || plan.title.toLowerCase().includes("football"))) {
+      if (going.length >= maxSpots) {
+        waitlist.push({
+          name: "Raghavan",
+          avatar: getInitialsAvatar("Raghavan"),
+          status: "Waitlist"
+        });
+      }
+    }
+
+    const deliveredNames = ["Sudeshna", "Ravi"].filter(
+      n => n !== host.name && !going.some(g => g.name === n) && !waitlist.some(w => w.name === n)
+    );
+    const delivered = deliveredNames.map(name => ({
+      name,
+      avatar: getInitialsAvatar(name),
+      status: "Delivered"
+    }));
+
+    const seenNames = ["Guhan", "Neelesh"].filter(
+      n => n !== host.name && !going.some(g => g.name === n) && !waitlist.some(w => w.name === n)
+    );
+    const seen = seenNames.map(name => ({
+      name,
+      avatar: getInitialsAvatar(name),
+      status: "Seen"
+    }));
+
+    const skippedNames = ["Pratyush", "Renjith"].filter(
+      n => n !== host.name &&
+        !going.some(g => g.name === n) &&
+        !waitlist.some(w => w.name === n) &&
+        !deliveredNames.includes(n) &&
+        !seenNames.includes(n)
+    );
+    const skipped = skippedNames.map(name => ({
+      name,
+      avatar: getInitialsAvatar(name),
+      status: "Skipped"
+    }));
+
+    return { going, waitlist, delivered, seen, skipped };
+  };
+
+  // Map titles to direct bold display activity names exactly matching Figma layout
+  let displayActivityName = plan.title;
+  if (plan.title.toLowerCase().includes("football") || plan.title.toLowerCase().includes("turf") || plan.title.toLowerCase().includes("matchday")) {
+    displayActivityName = "Football Tonight";
+  } else if (plan.title.toLowerCase().includes("drive") || plan.title.toLowerCase().includes("sunset")) {
+    displayActivityName = "Sunset Drive";
+  } else if (plan.title.toLowerCase().includes("waffles") || plan.title.toLowerCase().includes("cafe")) {
+    displayActivityName = "Waffle Time";
+  } else if (plan.title.toLowerCase().includes("movie") || plan.title.toLowerCase().includes("screening")) {
+    displayActivityName = "Luxe IMAX";
+  } else {
+    displayActivityName = plan.title.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+  }
+
+  // Cast category to string to avoid compile time union mismatch on custom string properties
+  const categoryStr = plan.category as string;
+
+  // Establish Figma category tags (e.g., MATCHDAY, BREEZE, RESTAURANT)
+  let categoryTag = "COFFEE NIGHT";
+  if (categoryStr === "sports" || plan.id === "P001") {
+    categoryTag = "MATCHDAY";
+  } else if (categoryStr === "sunset") {
+    categoryTag = "SPONTY RUN";
+  } else if (categoryStr === "movies") {
+    categoryTag = "BLOCKBUSTER";
+  } else if (categoryStr === "brunch" || categoryStr === "restaurants") {
+    categoryTag = "CAFE VENTURES";
+  }
+
+  // Glowing activity icon setup & soft-glow aesthetic matching requested categories
+  let iconToRender = <SportsIcon />;
+  let glowStyle = "from-emerald-500/15 to-emerald-600/5 text-emerald-300 border-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.25)]";
+  if (categoryStr === "sunset" || categoryStr === "brunch" || categoryStr === "restaurants" || categoryStr === "cafe") {
+    iconToRender = <FoodIcon />;
+    glowStyle = "from-rose-500/15 to-pink-500/5 text-rose-300 border-rose-500/30 shadow-[0_0_12px_rgba(244,63,94,0.25)]";
+  } else if (categoryStr === "movies") {
+    iconToRender = <MoviesIcon />;
+    glowStyle = "from-sky-500/15 to-blue-600/5 text-sky-300 border-sky-500/30 shadow-[0_0_12px_rgba(14,165,233,0.25)]";
+  } else if (categoryStr === "sports") {
+    iconToRender = <SportsIcon />;
+    glowStyle = "from-emerald-500/15 to-emerald-600/5 text-emerald-300 border-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.25)]";
+  }
+
+  // Setup specific sunset football buddies pictures if P001/Football to align with prompt image
+  const coverToUse = (plan.id === "P001" || plan.category === "sports" || plan.title.toLowerCase().includes("football") || plan.title.toLowerCase().includes("turf"))
+    ? "/navkis_matchday.png"
+    : plan.coverImage;
+
+  const maxSpots = plan.maxSpots || (plan.category === "movies" ? 10 : plan.category === "sports" ? 14 : 8);
+  const currentCount = plan.joinedUsers ? plan.joinedUsers.filter(u => u.joinState !== "waitlist").length : (plan.confirmedCount || 0);
+  const isFull = currentCount >= maxSpots;
+
+  let barGradient = "from-[#ff8b66] to-[#fc5c42]";
+  let glowShadowColor = "rgba(255,139,102,0.35)";
+  let categoryColorDot = "bg-[#ff8b66]";
+
+  if (categoryStr === "sunset" || categoryStr === "brunch" || categoryStr === "restaurants" || categoryStr === "cafe") {
+    barGradient = "from-rose-400 to-pink-500";
+    glowShadowColor = "rgba(244,63,94,0.35)";
+    categoryColorDot = "bg-rose-400";
+  } else if (categoryStr === "movies") {
+    barGradient = "from-sky-400 to-blue-500";
+    glowShadowColor = "rgba(14,165,233,0.35)";
+    categoryColorDot = "bg-sky-450";
+  }
+
+  let groupName = "Midnight Masala";
+  let groupColor = "text-[#ff8b66]";
+
+  if (categoryStr === "sports" || plan.category === "football" || plan.title.toLowerCase().includes("football") || plan.title.toLowerCase().includes("turf")) {
+    groupName = "Navkis Matchday";
+    groupColor = "text-emerald-400";
+  } else if (categoryStr === "movies" || plan.title.toLowerCase().includes("movie")) {
+    groupName = "Jobis";
+    groupColor = "text-sky-400";
+  } else if (categoryStr === "sunset" || categoryStr === "brunch" || categoryStr === "restaurants" || categoryStr === "cafe" || plan.title.toLowerCase().includes("waffles") || plan.title.toLowerCase().includes("spice")) {
+    groupName = "Midnight Masala";
+    groupColor = "text-rose-400";
+  }
+
+  const startHolding = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    // Clear any previous hold delay timeouts
+    if (holdDelayTimeoutRef.current) {
+      clearTimeout(holdDelayTimeoutRef.current);
+      holdDelayTimeoutRef.current = null;
+    }
+
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) { }
+
+    pointerDownTimeRef.current = performance.now();
+    hasHoldStartedRef.current = false;
+    isHoldTriggeredRef.current = false;
+    startYRef.current = e.clientY;
+    isDraggingRef.current = false;
+    setDragY(0);
+
+    // Setup hold delay threshold of 400ms before starting deliberate join scale/animation
+    holdDelayTimeoutRef.current = setTimeout(() => {
+      hasHoldStartedRef.current = true;
+      setIsHolding(true);
+      setHoldProgress(0);
+      progressRef.current = 0;
+
+      const startTime = performance.now();
+      holdStartTimeRef.current = startTime;
+
+      const tick = (now: number) => {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / HOLD_DURATION, 1);
+        setHoldProgress(progress * 100);
+        progressRef.current = progress;
+
+        if (progress < 1) {
+          animationFrameRef.current = requestAnimationFrame(tick);
+        } else {
+          setIsHolding(false);
+          isHoldTriggeredRef.current = true;
+
+          if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+          }
+
+          if (isJoined) {
+            if (typeof triggerToast === "function") {
+              triggerToast("You're already in this plan! Head over to Circles tab to chat.");
+            }
+          } else if (isWaitlisted) {
+            if (typeof triggerToast === "function") {
+              triggerToast("You're already on the waitlist for this plan!");
+            }
+          } else if (isFull) {
+            if (waitlistPlan) {
+              waitlistPlan(plan.id, userProfile);
+              if (typeof triggerToast === "function") {
+                triggerToast("Added to Waitlist");
+              }
+              const waitlistNotification = {
+                id: `n_waitlist_${Date.now()}`,
+                type: "general" as const,
+                title: `⏳ Added to waitlist for "${plan.title}"`,
+                relativeTime: "Just Now",
+                settled: true,
+                planIdForAction: plan.id
+              };
+              setNotifications(prev => [waitlistNotification, ...prev]);
+              if (setShowWaitlistSuccess) {
+                setShowWaitlistSuccess(plan);
+              }
+            }
+          } else {
+            setSuccessMode("join");
+            handleToggleJoin(plan);
+
+            const newNotification = {
+              id: `n_pay_${Date.now()}`,
+              type: "payments" as const,
+              title: "Split Coordinated Payment Cleared",
+              message: `Transferred ₹${plan.cost} split fee for ${plan.title} turf.`,
+              relativeTime: "Just Now",
+              settled: true,
+              planIdForAction: plan.id
+            };
+
+            const joinedNotification = {
+              id: `n_join_group_${Date.now()}`,
+              type: "general" as const,
+              title: `👋 You joined ${plan.creatorName || "host"}'s plan "${plan.title}"`,
+              relativeTime: "Just Now",
+              settled: true,
+              planIdForAction: plan.id
+            };
+
+            setNotifications(prev => [newNotification, joinedNotification, ...prev]);
+            setShowPaymentSuccess(plan);
+          }
+
+          setTimeout(() => {
+            setHoldProgress(0);
+            progressRef.current = 0;
+          }, 400);
+        }
+      };
+
+      animationFrameRef.current = requestAnimationFrame(tick);
+    }, 400);
+  };
+
+  const stopHolding = (e: React.PointerEvent) => {
+    if (holdDelayTimeoutRef.current) {
+      clearTimeout(holdDelayTimeoutRef.current);
+      holdDelayTimeoutRef.current = null;
+    }
+
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (err) { }
+
+    const currentDragY = dragY;
+    startYRef.current = 0;
+    setDragY(0);
+
+    if (isDraggingRef.current) {
+      if (currentDragY > 120) {
+        handleSnoozePlan(plan.id);
+      }
+      return;
+    }
+
+    // If released before hold threshold activated, treat as standard quick tap
+    if (!hasHoldStartedRef.current) {
+      setIsHolding(false);
+      setHoldProgress(0);
+      progressRef.current = 0;
+      if (typeof onSelectCard === "function") {
+        onSelectCard(activeCardId === plan.id ? null : plan.id);
+      }
+      return;
+    }
+
+    setIsHolding(false);
+
+    if (progressRef.current < 1) {
+      const startProgress = progressRef.current;
+      const startReleaseTime = performance.now();
+      const DECREASE_DURATION = 350; // ms
+
+      const releaseTick = (now: number) => {
+        const elapsedRelease = now - startReleaseTime;
+        const relProgress = Math.min(elapsedRelease / DECREASE_DURATION, 1);
+        const newProgress = startProgress * (1 - relProgress);
+        setHoldProgress(newProgress * 100);
+        progressRef.current = newProgress;
+
+        if (relProgress < 1) {
+          animationFrameRef.current = requestAnimationFrame(releaseTick);
+        } else {
+          setHoldProgress(0);
+          progressRef.current = 0;
+        }
+      };
+
+      animationFrameRef.current = requestAnimationFrame(releaseTick);
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (startYRef.current === 0) return;
+    const deltaY = e.clientY - startYRef.current;
+    if (Math.abs(deltaY) > 10) {
+      isDraggingRef.current = true;
+      if (holdDelayTimeoutRef.current) {
+        clearTimeout(holdDelayTimeoutRef.current);
+        holdDelayTimeoutRef.current = null;
+      }
+      if (isHolding) {
+        setIsHolding(false);
+      }
+    }
+    if (deltaY > 0) {
+      setDragY(deltaY);
+    }
+  };
+
+  // Dedicate cancelHolding for PointerLeave so moving off card cancels the join cleanly without triggering a tap
+  const cancelHolding = (e: React.PointerEvent) => {
+    if (holdDelayTimeoutRef.current) {
+      clearTimeout(holdDelayTimeoutRef.current);
+      holdDelayTimeoutRef.current = null;
+    }
+
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (err) { }
+
+    const currentDragY = dragY;
+    startYRef.current = 0;
+    setDragY(0);
+
+    if (isDraggingRef.current) {
+      if (currentDragY > 120) {
+        handleSnoozePlan(plan.id);
+      }
+      return;
+    }
+
+    setIsHolding(false);
+
+    if (hasHoldStartedRef.current && progressRef.current < 1) {
+      const startProgress = progressRef.current;
+      const startReleaseTime = performance.now();
+      const DECREASE_DURATION = 350; // ms
+
+      const releaseTick = (now: number) => {
+        const elapsedRelease = now - startReleaseTime;
+        const relProgress = Math.min(elapsedRelease / DECREASE_DURATION, 1);
+        const newProgress = startProgress * (1 - relProgress);
+        setHoldProgress(newProgress * 100);
+        progressRef.current = newProgress;
+
+        if (relProgress < 1) {
+          animationFrameRef.current = requestAnimationFrame(releaseTick);
+        } else {
+          setHoldProgress(0);
+          progressRef.current = 0;
+        }
+      };
+
+      animationFrameRef.current = requestAnimationFrame(releaseTick);
+    } else {
+      setHoldProgress(0);
+      progressRef.current = 0;
+    }
+  };
+
+  // Progressive layout reveal calculations based on holdProgress
+  const costOpacity = Math.max(0, Math.min(1, (holdProgress - 15) / 25));
+  const costY = 16 * (1 - costOpacity);
+
+  const timeOpacity = Math.max(0, Math.min(1, (holdProgress - 40) / 25));
+  const timeY = 16 * (1 - timeOpacity);
+
+  const locOpacity = Math.max(0, Math.min(1, (holdProgress - 65) / 25));
+  const locY = 16 * (1 - locOpacity);
+
+  return (
+    <div
+      className="w-full h-full snap-start shrink-0 relative flex flex-col justify-end p-6 select-none overflow-hidden cursor-pointer touch-none"
+      style={{
+        scrollSnapAlign: 'start',
+        scrollSnapStop: 'always',
+        height: '100%',
+        boxShadow: isHolding
+          ? `0 0 ${15 + (holdProgress / 100) * 35}px rgba(255, 139, 102, ${0.15 + (holdProgress / 100) * 0.45})`
+          : 'none',
+        transform: isHolding ? `scale(${1 - (holdProgress / 100) * 0.035})` : 'scale(1)',
+        transition: isHolding ? 'none' : 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s ease'
+      }}
+      onPointerDown={startHolding}
+      onPointerMove={handlePointerMove}
+      onPointerUp={stopHolding}
+      onPointerLeave={cancelHolding}
+    >
+      {/* FULL-SCREEN BACKGROUND IMAGE */}
+      <img
+        src={coverToUse}
+        alt={plan.title}
+        className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
+        referrerPolicy="no-referrer"
+      />
+
+      {/* Overlay: soft dark gradient for readability */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent pointer-events-none" />
+
+      {/* Top: category chip & status */}
+      <div className="absolute top-10 left-6 right-6 flex items-center justify-between z-10 pointer-events-none">
+        <span className={`bg-[#0c0c0e]/90 backdrop-blur-md text-[10px] font-sans uppercase tracking-[0.14em] font-extrabold px-4 py-2 rounded-full border border-white/10 shadow-lg ${groupColor}`}>
+          {groupName.toUpperCase()}
+        </span>
+
+        <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${glowStyle} border flex items-center justify-center shadow-lg`}>
+          {iconToRender}
+        </div>
+      </div>
+
+      {/* Center/Lower Area & Bottom overlay */}
+      <div className="z-10 space-y-4 w-full pointer-events-none">
+        <div className="space-y-2">
+          <h2
+            style={getDynamicTitleStyle(displayActivityName)}
+            className="font-sans font-extrabold text-white drop-shadow-md max-w-full pr-1 tracking-tight leading-tight"
+          >
+            {displayActivityName}
+          </h2>
+
+          <div className="space-y-1.5 pt-1">
+            <div className="flex items-center gap-2 text-stone-100 drop-shadow-sm font-semibold text-[11px] uppercase tracking-wider font-mono">
+              <span className="text-amber-400">📅</span>
+              <span>{getFormattedDateAndTime()}</span>
+            </div>
+            <div className="flex items-center gap-2 text-zinc-200 drop-shadow-sm font-sans text-[11px] tracking-wide">
+              <span className="text-brand-peach">📍</span>
+              <span className="truncate max-w-[85%]">{plan.location}</span>
+            </div>
+
+            {/* Split billing details naturally integrated with subtle premium green accent */}
+            <div className="flex items-center gap-2 text-emerald-400 drop-shadow-md font-sans text-xs font-black uppercase tracking-wider pt-0.5">
+              <span className="text-xs">💵</span>
+              <span>{plan.cost > 0 ? `₹${plan.cost}` : "🍿 FREE"}</span>
+            </div>
+          </div>
+        </div>
+        {/* White line divider conforming to Figma spec */}
+        <div className="border-t border-white/10 w-full" />
+
+        {/* Momentum Progress Bar Section with Premium Smooth Coral Glow & Expandable Participant Sync */}
+        <div
+          className="space-y-3 w-full text-left pointer-events-auto cursor-pointer group/momentum bg-white/[0.015] hover:bg-white/[0.045] active:bg-white/[0.065] px-4 py-3.5 rounded-2xl border border-white/[0.035] hover:border-white/[0.065] transition-all duration-300 shadow-md"
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => {
+            e.stopPropagation();
+            setIsExpanded(!isExpanded);
+          }}
+        >
+          <div className="flex justify-between items-center text-[10.5px] font-sans font-medium select-none">
+            <span className="flex items-center gap-1.5 tracking-wide">
+              <span className={`w-1.5 h-1.5 rounded-full ${isFull ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.85)]" : "bg-[#ff6b4a] shadow-[0_0_8px_rgba(255,107,74,0.85)]"} animate-pulse`} />
+              <span className="text-zinc-300 group-hover/momentum:text-white transition-colors flex items-center gap-1">
+                Host: {plan.creatorName || "Raghavan"}
+                <span className="w-2.5 h-2.5 flex items-center justify-center shrink-0">
+                  {isExpanded ? (
+                    <svg viewBox="0 0 24 24" className="w-[10px] h-[10px] text-zinc-400" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="18 15 12 9 6 15" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="w-[10px] h-[10px] text-zinc-400" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  )}
+                </span>
+              </span>
+            </span>
+            {(() => {
+              const isHost = plan.hostId === "u_self" || plan.creatorId === "u_self" || plan.creatorName === userProfile.name;
+              return isHost ? (
+                <span className="text-zinc-400 select-none">
+                  Joined: <strong className="text-white font-extrabold">{currentCount}</strong> | Waitlist: <strong className="text-amber-400 font-extrabold">{plan.waitlistUsers ? plan.waitlistUsers.length : 0}</strong>
+                </span>
+              ) : isFull ? (
+                <span className="text-amber-400 font-extrabold tracking-wide uppercase text-[10px] select-none">
+                  Waitlist Open
+                </span>
+              ) : (
+                <span className="text-zinc-400 select-none">
+                  <strong className="text-white font-extrabold">{currentCount} / {maxSpots}</strong> joined
+                </span>
+              );
+            })()}
+          </div>
+
+          <div className="h-[3px] w-full bg-black/80 rounded-full overflow-hidden relative border border-white/[0.02]">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[#ff593c] via-[#ff7c55] to-[#fdb933] transition-all duration-700 ease-out"
+              style={{
+                width: `${Math.min(100, (currentCount / maxSpots) * 100)}%`,
+                boxShadow: "0 0 6px rgba(255, 91, 63, 0.25)"
+              }}
+            />
+          </div>
+
+          {/* Expandable Live Participant Sync Drawer */}
+          <AnimatePresence initial={false}>
+            {isExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0, marginTop: 0 }}
+                animate={{ height: "auto", opacity: 1, marginTop: 10 }}
+                exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                className="overflow-hidden border-t border-white/[0.05] pt-2"
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+              >
+                <div className="space-y-2 max-h-[160px] overflow-y-auto no-scrollbar pt-1 pr-0.5 mt-0.5 pointer-events-auto">
+                  {(() => {
+                    const { going, waitlist, delivered, seen, skipped } = getParticipantStatusList();
+                    return (
+                      <div className="space-y-1.5 pt-0.5">
+                        {/* Going State */}
+                        {going.map((user, idx) => (
+                          <div key={`going-${idx}`} className="flex items-center justify-between py-1 border-b border-white/[0.01]">
+                            <div className="flex items-center gap-2">
+                              <img src={user.avatar} className="w-5.5 h-5.5 rounded-full object-cover ring-1 ring-emerald-500/25 shrink-0" referrerPolicy="no-referrer" />
+                              <span className="text-[10.5px] font-bold text-zinc-100">
+                                {user.name}
+                                {user.isHost && <span className="text-[9px] text-zinc-500 font-normal ml-1">(Host)</span>}
+                              </span>
+                            </div>
+                            <span className="text-[7.5px] font-mono text-emerald-400 font-bold uppercase tracking-wider bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">{user.status}</span>
+                          </div>
+                        ))}
+
+                        {/* Waitlist State */}
+                        {waitlist.map((user, idx) => (
+                          <div key={`waitlist-${idx}`} className="flex items-center justify-between py-1 border-b border-white/[0.01]">
+                            <div className="flex items-center gap-2">
+                              <img src={user.avatar} className="w-5.5 h-5.5 rounded-full object-cover ring-1 ring-amber-500/25 shrink-0" referrerPolicy="no-referrer" />
+                              <span className="text-[10.5px] font-bold text-zinc-100">{user.name}</span>
+                            </div>
+                            <span className="text-[7.5px] font-mono text-amber-400 font-bold uppercase tracking-wider bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{user.status}</span>
+                          </div>
+                        ))}
+
+                        {/* Delivered State */}
+                        {delivered.map((user, idx) => (
+                          <div key={`delivered-${idx}`} className="flex items-center justify-between py-1 border-b border-white/[0.01] opacity-75">
+                            <div className="flex items-center gap-2">
+                              <img src={user.avatar} className="w-5 h-5 rounded-full object-cover ring-1 ring-zinc-500/20 shrink-0" referrerPolicy="no-referrer" />
+                              <span className="text-[10px] text-zinc-400">{user.name}</span>
+                            </div>
+                            <span className="text-[7.5px] font-mono text-zinc-400 font-bold uppercase tracking-wider bg-zinc-800/40 px-1.5 py-0.5 rounded border border-zinc-700/30">{user.status}</span>
+                          </div>
+                        ))}
+
+                        {/* Seen State */}
+                        {seen.map((user, idx) => (
+                          <div key={`seen-${idx}`} className="flex items-center justify-between py-1 border-b border-white/[0.01]">
+                            <div className="flex items-center gap-2">
+                              <img src={user.avatar} className="w-5 h-5 rounded-full object-cover ring-1 ring-white/10 shrink-0" referrerPolicy="no-referrer" />
+                              <span className="text-[10px] text-zinc-200 font-medium">{user.name}</span>
+                            </div>
+                            <span className="text-[7.5px] font-mono text-zinc-100 font-extrabold uppercase tracking-wider bg-white/10 px-1.5 py-0.5 rounded border border-white/15">{user.status}</span>
+                          </div>
+                        ))}
+
+                        {/* Skipped State */}
+                        {skipped.map((user, idx) => (
+                          <div key={`skipped-${idx}`} className="flex items-center justify-between py-1 opacity-60">
+                            <div className="flex items-center gap-2">
+                              <img src={user.avatar} className="w-5 h-5 rounded-full object-cover ring-1 ring-rose-500/20 shrink-0" referrerPolicy="no-referrer" />
+                              <span className="text-[10px] text-zinc-350">{user.name}</span>
+                            </div>
+                            <span className="text-[7.5px] font-mono text-rose-400 font-bold uppercase tracking-wider bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">{user.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+
+      </div>
+
+      {/* HOLD-TO-JOIN TACTILE FEEDBACK OVERLAYS */}
+      <AnimatePresence>
+        {isHolding && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-20 flex flex-col justify-between p-8 pointer-events-none"
+            style={{
+              backgroundColor: `rgba(4, 4, 6, ${0.4 + (holdProgress / 100) * 0.45})`,
+              backdropFilter: `blur(${(holdProgress / 100) * 8}px)`,
+              WebkitBackdropFilter: `blur(${(holdProgress / 100) * 8}px)`,
+            }}
+          >
+            {/* Elegant Minimal Spacing */}
+            <div className="h-6" />
+
+            {/* Immersive Progressive Content (Center) */}
+            <div className="flex-1 flex flex-col justify-center space-y-7 my-auto pt-6">
+              {/* Cost Row */}
+              <div
+                style={{
+                  opacity: costOpacity,
+                  transform: `translateY(${costY}px)`,
+                  transition: 'opacity 0.1s ease-out, transform 0.1s ease-out'
+                }}
+                className="space-y-1"
+              >
+                <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest block font-medium">Split Requirement</span>
+                <div className="text-2xl font-black text-white flex items-baseline gap-1">
+                  <span>{plan.cost > 0 ? `₹${plan.cost}` : "Free Entry"}</span>
+                  <span className="text-zinc-500 text-xs font-normal lowercase">per person split</span>
+                </div>
+              </div>
+
+              {/* Time Row */}
+              <div
+                style={{
+                  opacity: timeOpacity,
+                  transform: `translateY(${timeY}px)`,
+                  transition: 'opacity 0.1s ease-out, transform 0.1s ease-out'
+                }}
+                className="space-y-1"
+              >
+                <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest block font-medium">Scheduled Hour</span>
+                <div className="text-xl font-bold text-white uppercase tracking-tight">
+                  {getFormattedDateAndTime()}
+                </div>
+              </div>
+
+              {/* Location Row */}
+              <div
+                style={{
+                  opacity: locOpacity,
+                  transform: `translateY(${locY}px)`,
+                  transition: 'opacity 0.1s ease-out, transform 0.1s ease-out'
+                }}
+                className="space-y-1"
+              >
+                <span className="text-[9px] font-mono text-zinc-400 uppercase tracking-widest block font-medium">Coordinated Venue</span>
+                <div className="text-base font-medium text-zinc-200 leading-snug tracking-wide">
+                  {plan.location}
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom circular progress and status */}
+            <div className="flex flex-col items-center justify-center space-y-4 w-full pb-2">
+              <div className="relative w-14 h-14 flex items-center justify-center">
+                {/* Outer glowing progress path */}
+                <svg className="w-14 h-14 transform -rotate-90">
+                  <circle
+                    cx="28"
+                    cy="28"
+                    r="24"
+                    className="stroke-zinc-900"
+                    strokeWidth="3.5"
+                    fill="transparent"
+                  />
+                  <circle
+                    cx="28"
+                    cy="28"
+                    r="24"
+                    className={isFull ? "stroke-amber-400" : "stroke-[#ff8b66]"}
+                    strokeWidth="3.5"
+                    fill="transparent"
+                    strokeDasharray={2 * Math.PI * 24}
+                    strokeDashoffset={2 * Math.PI * 24 * (1 - holdProgress / 100)}
+                    strokeLinecap="round"
+                    style={{
+                      filter: isFull ? 'drop-shadow(0 0 6px rgba(245, 158, 11, 0.4))' : 'drop-shadow(0 0 6px rgba(255, 139, 102, 0.4))'
+                    }}
+                  />
+                </svg>
+                <span className="absolute text-[11px] font-mono text-white font-black">{Math.round(holdProgress)}%</span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {isSuccess && (
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="absolute inset-0 bg-[#0e0e11]/95 backdrop-blur-md z-30 flex flex-col items-center justify-center pointer-events-none"
+          >
+            {successMode === "waitlist" ? (
+              <>
+                <motion.div
+                  initial={{ scale: 0.5 }}
+                  animate={{ scale: [0.5, 1.15, 1], rotate: [0, 5, -5, 0] }}
+                  transition={{ duration: 0.4 }}
+                  className="w-16 h-16 rounded-full bg-amber-500/10 border-2 border-amber-500 flex items-center justify-center text-amber-400 shadow-[0_0_40px_rgba(245,158,11,0.25)]"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-amber-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </motion.div>
+                <span className="text-base font-sans font-black tracking-[0.2em] text-amber-400 mt-6 uppercase">WAITLISTED</span>
+                <span className="text-xs font-sans text-zinc-400 mt-2">Added to Waitlist</span>
+              </>
+            ) : (
+              <>
+                <motion.div
+                  initial={{ scale: 0.5 }}
+                  animate={{ scale: [0.5, 1.15, 1], rotate: [0, 5, -5, 0] }}
+                  transition={{ duration: 0.4 }}
+                  className="w-16 h-16 rounded-full bg-emerald-500/10 border-2 border-emerald-500 flex items-center justify-center text-emerald-400 shadow-[0_0_40px_rgba(16,185,129,0.25)]"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-emerald-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </motion.div>
+                <span className="text-base font-sans font-black tracking-[0.2em] text-emerald-400 mt-6 uppercase">JOINED</span>
+                <span className="text-xs font-sans text-zinc-400 mt-2">Opening wallet split payment popup...</span>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// Premium, interactive participation progress bar with WhatsApp-style seen & delivered social states
+const CinematicProgressBar = ({
+  plan,
+  isPopupOpen,
+  onTogglePopup,
+  titleText = "MOMENTUM",
+  colorTheme = "orange",
+  userProfile,
+  planMessages,
+  setPlanMessages,
+}: {
+  plan: Plan;
+  isPopupOpen: boolean;
+  onTogglePopup: () => void;
+  titleText?: string;
+  colorTheme?: "orange" | "green";
+  userProfile?: UserProfile;
+  planMessages?: Record<string, { sender: string, avatar: string, text: string, time: string }[]>;
+  setPlanMessages?: React.Dispatch<React.SetStateAction<Record<string, { sender: string, avatar: string, text: string, time: string }[]>>>;
+}) => {
+  const [localMsg, setLocalMsg] = useState("");
+  const [isCreatingPoll, setIsCreatingPoll] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState("");
+  const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
+  const maxSpots = plan.maxSpots || (plan.category === "movies" ? 10 : plan.category === "sports" ? 14 : 8);
+  const currentCount = plan.confirmedCount || plan.joinedUsers.length;
+  const ratio = Math.min(currentCount / maxSpots, 1.0);
+
+  const getMicrocopy = () => {
+    if (ratio >= 1.0) return "Squad fully locked • Let's go!";
+    if (ratio >= 0.75) return "Almost confirmed • Firing on all cylinders";
+    if (ratio >= 0.4) return "Gathering momentum • Ready to launch!";
+    return "Building the squad • Waiting for more players";
+  };
+
+  const getParticipantStates = () => {
+    const host = {
+      name: plan.creatorName || "Raghavan",
+      avatar: plan.creatorAvatar || getInitialsAvatar(plan.creatorName || "Raghavan"),
+      status: "Going",
+      isHost: true
+    };
+
+    const going = [
+      host,
+      ...plan.joinedUsers
+        .filter(u => u.name !== host.name)
+        .map(u => ({
+          name: u.name,
+          avatar: u.avatar || getInitialsAvatar(u.name),
+          status: "Going",
+          isHost: false
+        }))
+    ];
+
+    if (going.length === 1) {
+      going.push(
+        { name: "Medhaj", avatar: getInitialsAvatar("Medhaj"), status: "Going", isHost: false },
+        { name: "Rahul", avatar: getInitialsAvatar("Rahul"), status: "Going", isHost: false }
+      );
+    }
+
+    const waitlist = [
+      ...(plan.waitlistUsers || []),
+      ...(plan.interestedUsers || [])
+    ].map(u => ({
+      name: u.name,
+      avatar: u.avatar || getInitialsAvatar(u.name),
+      status: "Waitlist"
+    }));
+
+    if (waitlist.length === 0 && (plan.category === "sports" || plan.title.toLowerCase().includes("football"))) {
+      waitlist.push({
+        name: "Raghavan",
+        avatar: getInitialsAvatar("Raghavan"),
+        status: "Waitlist"
+      });
+    }
+
+    const deliveredNames = ["Sudeshna", "Ravi"].filter(
+      n => n !== host.name && !going.some(g => g.name === n) && !waitlist.some(w => w.name === n)
+    );
+    const delivered = deliveredNames.map(name => ({
+      name,
+      avatar: getInitialsAvatar(name),
+      status: "Delivered"
+    }));
+
+    const seenNames = ["Guhan", "Neelesh"].filter(
+      n => n !== host.name && !going.some(g => g.name === n) && !waitlist.some(w => w.name === n)
+    );
+    const seen = seenNames.map(name => ({
+      name,
+      avatar: getInitialsAvatar(name),
+      status: "Seen"
+    }));
+
+    const skippedNames = ["Pratyush", "Renjith"].filter(
+      n => n !== host.name &&
+        !going.some(g => g.name === n) &&
+        !waitlist.some(w => w.name === n) &&
+        !deliveredNames.includes(n) &&
+        !seenNames.includes(n)
+    );
+    const skipped = skippedNames.map(name => ({
+      name,
+      avatar: getInitialsAvatar(name),
+      status: "Skipped"
+    }));
+
+    return { going, waitlist, delivered, seen, skipped };
+  };
+
+  const { going, waitlist, delivered, seen, skipped } = getParticipantStates();
+
+  const isGreen = colorTheme === "green" || plan.category === "sports";
+  const primaryColor = isGreen ? "text-emerald-400" : "text-[#ff8b66]";
+  const gradientFill = isGreen
+    ? "from-emerald-500 via-teal-400 to-[#ff8b66]"
+    : "from-[#ff8b66] via-[#ff6a4a] to-[#ff5d41]";
+  const glowShadow = isGreen
+    ? "shadow-[0_0_14px_rgba(16,185,129,0.45)]"
+    : "shadow-[0_0_14px_rgba(255,139,102,0.45)]";
+
+  const acceptedList = plan.joinedUsers.filter(u => u.name !== plan.creatorName);
+
+  return (
+    <motion.div
+      layout
+      transition={{ type: "spring", stiffness: 95, damping: 16 }}
+      className={`pt-4 border-t border-white/10 space-y-4 text-left ${isPopupOpen ? "pb-2" : ""}`}
+      onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={(e) => e.stopPropagation()}
+      onPointerLeave={(e) => e.stopPropagation()}
+    >
+      <div className="group select-none">
+        <div className="flex justify-between items-center text-[10px] font-mono mb-2.5">
+          <div className="flex items-center gap-1.5 pt-0.5">
+            <span className="relative flex h-2 w-2">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isGreen ? "bg-emerald-400/60" : "bg-[#ff8b66]/60"}`}></span>
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isGreen ? "bg-emerald-400" : "bg-[#ff8b66]"}`}></span>
+            </span>
+            <span className="text-zinc-400 font-extrabold tracking-wider uppercase">
+              {titleText}
+            </span>
+          </div>
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              onTogglePopup();
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            className="flex items-center gap-1.5 bg-black/60 hover:bg-black/90 px-3 py-1 rounded-full border border-zinc-800 hover:border-zinc-700 transition-all cursor-pointer select-none shadow-[0_2px_8px_rgba(0,0,0,0.5)]"
+          >
+            <span className={`${primaryColor} font-black tracking-widest text-[10px] font-mono`}>
+              {currentCount} / {maxSpots} JOINED
+            </span>
+            <span className="text-zinc-400 font-bold text-[8px] tracking-widest ml-0.5 leading-none">
+              {isPopupOpen ? "▲" : "▼"}
+            </span>
+          </div>
+        </div>
+
+        {/* Cinematic Progress Bar with Morphing Height */}
+        <motion.div
+          layout="position"
+          animate={{ height: isPopupOpen ? 24 : 18 }}
+          transition={{ type: "spring", stiffness: 120, damping: 15 }}
+          className="relative w-full bg-black/60 backdrop-blur-md rounded-full overflow-hidden p-[2px] border border-zinc-900 transition-all duration-300 hover:border-zinc-800 shadow-[inset_0_1.5px_6px_rgba(0,0,0,0.85)]"
+        >
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${ratio * 100}%` }}
+            transition={{ type: "spring", stiffness: 60, damping: 14 }}
+            className={`relative h-full rounded-full bg-gradient-to-r ${gradientFill} ${glowShadow}`}
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent animate-pulse rounded-full" />
+          </motion.div>
+        </motion.div>
+      </div>
+
+      <AnimatePresence>
+        {isPopupOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0, y: -8 }}
+            animate={{ opacity: 1, height: "auto", y: 0 }}
+            exit={{ opacity: 0, height: 0, y: -8 }}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden space-y-6 pt-3"
+          >
+            {/* Breathable vertical scroll-free container for custom-scrollbar feel */}
+            <div className="space-y-6 max-h-[280px] overflow-y-auto no-scrollbar pr-0.5">
+
+              {/* 1. Going Group */}
+              {going.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2 border-b border-zinc-900/40 pb-2">
+                    <span className="text-[9.5px] font-mono uppercase tracking-[0.2em] text-emerald-400 font-extrabold">
+                      Going · {going.length} confirmed
+                    </span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.85)]" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {going.map((user, idx) => (
+                      <div key={idx} className="flex items-center justify-between py-1">
+                        <div className="flex items-center gap-4">
+                          <img
+                            src={user.avatar}
+                            className="w-12 h-12 rounded-full object-cover border-2 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.15)]"
+                            alt={user.name}
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="leading-tight text-left">
+                            <span className="text-sm font-bold text-zinc-200 block">
+                              {user.name}
+                              {user.isHost && <span className="text-zinc-500 text-xs font-normal ml-1">(Host)</span>}
+                            </span>
+                            <span className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider font-extrabold mt-0.5 block">
+                              Going
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 2. Waitlist Group */}
+              {waitlist.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2 border-b border-zinc-900/40 pb-2">
+                    <span className="text-[9.5px] font-mono uppercase tracking-[0.2em] text-amber-400 font-extrabold">
+                      Waitlist · {waitlist.length} benched
+                    </span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.85)]" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {waitlist.map((user, idx) => (
+                      <div key={idx} className="flex items-center gap-4 py-1">
+                        <img
+                          src={user.avatar}
+                          className="w-12 h-12 rounded-full object-cover border-2 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.15)]"
+                          alt={user.name}
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="leading-tight text-left">
+                          <span className="text-sm font-bold text-zinc-200 block">{user.name}</span>
+                          <span className="text-[10px] font-mono text-amber-400 uppercase tracking-wider font-extrabold mt-0.5 block">
+                            Waitlist
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 3. Delivered Group */}
+              {delivered.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2 border-b border-zinc-900/40 pb-2">
+                    <span className="text-[9.5px] font-mono uppercase tracking-[0.2em] text-zinc-400 font-extrabold">
+                      Delivered · {delivered.length} pending
+                    </span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 shadow-[0_0_8px_rgba(115,115,115,0.3)]" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {delivered.map((user, idx) => (
+                      <div key={idx} className="flex items-center gap-4 py-1 opacity-75">
+                        <img
+                          src={user.avatar}
+                          className="w-12 h-12 rounded-full object-cover border-2 border-zinc-800/40"
+                          alt={user.name}
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="leading-tight text-left">
+                          <span className="text-sm font-semibold text-zinc-400 block">{user.name}</span>
+                          <span className="text-[9px] font-mono text-zinc-400 uppercase tracking-wider font-extrabold bg-zinc-800/40 px-2 py-0.5 rounded border border-zinc-700/30 mt-1 inline-block">
+                            Delivered
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. Seen Group */}
+              {seen.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2 border-b border-zinc-900/40 pb-2">
+                    <span className="text-[9.5px] font-mono uppercase tracking-[0.2em] text-zinc-300 font-extrabold">
+                      Seen · {seen.length} pending
+                    </span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-white/80 shadow-[0_0_8px_rgba(255,255,255,0.3)]" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {seen.map((user, idx) => (
+                      <div key={idx} className="flex items-center gap-4 py-1">
+                        <img
+                          src={user.avatar}
+                          className="w-12 h-12 rounded-full object-cover border-2 border-white/10"
+                          alt={user.name}
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="leading-tight text-left">
+                          <span className="text-sm font-semibold text-zinc-200 block">{user.name}</span>
+                          <span className="text-[9px] font-mono text-zinc-100 uppercase tracking-wider font-extrabold bg-white/10 px-2 py-0.5 rounded border border-white/15 mt-1 inline-block">
+                            Seen
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 5. Skipped Group */}
+              {skipped.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2 border-b border-zinc-900/40 pb-2">
+                    <span className="text-[9.5px] font-mono uppercase tracking-[0.2em] text-rose-400 font-extrabold">
+                      Skipped · {skipped.length} unavailable
+                    </span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.3)]" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {skipped.map((user, idx) => (
+                      <div key={idx} className="flex items-center gap-4 py-1 opacity-60">
+                        <img
+                          src={user.avatar}
+                          className="w-12 h-12 rounded-full object-cover border-2 border-rose-500/20"
+                          alt={user.name}
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="leading-tight text-left">
+                          <span className="text-sm font-semibold text-zinc-350 block">{user.name}</span>
+                          <span className="text-[9px] font-mono text-rose-400 uppercase tracking-wider font-extrabold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 mt-1 inline-block">
+                            Skipped
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 💬 LIGHTWEIGHT SOCIAL CHAT SECTION DIRECTLY BELOW THE PROGRESS BAR */}
+      <div
+        className="pt-3.5 border-t border-white/5 space-y-3"
+        onPointerDown={(e) => e.stopPropagation()}
+        onPointerUp={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-1.5 select-none">
+          <div className="flex items-center gap-1.5">
+            <span className={`text-[9.5px] font-mono uppercase tracking-[0.18em] font-extrabold ${isGreen ? "text-emerald-400" : "text-[#ff8b66]"}`}>
+              💬 LIVE COORDINATION
+            </span>
+            <span className={`h-1.5 w-1.5 rounded-full ${isGreen ? "bg-emerald-400" : "bg-[#ff8b66]"} animate-pulse shadow-[0_0_8px_rgba(255,139,102,0.85)]`} />
+          </div>
+        </div>
+
+        {/* Dynamic Voting Actions & Creation Popover if isCreatingPoll is active */}
+        {isCreatingPoll && (
+          <div className="bg-[#141417]/95 border border-white/5 rounded-24 p-3.5 space-y-3 shadow-[0_12px_45px_rgba(0,0,0,0.85)] relative">
+            <div className="flex justify-between items-center border-b border-white/[0.06] pb-2">
+              <span className={`text-[9px] font-mono uppercase tracking-[0.18em] font-extrabold ${isGreen ? "text-emerald-400" : "text-[#ff8b66]"}`}>
+                📊 CREATE COHORT POLL
+              </span>
+              <button
+                onClick={() => setIsCreatingPoll(false)}
+                className="text-zinc-500 hover:text-zinc-350 text-[9px] font-mono uppercase tracking-widest cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              <input
+                type="text"
+                placeholder="Ask your community a question..."
+                value={pollQuestion}
+                onChange={(e) => setPollQuestion(e.target.value)}
+                className="w-full text-[10.5px] bg-[#1d1d23]/85 border border-white/[0.04] focus:border-white/10 rounded-lg px-2.5 py-2 text-white focus:outline-none transition-all"
+              />
+
+              <div className="space-y-1.5">
+                {pollOptions.map((opt, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder={`Option ${idx + 1}`}
+                      value={opt}
+                      onChange={(e) => {
+                        const newOpts = [...pollOptions];
+                        newOpts[idx] = e.target.value;
+                        setPollOptions(newOpts);
+                      }}
+                      className="flex-1 text-[10px] bg-[#1d1d23]/60 border border-white/[0.03] focus:border-white/10 rounded-lg px-2.5 py-1.5 text-zinc-300 focus:outline-none transition-all"
+                    />
+                    {pollOptions.length > 2 && (
+                      <button
+                        onClick={() => setPollOptions(pollOptions.filter((_, i) => i !== idx))}
+                        className="text-zinc-500 hover:text-rose-400 text-xs px-1 cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-between items-center pt-1">
+                <button
+                  onClick={() => setPollOptions([...pollOptions, ""])}
+                  className="text-[9px] font-mono text-zinc-500 hover:text-white uppercase tracking-wider cursor-pointer flex items-center gap-1"
+                >
+                  + Add Option
+                </button>
+
+                <button
+                  disabled={!pollQuestion.trim() || pollOptions.filter(o => o.trim()).length < 2}
+                  onClick={() => {
+                    if (!setPlanMessages || !userProfile) return;
+                    const cleanOptions = pollOptions.filter(o => o.trim());
+                    const msg = {
+                      sender: userProfile.name,
+                      avatar: userProfile.avatar,
+                      text: `📊 Poll: ${pollQuestion}`,
+                      time: "Just Now",
+                      poll: {
+                        question: pollQuestion.trim(),
+                        options: cleanOptions.map(o => ({ text: o.trim(), votes: 0, votedBy: [] }))
+                      }
+                    } as any;
+
+                    setPlanMessages(prev => ({
+                      ...prev,
+                      [plan.id]: [...(prev[plan.id] || []), msg]
+                    }));
+
+                    setPollQuestion("");
+                    setPollOptions(["", ""]);
+                    setIsCreatingPoll(false);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${pollQuestion.trim() && pollOptions.filter(o => o.trim()).length >= 2
+                    ? isGreen
+                      ? "bg-emerald-400 text-black hover:opacity-95 shadow-[0_0_10px_rgba(52,211,153,0.3)]"
+                      : "bg-[#ff8b66] text-black hover:opacity-95 shadow-[0_0_10px_rgba(255,139,102,0.3)]"
+                    : "bg-zinc-900 border border-zinc-800 text-zinc-650 cursor-not-allowed"
+                    }`}
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Compact floating conversation area with translucent surfaces */}
+        <div className="bg-gradient-to-b from-black/55 to-black/75 backdrop-blur-xl border border-white/[0.04] rounded-24 p-3 space-y-3.5 max-h-[260px] overflow-y-auto no-scrollbar shadow-[inset_0_1px_2px_rgba(255,255,255,0.03),0_8px_32px_rgba(0,0,0,0.6)]">
+          {(!planMessages || !planMessages[plan.id] || planMessages[plan.id].length === 0) ? (
+            <div className="flex flex-col items-center justify-center py-5 space-y-1 select-none">
+              <span className="text-[13px] opacity-70">💬</span>
+              <p className="text-[8.5px] text-zinc-500 font-mono tracking-widest uppercase">No spool chatter yet</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {(planMessages[plan.id] || []).map((msg, index) => {
+                const isMe = userProfile && msg.sender === userProfile.name;
+                const isPoll = !!(msg as any).poll;
+
+                const handleVote = (msgIndex: number, optIndex: number) => {
+                  if (!setPlanMessages || !userProfile) return;
+                  setPlanMessages(prev => {
+                    const list = prev[plan.id] || [];
+                    const updated = list.map((m: any, idx) => {
+                      if (idx !== msgIndex || !m.poll) return m;
+
+                      const username = userProfile.name;
+                      const nextOptions = m.poll.options.map((opt: any, oIdx: number) => {
+                        let votedBy = opt.votedBy || [];
+                        const hasVoted = votedBy.includes(username);
+
+                        if (oIdx === optIndex) {
+                          if (hasVoted) {
+                            votedBy = votedBy.filter((u: string) => u !== username);
+                          } else {
+                            votedBy = [...votedBy, username];
+                          }
+                        } else {
+                          votedBy = votedBy.filter((u: string) => u !== username);
+                        }
+
+                        return {
+                          ...opt,
+                          votes: votedBy.length,
+                          votedBy
+                        };
+                      });
+
+                      return {
+                        ...m,
+                        poll: {
+                          ...m.poll,
+                          options: nextOptions
+                        }
+                      };
+                    });
+
+                    return {
+                      ...prev,
+                      [plan.id]: updated
+                    };
+                  });
+                };
+
+                return (
+                  <div key={index} className={`flex gap-2.5 text-left items-start ${isMe ? "justify-end" : "justify-start"}`}>
+                    {!isMe && (
+                      <div className="relative shrink-0 mt-0.5">
+                        <img
+                          src={msg.avatar || getInitialsAvatar(msg.sender)}
+                          className="w-6 h-6 rounded-full object-cover ring-1 ring-white/10 ring-offset-1 ring-offset-zinc-950 shadow-inner"
+                          alt={msg.sender}
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                    )}
+                    <div className={`max-w-[78%] space-y-0.5 ${isMe ? "text-right" : "text-left"} ${isPoll ? "w-full" : ""}`}>
+                      {!isMe && (
+                        <div className="flex items-center gap-1.5 px-1 justify-normal">
+                          <span className="text-[9px] font-extrabold text-zinc-350 tracking-wide">{msg.sender}</span>
+                          <span className="text-[7px] font-mono text-zinc-550 lowercase font-bold">{msg.time}</span>
+                        </div>
+                      )}
+                      <div className={`px-3 py-2.5 rounded-2xl text-[10.5px] leading-relaxed font-sans break-words shadow-md transition-all duration-300 ${isMe
+                        ? isGreen
+                          ? "bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-transparent border border-emerald-500/20 text-emerald-300 rounded-tr-none ml-auto shadow-[0_0_12px_rgba(16,185,129,0.06)]"
+                          : "bg-gradient-to-br from-[#ff8b66]/15 via-[#ff5d41]/10 to-transparent border border-[#ff8b66]/20 text-[#ff8b66] rounded-tr-none ml-auto shadow-[0_0_12px_rgba(255,139,102,0.06)]"
+                        : "bg-white/[0.03] hover:bg-white/[0.05] border border-white/5 text-zinc-200 rounded-tl-none"
+                        } ${isPoll ? "w-full" : ""}`}>
+                        {isPoll ? (
+                          <div className="space-y-2.5 text-left">
+                            <div className="flex items-center gap-1.5 border-b border-white/[0.05] pb-1.5">
+                              <span className="text-[11px] font-bold text-zinc-100">📊 {(msg as any).poll.question}</span>
+                            </div>
+                            <div className="space-y-1.5">
+                              {(msg as any).poll.options.map((opt: any, oIdx: number) => {
+                                const totalVotes = (msg as any).poll.options.reduce((sum: number, o: any) => sum + (o.votes || 0), 0);
+                                const percentage = totalVotes > 0 ? Math.round(((opt.votes || 0) / totalVotes) * 100) : 0;
+                                const userHasVoted = opt.votedBy?.includes(userProfile?.name || "");
+                                return (
+                                  <button
+                                    key={oIdx}
+                                    onClick={() => handleVote(index, oIdx)}
+                                    className="w-full relative overflow-hidden bg-black/40 border border-white/[0.03] p-2 rounded-lg text-left transition-all hover:bg-black/60 focus:outline-none flex justify-between items-center group cursor-pointer"
+                                  >
+                                    <div
+                                      className={`absolute left-0 top-0 bottom-0 transition-all duration-500 rounded-l-lg opacity-20 ${isGreen ? "bg-emerald-500" : "bg-[#ff8b66]"
+                                        }`}
+                                      style={{ width: `${percentage}%` }}
+                                    />
+                                    <span className={`relative text-[10px] font-sans text-left transition-colors z-10 flex items-center gap-1.5 ${userHasVoted ? "font-bold text-white" : "text-zinc-350"
+                                      }`}>
+                                      <span className={`w-1.5 h-1.5 rounded-full ${userHasVoted
+                                        ? isGreen ? "bg-emerald-400" : "bg-[#ff8b66]"
+                                        : "bg-transparent border border-zinc-600"
+                                        }`} />
+                                      {opt.text}
+                                    </span>
+                                    <span className="relative font-mono text-[9px] text-zinc-400 z-10 font-bold shrink-0 ml-1">
+                                      {percentage}% ({opt.votes || 0})
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          msg.text
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Quick Message Input Box with Clean Glass Cockpit feels and Inline Actions */}
+        <div className="flex gap-2 items-center">
+          <div className="flex-1 relative flex items-center">
+            <input
+              type="text"
+              value={localMsg}
+              onChange={(e) => setLocalMsg(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && localMsg.trim() && setPlanMessages && userProfile) {
+                  const msg = {
+                    sender: userProfile.name,
+                    avatar: userProfile.avatar,
+                    text: localMsg.trim(),
+                    time: "Just Now"
+                  };
+                  setPlanMessages(prev => ({
+                    ...prev,
+                    [plan.id]: [...(prev[plan.id] || []), msg]
+                  }));
+                  setLocalMsg("");
+                }
+              }}
+              className={`w-full text-[11px] bg-[#1a1a20]/75 hover:bg-[#202028]/85 focus:bg-[#0c0c10]/95 border ${isGreen
+                ? "border-emerald-500/20 focus:border-emerald-500/55 focus:shadow-[0_0_15px_rgba(16,185,129,0.25)]"
+                : "border-[#ff8b66]/20 focus:border-[#ff8b66]/55 focus:shadow-[0_0_15px_rgba(255,139,102,0.25)]"
+                } rounded-xl pl-4 pr-16 py-3 text-white focus:outline-none transition-all duration-300 shadow-[inset_0_1.5px_3px_rgba(0,0,0,0.8),0_4px_16px_rgba(0,0,0,0.5)]`}
+            />
+
+            {/* Embedded Action Tray */}
+            <div className="absolute right-2.5 flex items-center gap-1.5">
+              {/* Poll Creation Toggle Button */}
+              <button
+                type="button"
+                onClick={() => setIsCreatingPoll(!isCreatingPoll)}
+                className={`p-1.5 rounded-lg transition-all duration-300 ${isCreatingPoll
+                  ? isGreen ? "bg-emerald-500/20 text-emerald-400" : "bg-[#ff8b66]/20 text-[#ff8b66]"
+                  : "text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]"
+                  } cursor-pointer`}
+                title="Create Coordination Poll"
+              >
+                <svg viewBox="0 0 24 24" className="w-[14px] h-[14px]" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="20" x2="18" y2="10" />
+                  <line x1="12" y1="20" x2="12" y2="4" />
+                  <line x1="6" y1="20" x2="6" y2="14" />
+                </svg>
+              </button>
+
+              {/* Compact send icon button */}
+              <button
+                type="button"
+                disabled={!localMsg.trim()}
+                onClick={() => {
+                  if (localMsg.trim() && setPlanMessages && userProfile) {
+                    const msg = {
+                      sender: userProfile.name,
+                      avatar: userProfile.avatar,
+                      text: localMsg.trim(),
+                      time: "Just Now"
+                    };
+                    setPlanMessages(prev => ({
+                      ...prev,
+                      [plan.id]: [...(prev[plan.id] || []), msg]
+                    }));
+                    setLocalMsg("");
+                  }
+                }}
+                className={`p-1.5 rounded-lg transition-all duration-300 ${localMsg.trim()
+                  ? isGreen
+                    ? "text-emerald-400 hover:bg-emerald-400/10"
+                    : "text-[#ff8b66] hover:bg-[#ff8b66]/10"
+                  : "text-zinc-700 cursor-not-allowed"
+                  } cursor-pointer`}
+              >
+                <Send className="w-[14.5px] h-[14.5px]" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
+const CANONICAL_SQL_SCHEMA = `-- Planless Canonical Relational Database Schema Setup
+-- Run this migration in your Supabase SQL Editor: https://supabase.com/dashboard/project/yuuzenyjxxuqahosflob/sql
+
+-- 1. Create users table
+CREATE TABLE IF NOT EXISTS users (
+  user_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  full_name TEXT NOT NULL,
+  phone_number TEXT,
+  profile_photo TEXT,
+  bio TEXT,
+  college_or_work TEXT,
+  wallet_balance NUMERIC DEFAULT 0,
+  active_status BOOLEAN DEFAULT true,
+  created_at TEXT
+);
+
+-- 2. Create circles table
+CREATE TABLE IF NOT EXISTS circles (
+  circle_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  category TEXT,
+  created_by TEXT,
+  cover_image TEXT,
+  location_anchor TEXT,
+  privacy TEXT DEFAULT 'public',
+  created_at TEXT
+);
+
+-- 3. Create circle_members table
+CREATE TABLE IF NOT EXISTS circle_members (
+  circle_member_id TEXT PRIMARY KEY,
+  circle_id TEXT REFERENCES circles(circle_id) ON DELETE CASCADE,
+  user_id TEXT,
+  role TEXT DEFAULT 'member',
+  joined_at TEXT
+);
+
+-- 4. Create plans table
+CREATE TABLE IF NOT EXISTS plans (
+  plan_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  created_by TEXT,
+  circle_id TEXT,
+  activity_type TEXT,
+  location TEXT,
+  datetime TEXT,
+  max_people INTEGER,
+  split_amount NUMERIC DEFAULT 0,
+  payment_required BOOLEAN DEFAULT false,
+  status TEXT DEFAULT 'active',
+  created_at TEXT,
+  "coverImage" TEXT,
+  theatre TEXT,
+  "seatsLeft" INTEGER,
+  notes TEXT,
+  "coordinatedSeat" TEXT,
+  "userRating" INTEGER,
+  "userReaction" TEXT,
+  "isHappened" BOOLEAN DEFAULT false
+);
+
+-- 5. Create plan_participants table
+CREATE TABLE IF NOT EXISTS plan_participants (
+  participant_id TEXT PRIMARY KEY,
+  plan_id TEXT REFERENCES plans(plan_id) ON DELETE CASCADE,
+  user_id TEXT,
+  status TEXT DEFAULT 'going',
+  payment_status TEXT DEFAULT 'unpaid',
+  joined_at TEXT
+);
+
+-- 6. Create transactions table
+CREATE TABLE IF NOT EXISTS transactions (
+  transaction_id TEXT PRIMARY KEY,
+  sender_id TEXT,
+  receiver_id TEXT,
+  plan_id TEXT,
+  amount NUMERIC DEFAULT 0,
+  transaction_type TEXT,
+  status TEXT DEFAULT 'success',
+  timestamp TEXT
+);
+
+-- 7. Create memories table
+CREATE TABLE IF NOT EXISTS memories (
+  memory_id TEXT PRIMARY KEY,
+  plan_id TEXT,
+  uploaded_by TEXT,
+  media_url TEXT,
+  caption TEXT,
+  timestamp TEXT
+);
+
+-- 8. Disable Row Level Security (RLS) to allow the anon client to sync records seamlessly
+ALTER TABLE users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE circles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE circle_members DISABLE ROW LEVEL SECURITY;
+ALTER TABLE plans DISABLE ROW LEVEL SECURITY;
+ALTER TABLE plan_participants DISABLE ROW LEVEL SECURITY;
+ALTER TABLE transactions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE memories DISABLE ROW LEVEL SECURITY;
+
+-- 9. Truncate existing data to avoid primary key conflicts on re-seeding
+TRUNCATE TABLE memories CASCADE;
+TRUNCATE TABLE transactions CASCADE;
+TRUNCATE TABLE plan_participants CASCADE;
+TRUNCATE TABLE plans CASCADE;
+TRUNCATE TABLE circle_members CASCADE;
+TRUNCATE TABLE circles CASCADE;
+TRUNCATE TABLE users CASCADE;
+
+-- 10. Seed Default Users
+INSERT INTO users (user_id, username, full_name, phone_number, profile_photo, bio, college_or_work, wallet_balance, active_status, created_at) VALUES
+('U001', 'thilak', 'VR Thilaka Sundar', '+91 90002 00001', 'https://api.dicebear.com/7.x/initials/svg?seed=VR', 'Always spontaneous, never planless • Looking for movies/football.', 'SRM Chennai', 580, true, '2026-05-10T12:00:00Z'),
+('U002', 'keval', 'Keval', '+91 90001 00002', 'https://api.dicebear.com/7.x/initials/svg?seed=Keval', 'Semi-pro midfielder. Turf organizer on New Bel Road.', 'MSRIT Bangalore', 320, true, '2026-05-11T09:15:00Z'),
+('U003', 'medhaj', 'Medhaj', '+91 90001 00001', 'https://api.dicebear.com/7.x/initials/svg?seed=Medhaj', 'Left winger. Spontaneous plans and strong filter coffee.', 'PES University', 450, true, '2026-05-11T14:30:00Z'),
+('U004', 'guhan', 'Guhan', '+91 90003 00001', 'https://api.dicebear.com/7.x/initials/svg?seed=Guhan', 'Weekend drives & cafe hopper. Glen''s critic.', 'SRM University', 1200, true, '2026-05-12T10:00:00Z'),
+('U005', 'rahul', 'Rahul', '+91 90002 00002', 'https://api.dicebear.com/7.x/initials/svg?seed=Rahul', 'Sunset chaser & late night highway drives.', 'VIT Chennai', 200, true, '2026-05-12T11:45:00Z'),
+('U006', 'sudeshna', 'Sudeshna', '+91 90003 00004', 'https://api.dicebear.com/7.x/initials/svg?seed=Sudeshna', 'Loves book cafes, live gigs, and spontaneous street food runs.', 'Stella Maris College', 650, true, '2026-05-13T08:00:00Z'),
+('U007', 'raghavan', 'Raghavan', '+91 90002 00003', 'https://api.dicebear.com/7.x/initials/svg?seed=Raghavan', 'Talk movies and acoustic music.', 'IIT Madras', 380, true, '2026-05-13T09:30:00Z'),
+('U008', 'pratyush', 'Pratyush', '+91 90002 00004', 'https://api.dicebear.com/7.x/initials/svg?seed=Pratyush', 'Design is how it works. Coffee enthusiast.', 'NID Ahmedabad', 750, true, '2026-05-13T16:20:00Z'),
+('U009', 'neelesh', 'Neelesh', '+91 90002 00005', 'https://api.dicebear.com/7.x/initials/svg?seed=Neelesh', 'Always down for spontaneous road trips.', 'LPU Jalandhar', 140, true, '2026-05-14T11:00:00Z'),
+('U010', 'ravi', 'Ravi', '+91 90003 00003', 'https://api.dicebear.com/7.x/initials/svg?seed=Ravi', 'Hot chocolate and indie games.', 'BITS Pilani', 500, true, '2026-05-14T15:30:00Z'),
+('U011', 'vinod', 'Vinod', '+91 90002 00006', 'https://api.dicebear.com/7.x/initials/svg?seed=Vinod', 'Popcorn & cinematography debates.', 'Satyajit Ray Film Inst', 300, true, '2026-05-15T12:00:00Z'),
+('U012', 'renjith', 'Renjith', '+91 90001 00008', 'https://api.dicebear.com/7.x/initials/svg?seed=Renjith', 'Late night drives, old music, football on weekends.', 'GCE Trivandrum', 400, true, '2026-05-15T14:00:00Z');
+
+-- 11. Seed Default Circles
+INSERT INTO circles (circle_id, name, description, category, created_by, cover_image, location_anchor, privacy, created_at) VALUES
+('C001', 'Navkis Matchday', 'Football Group based out of New Bel Road. Format: 7v7, 14 players on field.', 'football', 'U002', 'https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=600', 'New Bel Road', 'private', '2026-05-15T17:00:00Z'),
+('C002', 'Midnight Masala', 'Friends who make spontaneous plans including dinners, drives, cafés, and beach hangouts.', 'sunset', 'U005', 'https://images.unsplash.com/photo-1518063319789-7217e6706b04?auto=format&fit=crop&q=80&w=600', 'Marina Beach Breeze Point', 'private', '2026-05-16T18:30:00Z'),
+('C003', 'Jobis', 'Close friend group for hanging out, cafés, late-night waffles, and spontaneous chill meetups.', 'cafe', 'U004', 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&q=80&w=600', 'Glen''s Bakehouse New Bel Road', 'private', '2026-05-17T11:00:00Z');
+
+-- 12. Seed Circle Memberships
+INSERT INTO circle_members (circle_member_id, circle_id, user_id, role, joined_at) VALUES
+('CM001', 'C001', 'U002', 'admin', '2026-05-15T17:05:00Z'),
+('CM002', 'C001', 'U003', 'member', '2026-05-15T17:10:00Z'),
+('CM003', 'C001', 'U001', 'member', '2026-05-15T17:15:00Z'),
+('CM004', 'C001', 'U012', 'member', '2026-05-15T17:20:00Z'),
+('CM101', 'C002', 'U005', 'admin', '2026-05-16T18:35:00Z'),
+('CM102', 'C002', 'U001', 'member', '2026-05-16T18:40:00Z'),
+('CM103', 'C002', 'U007', 'member', '2026-05-16T18:42:00Z'),
+('CM104', 'C002', 'U008', 'member', '2026-05-16T18:45:00Z'),
+('CM105', 'C002', 'U009', 'member', '2026-05-16T18:50:00Z'),
+('CM201', 'C003', 'U004', 'admin', '2026-05-17T11:05:00Z'),
+('CM202', 'C003', 'U001', 'member', '2026-05-17T11:10:00Z'),
+('CM203', 'C003', 'U010', 'member', '2026-05-17T11:12:00Z'),
+('CM204', 'C003', 'U006', 'member', '2026-05-17T11:15:00Z'),
+('CM205', 'C003', 'U011', 'member', '2026-05-17T11:20:00Z');
+
+-- 13. Seed Spontaneous Plans
+INSERT INTO plans (plan_id, title, description, created_by, circle_id, activity_type, location, datetime, max_people, split_amount, payment_required, status, created_at, "coverImage", theatre, "seatsLeft", notes, "coordinatedSeat", "userRating", "userReaction", "isHappened") VALUES
+('P001', 'Navkis Matchday 7v7', 'Turf Booking on New Bel Road. Format: 7v7, 14 players on field. Arrive by 7:45 PM.', 'U002', 'C001', 'football', 'New Bel Road Turf Arena', 'TODAY • 8:00 PM', 14, 350, true, 'active', '2026-05-23T10:00:00Z', 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&q=80&w=600', NULL, NULL, NULL, NULL, NULL, NULL, false),
+('P002', 'Midnight Masala Drive & Sunset', 'Late night drive to Marina Beach breeze point. Spark spontaneous ocean conversations.', 'U005', 'C002', 'sunset', 'Marina Beach Breeze Point', 'TODAY • 10:30 PM', 9, 150, true, 'active', '2026-05-23T12:00:00Z', 'https://images.unsplash.com/photo-1518063319789-7217e6706b04?auto=format&fit=crop&q=80&w=600', NULL, NULL, NULL, NULL, NULL, NULL, false),
+('P003', 'Jobis Late Night Waffles', 'Late-night waffle discussions and hot coffee at Glen''s.', 'U004', 'C003', 'brunch', 'Glen''s Bakehouse, New Bel Road', 'Sat • 11:30 PM', 14, 250, true, 'active', '2022-05-22T15:00:00Z', 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&q=80&w=600', NULL, NULL, NULL, NULL, NULL, NULL, false),
+('P004', 'Interstellar', 'Revisiting Christopher Nolan''s absolute masterpiece in IMAX. Grab nachos and discussions about time dilation!', 'U007', NULL, 'movies', 'PVR Phoenix Mall', 'Fri • 8:30 PM', 10, 250, true, 'active', '2026-05-22T08:00:00Z', 'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&q=80&w=600', 'PVR Phoenix Mall', 32, 'Meet at the entrance 15 mins early.', NULL, NULL, NULL, false),
+('P005', 'The Spice Room', 'Spontaneous North Indian feast! Warm curries and freshly baked garlic naans under outdoor lights.', 'U002', 'C003', 'brunch', 'Koramangala, Bangalore', 'Sat, 25 May • 8:00 PM', 8, 700, true, 'active', '2026-05-23T14:00:00Z', 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&q=80&w=600', NULL, NULL, 'Birthday dinner celebration. Dress code: Casual.', NULL, NULL, NULL, false);
+
+-- 14. Seed Plan Participants
+INSERT INTO plan_participants (participant_id, plan_id, user_id, status, payment_status, joined_at) VALUES
+('PP001', 'P001', 'U002', 'going', 'paid', '2026-05-23T10:05:00Z'),
+('PP002', 'P001', 'U003', 'going', 'paid', '2026-05-23T10:10:00Z'),
+('PP003', 'P001', 'U001', 'going', 'unpaid', '2026-05-23T10:15:00Z'),
+('PP004', 'P001', 'U012', 'going', 'paid', '2026-05-23T10:20:00Z'),
+('PP005', 'P001', 'U004', 'going', 'paid', '2026-05-23T10:25:00Z'),
+('PP006', 'P001', 'U005', 'going', 'paid', '2026-05-23T10:30:00Z'),
+('PP007', 'P001', 'U006', 'going', 'paid', '2026-05-23T10:35:00Z'),
+('PP008', 'P001', 'U007', 'going', 'paid', '2026-05-23T10:40:00Z'),
+('PP009', 'P001', 'U008', 'going', 'paid', '2026-05-23T10:45:00Z'),
+('PP010', 'P001', 'U009', 'going', 'paid', '2026-05-23T10:50:00Z'),
+('PP011', 'P001', 'U010', 'going', 'paid', '2026-05-23T10:55:00Z'),
+('PP012', 'P001', 'U011', 'going', 'paid', '2026-05-23T11:00:00Z'),
+('PP101', 'P002', 'U005', 'going', 'paid', '2026-05-23T12:05:00Z'),
+('PP102', 'P002', 'U001', 'going', 'paid', '2026-05-23T12:10:00Z'),
+('PP103', 'P002', 'U007', 'going', 'paid', '2026-05-23T12:12:00Z'),
+('PP104', 'P002', 'U008', 'going', 'unpaid', '2026-05-23T12:15:00Z'),
+('PP105', 'P002', 'U009', 'going', 'unpaid', '2026-05-23T12:20:00Z'),
+('PP201', 'P003', 'U004', 'going', 'paid', '2026-05-22T15:10:00Z'),
+('PP202', 'P003', 'U001', 'going', 'unpaid', '2026-05-22T15:15:00Z'),
+('PP203', 'P003', 'U010', 'going', 'paid', '2026-05-22T15:20:00Z'),
+('PP204', 'P003', 'U006', 'going', 'paid', '2026-05-22T15:25:00Z'),
+('PP301', 'P004', 'U007', 'going', 'paid', '2026-05-22T08:05:00Z'),
+('PP302', 'P004', 'U002', 'going', 'paid', '2026-05-22T08:10:00Z'),
+('PP303', 'P004', 'U003', 'going', 'paid', '2026-05-22T08:15:00Z'),
+('PP304', 'P004', 'U004', 'going', 'paid', '2026-05-22T08:20:00Z'),
+('PP305', 'P004', 'U005', 'going', 'paid', '2026-05-22T08:25:00Z'),
+('PP306', 'P004', 'U006', 'going', 'paid', '2026-05-22T08:30:00Z'),
+('PP401', 'P005', 'U002', 'going', 'paid', '2026-05-23T14:05:00Z'),
+('PP402', 'P005', 'U003', 'going', 'paid', '2026-05-23T14:10:00Z'),
+('PP403', 'P005', 'U004', 'going', 'paid', '2026-05-23T14:15:00Z'),
+('PP404', 'P005', 'U005', 'going', 'paid', '2026-05-23T14:20:00Z');
+
+-- 15. Seed Co-pay Transactions
+INSERT INTO transactions (transaction_id, sender_id, receiver_id, plan_id, amount, transaction_type, status, timestamp) VALUES
+('T001', 'SYSTEM', 'U001', NULL, 1000, 'deposit', 'success', 'May 23, 2026'),
+('T002', 'U001', 'U004', 'P003', 250, 'split_payment', 'success', 'May 23, 2026'),
+('T003', 'U001', 'U002', 'P001', 350, 'split_payment', 'success', 'May 22, 2026');
+
+-- 16. Seed Snaps (Memories)
+INSERT INTO memories (memory_id, plan_id, uploaded_by, media_url, caption, timestamp) VALUES
+('M001', 'P001', 'U002', 'https://images.unsplash.com/photo-1517521782213-e7a9c422c83d?auto=format&fit=crop&q=80&w=400', 'What a crazy 7v7 tonight. Clinched the winning goal at the buzzer! 🔥', '2026-05-23T16:45:00Z'),
+('M002', 'P001', 'U003', 'https://images.unsplash.com/photo-1516567727245-ad8c68f3ec93?auto=format&fit=crop&q=80&w=400', 'Absolute masterclass from everyone on New Bel Road. Spot on coordination!', '2026-05-23T17:00:00Z'),
+('M003', 'P002', 'U005', 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&q=80&w=400', 'The breeze tonight is therapeutic. Marina never disappoints.', '2026-05-23T17:30:00Z');
+`;
+
+interface MainAppProps {
+  userProfile: UserProfile;
+  onLogout: () => void;
+  onUpdateProfile?: (profile: UserProfile) => void;
+}
+
+export function MainApp({ userProfile, onLogout, onUpdateProfile }: MainAppProps) {
+  const activeUserId = userProfile.user_id || "U001";
+
+  // 7-Table Canonical Relational Database State (In-Memory SQL & Supabase Sync)
+  const [dbUsers, setDbUsers] = useState<User[]>(() => {
+    const defaultUsers = JSON.parse(JSON.stringify(initialUsers));
+    const selfIdx = defaultUsers.findIndex(u => u.user_id === activeUserId);
+    if (selfIdx !== -1) {
+      defaultUsers[selfIdx] = {
+        ...defaultUsers[selfIdx],
+        full_name: userProfile.name,
+        phone_number: userProfile.phone || defaultUsers[selfIdx].phone_number,
+        bio: userProfile.bio || defaultUsers[selfIdx].bio,
+        profile_photo: userProfile.avatar || defaultUsers[selfIdx].profile_photo,
+        college_or_work: userProfile.college_or_work || defaultUsers[selfIdx].college_or_work,
+      };
+    } else {
+      defaultUsers.push({
+        user_id: activeUserId,
+        username: userProfile.name.toLowerCase().replace(/\s+/g, "") || "thilak",
+        full_name: userProfile.name,
+        phone_number: userProfile.phone,
+        profile_photo: userProfile.avatar,
+        bio: userProfile.bio || "Always spontaneous, never planless.",
+        college_or_work: userProfile.college_or_work || "SRM Chennai",
+        created_at: new Date().toISOString(),
+        wallet_balance: 580,
+        active_status: true,
+      });
+    }
+    return defaultUsers;
+  });
+  const [dbCircles, setDbCircles] = useState<DbCircle[]>(() => JSON.parse(JSON.stringify(initialCircles)));
+  const [dbCircleMembers, setDbCircleMembers] = useState<DbCircleMember[]>(() => JSON.parse(JSON.stringify(initialCircleMembers)));
+  const [dbPlans, setDbPlans] = useState<DbPlan[]>(() => JSON.parse(JSON.stringify(initialPlans)));
+  const [dbPlanParticipants, setDbPlanParticipants] = useState<DbPlanParticipant[]>(() => {
+    return JSON.parse(JSON.stringify(initialPlanParticipants)); // Include all participants including self so Going filter works
+  });
+  const [dbTransactions, setDbTransactions] = useState<DbTransaction[]>(() => JSON.parse(JSON.stringify(initialTransactions)));
+  const [dbMemories, setDbMemories] = useState<DbMemory[]>(() => JSON.parse(JSON.stringify(initialMemories)));
+
+  // Application UI State (Mapped views for legacy interactive templates)
+  const { plans, setPlans, joinPlan, leavePlan, waitlistPlan, getHomeFeedPlans, getHubPlans } = usePlansStore();
+
+  const [circles, setCircles] = useState<Circle[]>(() => {
+    const defaultUsers = JSON.parse(JSON.stringify(initialUsers));
+    const selfIdx = defaultUsers.findIndex(u => u.user_id === activeUserId);
+    if (selfIdx !== -1) {
+      defaultUsers[selfIdx] = {
+        ...defaultUsers[selfIdx],
+        full_name: userProfile.name,
+        phone_number: userProfile.phone,
+        bio: userProfile.bio,
+        profile_photo: userProfile.avatar,
+        college_or_work: userProfile.college_or_work,
+      };
+    } else {
+      defaultUsers.push({
+        user_id: activeUserId,
+        username: userProfile.name.toLowerCase().replace(/\s+/g, "") || "thilak",
+        full_name: userProfile.name,
+        phone_number: userProfile.phone,
+        profile_photo: userProfile.avatar,
+        bio: userProfile.bio || "Always spontaneous, never planless.",
+        college_or_work: userProfile.college_or_work || "SRM Chennai",
+        created_at: new Date().toISOString(),
+        wallet_balance: 580,
+        active_status: true,
+      });
+    }
+    return mapCirclesToLegacyCircles(
+      JSON.parse(JSON.stringify(initialCircles)),
+      JSON.parse(JSON.stringify(initialCircleMembers)),
+      defaultUsers
+    );
+  });
+
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => JSON.parse(JSON.stringify(initialNotifications)));
+
+  const [transactions, setTransactions] = useState<Transaction[]>(() => {
+    const defaultUsers = JSON.parse(JSON.stringify(initialUsers));
+    const selfIdx = defaultUsers.findIndex(u => u.user_id === activeUserId);
+    if (selfIdx !== -1) {
+      defaultUsers[selfIdx] = {
+        ...defaultUsers[selfIdx],
+        full_name: userProfile.name,
+        phone_number: userProfile.phone,
+        bio: userProfile.bio,
+        profile_photo: userProfile.avatar,
+        college_or_work: userProfile.college_or_work,
+      };
+    } else {
+      defaultUsers.push({
+        user_id: activeUserId,
+        username: userProfile.name.toLowerCase().replace(/\s+/g, "") || "thilak",
+        full_name: userProfile.name,
+        phone_number: userProfile.phone,
+        profile_photo: userProfile.avatar,
+        bio: userProfile.bio || "Always spontaneous, never planless.",
+        college_or_work: userProfile.college_or_work || "SRM Chennai",
+        created_at: new Date().toISOString(),
+        wallet_balance: 580,
+        active_status: true,
+      });
+    }
+    return mapTransactionsToLegacy(
+      JSON.parse(JSON.stringify(initialTransactions)),
+      defaultUsers,
+      activeUserId
+    );
+  });
+
+  const [walletBalance, setWalletBalance] = useState(580);
+
+  // Supabase Configuration & Active State Trackers
+  const [supabaseConfig, setSupabaseConfig] = useState<{
+    configured: boolean;
+    tables_missing: boolean;
+    missing_tables: string[];
+    supabase_url?: string;
+  }>({
+    configured: false,
+    tables_missing: true,
+    missing_tables: ["users", "circles", "circle_members", "plans", "plan_participants", "transactions", "memories"],
+  });
+  const [supabaseSyncStatus, setSupabaseSyncStatus] = useState<"loading" | "connected" | "schema_missing" | "unconfigured" | "error">("loading");
+
+  // Guard references to block circular loops during the initial bootstrap pull
+  const isLoadedRef = useRef(false);
+
+  // Native proxy to upsert data cleanly to Supabase
+  const pushToSupabase = async (table: string, records: any[]) => {
+    try {
+      const response = await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table, records }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        console.warn(`[Supabase Sync Warning] Failed to sync ${table}:`, result.error || result);
+      } else {
+        console.log(`[Supabase Sync] Successfully synchronized ${records.length} records on table "${table}"!`);
+      }
+    } catch (err) {
+      console.warn(`[Supabase Sync Network Exception] Failed to sync ${table}:`, err);
+    }
+  };
+
+  // Startup lifecycle - loads remote database and dynamically triggers seeding if needed
+  React.useEffect(() => {
+    let active = true;
+
+    async function loadSupabaseData() {
+      try {
+        setSupabaseSyncStatus("loading");
+        const res = await fetch("/api/db/fetch-all");
+        if (!res.ok) throw new Error("Sync service is currently offline");
+        const resJson = await res.json();
+
+        if (!active) return;
+
+        if (!resJson.configured) {
+          setSupabaseSyncStatus("unconfigured");
+          return;
+        }
+
+        setSupabaseConfig({
+          configured: resJson.configured,
+          tables_missing: resJson.tables_missing,
+          missing_tables: resJson.missing_tables || [],
+          supabase_url: resJson.supabase_url || "https://yuuzenyjxxuqahosflob.supabase.co"
+        });
+
+        if (resJson.tables_missing) {
+          setSupabaseSyncStatus("schema_missing");
+          return;
+        }
+
+        const dbData = resJson.data || {};
+        const remoteUsers = dbData.users || [];
+        const remotePlans = dbData.plans || [];
+        const hasFootballTonight = remotePlans.some((p: any) => p.title === "Football Tonight" || p.title === "FOOTBALL TONIGHT" || p.plan_id === "P001");
+        const hasStalePlans = remotePlans.some((rp: any) =>
+          !initialPlans.some(ip => ip.plan_id === rp.plan_id) ||
+          rp.title.toUpperCase() === "INTERSTELLAR"
+        );
+
+        // Dynamic DB Seeding: If connected but blank/unseeded, or if stale (missing our new seeded plans or has stale plans), populate tables immediately!
+        if (remoteUsers.length === 0 || !hasFootballTonight || hasStalePlans) {
+          console.log("[Supabase Sync] Connected database is empty or stale. Truncating and Injecting canonical datasets...");
+          triggerToast("🌱 Seeding Supabase with canonical datasets...");
+
+          try {
+            // First call reset endpoint to completely clear any stale plans/participants (like INTERSTELLAR)
+            await fetch("/api/db/reset", { method: "POST" });
+          } catch (resetErr) {
+            console.warn("Failed to reset database on stale detection:", resetErr);
+          }
+
+          // Inject actual logged-in user profile inside seeded record
+          const seededUsers = [...initialUsers];
+          const selfIdx = seededUsers.findIndex(u => u.user_id === activeUserId);
+          if (selfIdx !== -1) {
+            seededUsers[selfIdx] = {
+              ...seededUsers[selfIdx],
+              full_name: userProfile.name,
+              phone_number: userProfile.phone || seededUsers[selfIdx].phone_number,
+              bio: userProfile.bio || seededUsers[selfIdx].bio,
+              profile_photo: userProfile.avatar || seededUsers[selfIdx].profile_photo,
+              college_or_work: userProfile.college_or_work || seededUsers[selfIdx].college_or_work,
+            };
+          } else {
+            seededUsers.push({
+              user_id: activeUserId,
+              username: userProfile.name.toLowerCase().replace(/\s+/g, "") || "thilak",
+              full_name: userProfile.name,
+              phone_number: userProfile.phone,
+              profile_photo: userProfile.avatar,
+              bio: userProfile.bio || "Always spontaneous, never planless.",
+              college_or_work: userProfile.college_or_work || "SRM Chennai",
+              wallet_balance: 580,
+              active_status: true,
+              created_at: new Date().toISOString()
+            });
+          }
+
+          await Promise.all([
+            pushToSupabase("users", seededUsers),
+            pushToSupabase("circles", initialCircles),
+            pushToSupabase("circle_members", initialCircleMembers),
+            pushToSupabase("plans", initialPlans),
+            pushToSupabase("plan_participants", initialPlanParticipants),
+            pushToSupabase("transactions", initialTransactions),
+            pushToSupabase("memories", initialMemories)
+          ]);
+
+          // Enable loop & mark as connected
+          setTimeout(() => {
+            if (active) {
+              isLoadedRef.current = true;
+              setSupabaseSyncStatus("connected");
+              triggerToast("⚡ Supabase sandbox populated & connected!");
+            }
+          }, 1500);
+          return;
+        }
+
+        // Merge active local onboarding profile into remote user database
+        const remoteUsersFetched = [...remoteUsers];
+        const selfUser_idx = remoteUsersFetched.findIndex((u: any) => u.user_id === activeUserId);
+        if (selfUser_idx !== -1) {
+          remoteUsersFetched[selfUser_idx] = {
+            ...remoteUsersFetched[selfUser_idx],
+            full_name: userProfile.name,
+            phone_number: userProfile.phone || remoteUsersFetched[selfUser_idx].phone_number,
+            bio: userProfile.bio || remoteUsersFetched[selfUser_idx].bio,
+            profile_photo: userProfile.avatar || remoteUsersFetched[selfUser_idx].profile_photo,
+            college_or_work: userProfile.college_or_work || remoteUsersFetched[selfUser_idx].college_or_work,
+          };
+        } else {
+          remoteUsersFetched.push({
+            user_id: activeUserId,
+            username: userProfile.name.toLowerCase().replace(/\s+/g, "") || "thilak",
+            full_name: userProfile.name,
+            phone_number: userProfile.phone,
+            profile_photo: userProfile.avatar,
+            bio: userProfile.bio || "Always spontaneous, never planless.",
+            college_or_work: userProfile.college_or_work || "SRM Chennai",
+            wallet_balance: 580,
+            active_status: true,
+            created_at: new Date().toISOString()
+          });
+        }
+
+        // Full remote state overwrite for persistent coordination
+        setDbUsers(remoteUsersFetched);
+        setDbCircles(dbData.circles || []);
+        setDbCircleMembers(dbData.circle_members || []);
+        setDbPlans(dbData.plans || []);
+        const remoteParticipants = dbData.plan_participants || [];
+        setDbPlanParticipants(remoteParticipants);
+        setDbTransactions(dbData.transactions || []);
+        setDbMemories(dbData.memories || []);
+
+        // Recalculate frontend mapping views
+        const mappedUsers = remoteUsersFetched;
+        const mappedCircles = mapCirclesToLegacyCircles(dbData.circles || [], dbData.circle_members || [], mappedUsers);
+        const mappedPlans = mapPlansToLegacyPlans(dbData.plans || [], remoteParticipants, mappedUsers, activeUserId);
+        const mappedTransactions = mapTransactionsToLegacy(dbData.transactions || [], mappedUsers, activeUserId);
+
+        setPlans(mappedPlans);
+        setCircles(mappedCircles);
+        setTransactions(mappedTransactions);
+
+        // Map personal wallet balance from table record
+        const selfUser = mappedUsers.find((u: any) => u.user_id === activeUserId);
+        if (selfUser) {
+          setWalletBalance(selfUser.wallet_balance);
+        }
+
+        setTimeout(() => {
+          if (active) {
+            isLoadedRef.current = true;
+            setSupabaseSyncStatus("connected");
+          }
+        }, 1500);
+
+      } catch (err) {
+        console.error("[Supabase Sync Loader Exception]:", err);
+        if (active) {
+          setSupabaseSyncStatus("error");
+        }
+      }
+    }
+
+    loadSupabaseData();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Declarative Synchronization Hooks mapping local state changes back up to Supabase
+  React.useEffect(() => {
+    if (!isLoadedRef.current || supabaseSyncStatus !== "connected") return;
+    const debouncePlans = setTimeout(() => {
+      pushToSupabase("plans", dbPlans);
+    }, 1200);
+    return () => clearTimeout(debouncePlans);
+  }, [dbPlans, supabaseSyncStatus]);
+
+  React.useEffect(() => {
+    if (!isLoadedRef.current || supabaseSyncStatus !== "connected") return;
+    const debouncePart = setTimeout(() => {
+      pushToSupabase("plan_participants", dbPlanParticipants);
+    }, 1200);
+    return () => clearTimeout(debouncePart);
+  }, [dbPlanParticipants, supabaseSyncStatus]);
+
+  React.useEffect(() => {
+    if (!isLoadedRef.current || supabaseSyncStatus !== "connected") return;
+    const debounceCircles = setTimeout(() => {
+      pushToSupabase("circles", dbCircles);
+    }, 1200);
+    return () => clearTimeout(debounceCircles);
+  }, [dbCircles, supabaseSyncStatus]);
+
+  React.useEffect(() => {
+    if (!isLoadedRef.current || supabaseSyncStatus !== "connected") return;
+    const debounceMembers = setTimeout(() => {
+      pushToSupabase("circle_members", dbCircleMembers);
+    }, 1200);
+    return () => clearTimeout(debounceMembers);
+  }, [dbCircleMembers, supabaseSyncStatus]);
+
+  React.useEffect(() => {
+    if (!isLoadedRef.current || supabaseSyncStatus !== "connected") return;
+    const debounceUsers = setTimeout(() => {
+      pushToSupabase("users", dbUsers);
+    }, 1200);
+    return () => clearTimeout(debounceUsers);
+  }, [dbUsers, supabaseSyncStatus]);
+
+  React.useEffect(() => {
+    if (!isLoadedRef.current || supabaseSyncStatus !== "connected") return;
+    const debounceTx = setTimeout(() => {
+      pushToSupabase("transactions", dbTransactions);
+    }, 1200);
+    return () => clearTimeout(debounceTx);
+  }, [dbTransactions, supabaseSyncStatus]);
+
+  React.useEffect(() => {
+    if (!isLoadedRef.current || supabaseSyncStatus !== "connected") return;
+    const debounceMems = setTimeout(() => {
+      pushToSupabase("memories", dbMemories);
+    }, 1200);
+    return () => clearTimeout(debounceMems);
+  }, [dbMemories, supabaseSyncStatus]);
+
+
+  const [showDbExplorer, setShowDbExplorer] = useState(false);
+  const [selectedDbTable, setSelectedDbTable] = useState<string>("users");
+  const [isTrackerExpanded, setIsTrackerExpanded] = useState(false);
+
+  // Memory and Story Flow States
+  const [activeStoryRecap, setActiveStoryRecap] = useState<Plan | null>(null);
+  const [storyIndex, setStoryIndex] = useState<number>(0);
+  const [storyPlaying, setStoryPlaying] = useState<boolean>(true);
+  const [editingMemory, setEditingMemory] = useState<DbMemory | null>(null);
+  const [editedCaption, setEditedCaption] = useState<string>("");
+  const [showAddMemoriesPrompt, setShowAddMemoriesPrompt] = useState<Plan | null>(null);
+  const [memoryUploadPreview, setMemoryUploadPreview] = useState<string | null>(null);
+  const [memoryUploadCaption, setMemoryUploadCaption] = useState<string>("");
+
+  // Navigation
+  const [activeTab, setActiveTab] = useState<"home" | "plans" | "create" | "circles" | "wallet" | "profile">("home");
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    setActiveCardId(null);
+  }, [activeTab]);
+
+  // Profile settings and detailed account subview states
+  const [activeProfileSubView, setActiveProfileSubView] = useState<"none" | "settings" | "payments" | "account" | "notifications" | "privacy" | "help">("none");
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editProfileName, setEditProfileName] = useState(userProfile.name);
+  const [editProfileBio, setEditProfileBio] = useState(userProfile.bio || "");
+  const [editProfileCollege, setEditProfileCollege] = useState(userProfile.college_or_work || "");
+  const [editProfileAvatar, setEditProfileAvatar] = useState(userProfile.avatar || "");
+  const [notifInvites, setNotifInvites] = useState(true);
+  const [notifCircles, setNotifCircles] = useState(true);
+  const [notifBills, setNotifBills] = useState(true);
+  const [privacyShareLocation, setPrivacyShareLocation] = useState(true);
+  const [privacyInvisible, setPrivacyInvisible] = useState(false);
+
+  // New Create Tab interactive state
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+  const [carouselIndex, setCarouselIndex] = useState<number>(0);
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const homeFeedRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    const scrollLeft = container.scrollLeft;
+    const width = container.offsetWidth || 300;
+    const newIndex = Math.min(
+      Math.max(Math.round(scrollLeft / (width * 0.75)), 0),
+      2
+    );
+    if (newIndex !== carouselIndex) {
+      setCarouselIndex(newIndex);
+    }
+  };
+
+  const scrollToSlide = (idx: number) => {
+    if (carouselRef.current) {
+      const width = carouselRef.current.offsetWidth || 300;
+      carouselRef.current.scrollTo({
+        left: idx * width * 0.80,
+        behavior: "smooth"
+      });
+      setCarouselIndex(idx);
+    }
+  };
+
+  // Plans Tab Filters
+  const [plansFilter, setPlansFilter] = useState<"going" | "waitlist" | "passed" | "hosted">("going");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+
+  // UI Overlays & Interactive states
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [isProgressPopupOpen, setIsProgressPopupOpen] = useState(false);
+
+  const selectedPlanId = selectedPlan?.id || "";
+  React.useEffect(() => {
+    setIsProgressPopupOpen(false);
+  }, [selectedPlanId]);
+  const [selectedCircle, setSelectedCircle] = useState<Circle | null>(null);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notificationFilter, setNotificationFilter] = useState<"all" | "plans" | "payments" | "activity">("all");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [interestedPlanIds, setInterestedPlanIds] = useState<string[]>([]);
+  // Snooze = swipe-down = revisit later (not rejection, not passed)
+  const [snoozedPlanIds, setSnoozedPlanIds] = useState<string[]>([]);
+  // Per-plan auto-pass tracking: planId → array of user names who are "passed" on that plan
+  const [passedByPlanId, setPassedByPlanId] = useState<Record<string, string[]>>({});
+  // Which hosted plan IDs have had a reminder sent
+  const [reminderSentPlanIds, setReminderSentPlanIds] = useState<string[]>([]);
+  const handleSnoozePlan = (planId: string) => {
+    setSnoozedPlanIds(prev => [...prev, planId]);
+    triggerToast("Snoozed: We'll show this plan again later");
+  };
+  const [paymentConfirmationPlan, setPaymentConfirmationPlan] = useState<Plan | null>(null);
+  const [showPaymentSuccess, setShowPaymentSuccess] = useState<Plan | null>(null);
+  const [showWaitlistSuccess, setShowWaitlistSuccess] = useState<Plan | null>(null);
+  const [isInvitingFriends, setIsInvitingFriends] = useState(false);
+  const [expandedCircleIds, setExpandedCircleIds] = useState<string[]>([]);
+  const [showUpcomingPlans, setShowUpcomingPlans] = useState(false);
+  const upcomingCirclePlans = plans.filter(plan => !plan.isHappened);
+
+  // 💬 NEW UNIFIED DYNAMIC COORDINATION CHATS FOR ALL PLANS
+  const [planMessages, setPlanMessages] = useState<Record<string, { sender: string, avatar: string, text: string, time: string }[]>>({
+    "P001": [
+      { sender: "Keval", avatar: getInitialsAvatar("Keval"), text: "Any of you got extra bibs? Or does the turf/host provide?", time: "2h ago" },
+      { sender: "Medhaj", avatar: getInitialsAvatar("Medhaj"), text: "Turf booking includes full bibs set (Orange & Neon Green). Just bring yourself!", time: "1h ago" },
+      { sender: "VR Thilaka Sundar", avatar: getInitialsAvatar("VR Thilaka Sundar"), text: "Sweet, I'm wearing a white jersey so bibs fit perfectly over it. See you at 7:50 PM!", time: "45m ago" },
+    ],
+    "P004": [
+      { sender: "Raghavan", avatar: getInitialsAvatar("Raghavan"), text: "Super excited for IMAX! Settle on Row K if possible", time: "2h ago" },
+      { sender: "Keval", avatar: getInitialsAvatar("Keval"), text: "I already booked my seat K-11. Row K squad let's go!", time: "1h ago" },
+      { sender: "Sudeshna", avatar: getInitialsAvatar("Sudeshna"), text: "Who wants caramel or mix popcorn? We can split on wallet! 🍿", time: "30m ago" },
+    ],
+    "P005": [
+      { sender: "Keval", avatar: getInitialsAvatar("Keval"), text: "Should we order a platter of Kebabs to split first?", time: "2h ago" },
+      { sender: "Guhan", avatar: getInitialsAvatar("Guhan"), text: "Definitely! And a pitcher of fresh mint lime. Count me in.", time: "1h ago" },
+      { sender: "Medhaj", avatar: getInitialsAvatar("Medhaj"), text: "Perfect, I've informed the host we're arriving by 8:00 PM. No delays!", time: "40m ago" },
+    ],
+    "P002": [
+      { sender: "Rahul", avatar: getInitialsAvatar("Rahul"), text: "Let's gather near the lighthouse parking at 10:15 PM so we don't get stuck in traffic.", time: "4h ago" },
+      { sender: "Sudeshna", avatar: getInitialsAvatar("Sudeshna"), text: "Sounds perfect! I'm bringing a camera for the skyline shots! 📸", time: "2h ago" },
+    ],
+    "P003": [
+      { sender: "Guhan", avatar: getInitialsAvatar("Guhan"), text: "Hey space, waffles at Glen's are legendary! I'll reserve the long table inside.", time: "3h ago" },
+      { sender: "Medhaj", avatar: getInitialsAvatar("Medhaj"), text: "Awesome! Let's split on some blueberry pancakes too.", time: "2h ago" },
+    ],
+  });
+  const [newChatMessage, setNewChatMessage] = useState("");
+  const [activeMovieSubTab, setActiveMovieSubTab] = useState<"chat" | "seat" | "time" | "changes">("chat");
+
+  // 🌟 AI PLANNING ASSISTANT STATES & HANDLERS
+  const [aiVibePrompt, setAiVibePrompt] = useState("");
+  const [isGeneratingAiPlan, setIsGeneratingAiPlan] = useState(false);
+
+  const handleAiGeneratePlan = async () => {
+    if (!aiVibePrompt.trim()) return;
+    setIsGeneratingAiPlan(true);
+
+    try {
+      const response = await fetch("/api/generate-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vibe: aiVibePrompt, category: "any" }),
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json();
+        throw new Error(errJson.error || "Failed to generate plan");
+      }
+
+      const planData = await response.json();
+
+      // Populate standard detail form states
+      setNewPlanTitle(planData.title || "");
+      setNewPlanLocation(planData.location || "");
+      setNewPlanTime(planData.time || "TODAY • 8:30 PM");
+      setNewPlanCost((planData.cost ?? 0).toString());
+      setNewPlanSpots((planData.maxSpots ?? 6).toString());
+      setNewPlanCategory(planData.category || "custom");
+      setCustomPlanNotes(planData.notes || "");
+
+      const customPreset = {
+        id: `exp_ai_${Date.now()}`,
+        title: planData.title || "AI Generated Plan",
+        category: (planData.category || "custom") as any,
+        tag: "AI SPARKED",
+        description: planData.description || "A spontaneous social coordinate planned by AI.",
+        time: planData.time || "TODAY • 8:30 PM",
+        venue: planData.location || "Cozy venue",
+        price: planData.cost || 0,
+        image: {
+          movies: "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=600",
+          sports: "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&w=600",
+          restaurants: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=600",
+          custom: "https://images.unsplash.com/photo-1511632765486-a01980e01a18?auto=format&fit=crop&w=600"
+        }[planData.category as "movies" | "sports" | "restaurants" | "custom"] || "https://images.unsplash.com/photo-1511632765486-a01980e01a18?auto=format&fit=crop&w=600"
+      };
+
+      setSelectedExperience(customPreset as any);
+      setCreateFlowStep("DETAILS");
+      setAiVibePrompt("");
+      triggerToast("✨ AI Coordinator has aligned details! Review below.");
+    } catch (err: any) {
+      console.error("AI Generation Error", err);
+      triggerToast(`AI alignment error: ${err.message || "Ensure Secrets GEMINI_API_KEY is configured"}`);
+    } finally {
+      setIsGeneratingAiPlan(false);
+    }
+  };
+
+  // 🍿 MOVIE DETAIL SCREEN HOLD TO JOIN STATE
+  const [detailHoldProgress, setDetailHoldProgress] = useState(0);
+  const [detailIsHolding, setDetailIsHolding] = useState(false);
+  const [detailIsSuccess, setDetailIsSuccess] = useState(false);
+
+  const detailHoldStartTimeRef = useRef<number>(0);
+  const detailProgressRef = useRef<number>(0);
+  const detailAnimationFrameRef = useRef<number | null>(null);
+  const detailIsHoldTriggeredRef = useRef<boolean>(false);
+
+  // References to support clean separation of tap vs. hold-to-join with a delay threshold
+  const detailHoldDelayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detailPointerDownTimeRef = useRef<number>(0);
+  const detailHasHoldStartedRef = useRef<boolean>(false);
+
+  const startDetailHolding = (e: React.PointerEvent) => {
+    // Only apply to movies category if not already joined
+    if (!selectedPlan || selectedPlan.category !== "movies") return;
+    const isJoined = selectedPlan.joinedUsers.some(u => {
+      const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
+      const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
+      return cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU);
+    });
+    if (isJoined) return;
+
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    // Filter out buttons/UI interactive clicks (like Close button, share, etc.)
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || target.closest('label') || target.closest('a')) {
+      return;
+    }
+
+    if (detailHoldDelayTimeoutRef.current) {
+      clearTimeout(detailHoldDelayTimeoutRef.current);
+      detailHoldDelayTimeoutRef.current = null;
+    }
+
+    if (detailAnimationFrameRef.current) {
+      cancelAnimationFrame(detailAnimationFrameRef.current);
+      detailAnimationFrameRef.current = null;
+    }
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) { }
+
+    detailPointerDownTimeRef.current = performance.now();
+    detailHasHoldStartedRef.current = false;
+    detailIsHoldTriggeredRef.current = false;
+
+    // Maintain 400ms delay threshold before the hold-to-join triggers
+    detailHoldDelayTimeoutRef.current = setTimeout(() => {
+      detailHasHoldStartedRef.current = true;
+      setDetailIsHolding(true);
+      setDetailHoldProgress(0);
+      detailProgressRef.current = 0;
+
+      const startTime = performance.now();
+      detailHoldStartTimeRef.current = startTime;
+
+      const tick = (now: number) => {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / 1200, 1); // 1200ms hold duration
+        setDetailHoldProgress(progress * 100);
+        detailProgressRef.current = progress;
+
+        if (progress < 1) {
+          detailAnimationFrameRef.current = requestAnimationFrame(tick);
+        } else {
+          setDetailIsHolding(false);
+          setDetailIsSuccess(true);
+          detailIsHoldTriggeredRef.current = true;
+
+          if (detailAnimationFrameRef.current) {
+            cancelAnimationFrame(detailAnimationFrameRef.current);
+            detailAnimationFrameRef.current = null;
+          }
+
+          // Trigger movie payment confirmation immediately
+          setPaymentConfirmationPlan(selectedPlan);
+
+          setTimeout(() => {
+            setDetailIsSuccess(false);
+            setDetailHoldProgress(0);
+            detailProgressRef.current = 0;
+          }, 1200);
+        }
+      };
+
+      detailAnimationFrameRef.current = requestAnimationFrame(tick);
+    }, 400);
+  };
+
+  const stopDetailHolding = (e: React.PointerEvent) => {
+    if (detailHoldDelayTimeoutRef.current) {
+      clearTimeout(detailHoldDelayTimeoutRef.current);
+      detailHoldDelayTimeoutRef.current = null;
+    }
+
+    if (detailAnimationFrameRef.current) {
+      cancelAnimationFrame(detailAnimationFrameRef.current);
+      detailAnimationFrameRef.current = null;
+    }
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (err) { }
+
+    // If released before threshold delay, do not trigger holding animation at all
+    if (!detailHasHoldStartedRef.current) {
+      setDetailIsHolding(false);
+      setDetailHoldProgress(0);
+      detailProgressRef.current = 0;
+      return;
+    }
+
+    setDetailIsHolding(false);
+
+    if (detailProgressRef.current < 1) {
+      const startProgress = detailProgressRef.current;
+      const startReleaseTime = performance.now();
+      const DECREASE_DURATION = 300; // ms
+
+      const releaseTick = (now: number) => {
+        const elapsedRelease = now - startReleaseTime;
+        const relProgress = Math.min(elapsedRelease / DECREASE_DURATION, 1);
+        const newProgress = startProgress * (1 - relProgress);
+        setDetailHoldProgress(newProgress * 100);
+        detailProgressRef.current = newProgress;
+
+        if (relProgress < 1) {
+          detailAnimationFrameRef.current = requestAnimationFrame(releaseTick);
+        } else {
+          setDetailHoldProgress(0);
+          detailProgressRef.current = 0;
+        }
+      };
+
+      detailAnimationFrameRef.current = requestAnimationFrame(releaseTick);
+    }
+  };
+
+  const cancelDetailHolding = (e: React.PointerEvent) => {
+    if (detailHoldDelayTimeoutRef.current) {
+      clearTimeout(detailHoldDelayTimeoutRef.current);
+      detailHoldDelayTimeoutRef.current = null;
+    }
+
+    if (detailAnimationFrameRef.current) {
+      cancelAnimationFrame(detailAnimationFrameRef.current);
+      detailAnimationFrameRef.current = null;
+    }
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (err) { }
+
+    setDetailIsHolding(false);
+
+    if (detailHasHoldStartedRef.current && detailProgressRef.current < 1) {
+      const startProgress = detailProgressRef.current;
+      const startReleaseTime = performance.now();
+      const DECREASE_DURATION = 300; // ms
+
+      const releaseTick = (now: number) => {
+        const elapsedRelease = now - startReleaseTime;
+        const relProgress = Math.min(elapsedRelease / DECREASE_DURATION, 1);
+        const newProgress = startProgress * (1 - relProgress);
+        setDetailHoldProgress(newProgress * 100);
+        detailProgressRef.current = newProgress;
+
+        if (relProgress < 1) {
+          detailAnimationFrameRef.current = requestAnimationFrame(releaseTick);
+        } else {
+          setDetailHoldProgress(0);
+          detailProgressRef.current = 0;
+        }
+      };
+
+      detailAnimationFrameRef.current = requestAnimationFrame(releaseTick);
+    } else {
+      setDetailHoldProgress(0);
+      detailProgressRef.current = 0;
+    }
+  };
+
+  // 🏆 SPORTS FLOW SPECIFIC STATES
+  const [activeSportsSubTab, setActiveSportsSubTab] = useState<"chat" | "polls" | "lineup" | "announcements">("chat");
+  const [newSportsChatMessage, setNewSportsChatMessage] = useState("");
+  const [sportsPolls, setSportsPolls] = useState([
+    {
+      id: 1,
+      question: "Which color bib should Team A wear?",
+      options: [
+        { text: "Neon Green 🟢", votes: 8 },
+        { text: "Neon Orange 🟠", votes: 4 }
+      ],
+      votedOptionIdx: -1
+    },
+    {
+      id: 2,
+      question: "Arriving on time (7:45 PM)?",
+      options: [
+        { text: "Yes, definitely", votes: 11 },
+        { text: "Running 5 mins late", votes: 1 }
+      ],
+      votedOptionIdx: -1
+    }
+  ]);
+  const [sportsMvpLeaderboard, setSportsMvpLeaderboard] = useState<{ name: string, avatar: string, votes: number }[]>([
+    { name: "Keval", avatar: getInitialsAvatar("Keval"), votes: 3 },
+    { name: "Medhaj", avatar: getInitialsAvatar("Medhaj"), votes: 2 },
+    { name: "Rahul", avatar: getInitialsAvatar("Rahul"), votes: 1 },
+    { name: "Guhan", avatar: getInitialsAvatar("Guhan"), votes: 0 },
+    { name: "VR Thilaka Sundar", avatar: getInitialsAvatar("VR Thilaka Sundar"), votes: 0 }
+  ]);
+
+  // 🍽️ RESTAURANT PLAN FLOW SPECIFIC STATES
+  const [activeRestaurantSubTab, setActiveRestaurantSubTab] = useState<"chat" | "timing" | "coordination" | "changes">("chat");
+  const [newRestaurantChatMessage, setNewRestaurantChatMessage] = useState("");
+  const [newCustomChatMessage, setNewCustomChatMessage] = useState("");
+
+  // Table Preference state
+  const [tablePreferences, setTablePreferences] = useState<{ option: string, votes: number, voted: boolean }[]>([
+    { option: "Outdoor Garden Deck 🌿", votes: 4, voted: false },
+    { option: "Corner Cozy Booth 🛋️", votes: 2, voted: false },
+    { option: "Main Banquet Hall 🍽️", votes: 0, voted: false }
+  ]);
+
+  // Timing suggestion state
+  const [timingSuggestions, setTimingSuggestions] = useState<string[]>(["8:00 PM (Sharp)", "8:15 PM (Slight Delay)", "8:30 PM (Traffic Block)"]);
+  const [selectedTimingUpdate, setSelectedTimingUpdate] = useState<string>("8:00 PM (As scheduled)");
+
+  // Spontaneous Create Form State (Legacy state supported for sync)
+  const [newPlanCategory, setNewPlanCategory] = useState<string>("cafe");
+  const [newPlanTitle, setNewPlanTitle] = useState("");
+  const [newPlanLocation, setNewPlanLocation] = useState("");
+  const [newPlanTime, setNewPlanTime] = useState("");
+  const [newPlanCost, setNewPlanCost] = useState("0");
+  const [newPlanSpots, setNewPlanSpots] = useState("6");
+  const [newPlanCircleId, setNewPlanCircleId] = useState("");
+
+  // MVP Create Plan Flow Multi-step Stepper parameters
+  const [createFlowStep, setCreateFlowStep] = useState<"BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW">("BROWSE");
+  const [selectedExperience, setSelectedExperience] = useState<{
+    id: string;
+    title: string;
+    category: "movies" | "sports" | "restaurants" | "custom";
+    tag: string;
+    description: string;
+    time: string;
+    venue: string;
+    price: number;
+    image: string;
+  } | null>(null);
+
+  // Audience tracking state parameters
+  const [audienceType, setAudienceType] = useState<"circle" | "friends" | "multiple">("circle");
+  const [recipientSearchQuery, setRecipientSearchQuery] = useState("");
+  const [selectedCircleIds, setSelectedCircleIds] = useState<string[]>([]);
+  const [selectedFriendIds, setSelectedFriendIds] = useState<string[]>([]);
+  const [customPlanNotes, setCustomPlanNotes] = useState("");
+
+  // Planless MVP Pre-configured Experience Templates
+  const suggestedExperiences = [
+    {
+      id: "exp_movies_1",
+      title: "Dune Part III (IMAX 4D)",
+      category: "movies" as const,
+      tag: "BLOCKBUSTER",
+      description: "Spontaneous ticket grab for the visual masterpiece. Grab premium popcorn and join our movie discussion!",
+      time: "TODAY • 9:30 PM",
+      venue: "Luxe Cinemas, VR Chennai",
+      price: 350,
+      image: "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&q=80&w=600"
+    },
+    {
+      id: "exp_movies_2",
+      title: "Cinéphile Indie Classics",
+      category: "movies" as const,
+      tag: "INDIE NIGHT",
+      description: "A curated curation of European cinema classics with film buffs. Spontaneous discussion over coffee follows.",
+      time: "TOMORROW • 6:30 PM",
+      venue: "Alliance Française, Nungambakkam",
+      price: 150,
+      image: "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&q=80&w=600"
+    },
+    {
+      id: "exp_sports_1",
+      title: "Sunset Turf Football 7v7",
+      category: "sports" as const,
+      tag: "MATCHDAY MATCH",
+      description: "Fast-paced 7-a-side match. Bibs, football and fresh water provided by the host. Just show up and play!",
+      time: "TODAY • 8:00 PM",
+      venue: "New Bel Road Turf Arena",
+      price: 250,
+      image: "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=600"
+    },
+    {
+      id: "exp_sports_2",
+      title: "Badminton Doubles Smash",
+      category: "sports" as const,
+      tag: "SMASH RALLY",
+      description: "Looking for two fast players to join us for a friendly doubles match on wooden court B. Non-marking shoes required.",
+      time: "TODAY • 6:00 PM",
+      venue: "Feathers Indoor Sports Club",
+      price: 120,
+      image: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?auto=format&fit=crop&q=80&w=600"
+    },
+    {
+      id: "exp_rest_1",
+      title: "Late Night Waffles & Coffee",
+      category: "restaurants" as const,
+      tag: "NIGHT RUN",
+      description: "Late-night waffle craving run. Open discussions about life, work, design, and everything in between!",
+      time: "TODAY • 11:30 PM",
+      venue: "Glen's Bakehouse, New Bel Road",
+      price: 200,
+      image: "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&q=80&w=600"
+    },
+    {
+      id: "exp_rest_2",
+      title: "Sponty Ramen Bowls Crew",
+      category: "restaurants" as const,
+      tag: "GOURMET ASIA",
+      description: "Indulge in some authentic spicy miso ramen bowl and hot green tea with the foodie circle.",
+      time: "TODAY • 8:30 PM",
+      venue: "Writer's Cafe, VR Chennai",
+      price: 450,
+      image: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&q=80&w=600"
+    },
+    {
+      id: "exp_custom_1",
+      title: "Custom Spontaneous Experience",
+      category: "custom" as const,
+      tag: "SPONTANEOUS Spark",
+      description: "Start from scratch and build your own spontaneous coordinate. Customize title, timings, venue coordinates, and splits.",
+      time: "TODAY • 8:30 PM",
+      venue: "",
+      price: 0,
+      image: "https://images.unsplash.com/photo-1511632765486-a01980e01a18?auto=format&fit=crop&q=80&w=600"
+    }
+  ];
+
+  // Circles creation inside the tab
+  const [newCircleName, setNewCircleName] = useState("");
+  const [showNewCircleForm, setShowNewCircleForm] = useState(false);
+
+  // Custom visual image upload states
+  const [newPlanUploadedImage, setNewPlanUploadedImage] = useState<string | null>(null);
+  const [newCircleUploadedImage, setNewCircleUploadedImage] = useState<string | null>(null);
+
+  // New deposit money overlay
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("");
+
+  // Triggering visual success confirmation toasts
+  const triggerToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
+  };
+
+  // ---------------- STATIC RESOURCES ACCORDING TO CATEGORIES ----------------
+  const categoryCovers: Record<string, string> = {
+    football: "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=600",
+    cafe: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&q=80&w=600",
+    drink: "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?auto=format&fit=crop&q=80&w=600",
+    sunset: "https://images.unsplash.com/photo-1472289065668-ce650ac443d2?auto=format&fit=crop&q=80&w=600",
+    brunch: "https://images.unsplash.com/photo-1496042404372-601440b90453?auto=format&fit=crop&q=80&w=600",
+    custom: "https://images.unsplash.com/photo-1511632765486-a01980e01a18?auto=format&fit=crop&q=80&w=600"
+  };
+
+  // ---------------- ACTION HANDLERS ----------------
+
+  // Play spontaneous creation (Opal style presets)
+  const handleCreatePlan = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPlanTitle.trim() || !newPlanLocation.trim() || !newPlanTime.trim()) {
+      triggerToast("Please fill out Title, Location and Time.");
+      return;
+    }
+
+    const costNum = parseFloat(newPlanCost) || 0;
+    const maxSpotsNum = parseInt(newPlanSpots) || 6;
+
+    const created: Plan = {
+      id: `p_${Date.now()}`,
+      title: newPlanTitle.toUpperCase(),
+      category: newPlanCategory,
+      date: "TODAY",
+      time: newPlanTime,
+      location: newPlanLocation,
+      cost: costNum,
+      confirmedCount: 1,
+      maxSpots: maxSpotsNum,
+      coverImage: newPlanUploadedImage || categoryCovers[newPlanCategory] || categoryCovers.custom,
+      creatorId: "u_self",
+      creatorName: userProfile.name,
+      creatorAvatar: userProfile.avatar,
+      joinedUsers: [
+        { name: userProfile.name, avatar: userProfile.avatar, checkedIn: true }
+      ],
+      timeline: "today"
+    };
+
+    setPlans([created, ...plans]);
+    setNewPlanUploadedImage(null);
+
+    // Schema relational matching: append Plan and Participant row records
+    const newDbPlan: DbPlan = {
+      plan_id: created.id,
+      title: created.title,
+      description: `Spontaneous turf/cafe coordination: ${created.title}`,
+      created_by: activeUserId,
+      circle_id: newPlanCircleId || null,
+      activity_type: created.category,
+      location: created.location,
+      datetime: `TODAY • ${created.time}`,
+      max_people: created.maxSpots,
+      split_amount: created.cost,
+      payment_required: created.cost > 0,
+      status: "active",
+      created_at: new Date().toISOString(),
+      coverImage: created.coverImage
+    };
+    setDbPlans(prev => [newDbPlan, ...prev]);
+
+    const newParticipant: DbPlanParticipant = {
+      participant_id: `PP_${Date.now()}`,
+      plan_id: created.id,
+      user_id: activeUserId,
+      status: "going",
+      payment_status: "paid",
+      joined_at: new Date().toISOString()
+    };
+    setDbPlanParticipants(prev => [...prev, newParticipant]);
+
+    // Add transaction audit log if cost > 0
+    // But since you create, you don't pay initially until confirmation, or you share expenses later. 
+
+    // Create new circle activity trigger
+    if (newPlanCircleId) {
+      setCircles(prev => prev.map(c => c.id === newPlanCircleId ? {
+        ...c,
+        lastSpontaneousActivity: `Spawned ${newPlanTitle} just now`
+      } : c));
+    }
+
+    // Trigger spontaneous app activity log details under Notifications
+    const newNotif: NotificationItem = {
+      id: `n_${Date.now()}`,
+      type: "general",
+      title: `You spawned spontaneous hanging "${newPlanTitle}" at ${newPlanLocation}`,
+      relativeTime: "1s"
+    };
+    setNotifications([newNotif, ...notifications]);
+
+    // Reset Form
+    setNewPlanTitle("");
+    setNewPlanLocation("");
+    setNewPlanTime("");
+    setNewPlanCost("0");
+    setNewPlanSpots("6");
+    setNewPlanCircleId("");
+    setSelectedPreset(null);
+
+    // Route to Circles & Notify
+    setActiveTab("circles");
+    setPlansFilter("hosted");
+    triggerToast("✨ Spontaneous Plan Spawned successfully!");
+  };
+
+  // MVP Host Plan flow submission matching the 10-step story
+  const handleHostPlanSubmit = () => {
+    if (!selectedExperience) {
+      triggerToast("Please select an experience first.");
+      return;
+    }
+
+    const titleToUse = (newPlanTitle || selectedExperience.title).trim();
+    if (!titleToUse) {
+      triggerToast("Experience title is required.");
+      return;
+    }
+
+    const locationToUse = (newPlanLocation || selectedExperience.venue || "TBD Meetup Location").trim();
+    const timeToUse = (newPlanTime || selectedExperience.time || "TODAY • 8:30 PM").trim();
+    const costToUse = parseFloat(newPlanCost) || 0;
+    const spotsToUse = parseInt(newPlanSpots) || 6;
+
+    const planId = `p_${Date.now()}`;
+    const coverUrl = newPlanUploadedImage || selectedExperience.image || categoryCovers.custom;
+
+    // Build the legacy UI Plan model for UI feeds compatibility
+    const created: Plan = {
+      id: planId,
+      title: titleToUse.toUpperCase(),
+      category: selectedExperience.category === "custom" ? "custom" : selectedExperience.category,
+      date: "TODAY",
+      time: timeToUse,
+      location: locationToUse,
+      cost: costToUse,
+      confirmedCount: 1,
+      maxSpots: spotsToUse,
+      coverImage: coverUrl,
+      creatorId: "u_self",
+      creatorName: userProfile.name,
+      creatorAvatar: userProfile.avatar,
+      joinedUsers: [
+        { name: userProfile.name, avatar: userProfile.avatar, checkedIn: true }
+      ],
+      timeline: "today",
+      description: customPlanNotes.trim() || `Spontaneous coordination thread for ${titleToUse}`,
+      circleId: audienceType === "circle" ? selectedCircleIds[0] || null : null
+    };
+
+    // Update frontend UI feed
+    setPlans(prev => [created, ...prev]);
+
+    // Build Canonical DB DbPlan model
+    const newDbPlan: DbPlan = {
+      plan_id: planId,
+      title: created.title,
+      description: created.description || `Spontaneous coordination thread: ${created.title}`,
+      created_by: activeUserId,
+      circle_id: audienceType === "circle" ? selectedCircleIds[0] || null : null, // Linked circle if any
+      activity_type: created.category,
+      location: created.location,
+      datetime: `TODAY • ${created.time}`,
+      max_people: created.maxSpots,
+      split_amount: created.cost,
+      payment_required: created.cost > 0,
+      status: "active",
+      created_at: new Date().toISOString(),
+      coverImage: created.coverImage
+    };
+    setDbPlans(prev => [newDbPlan, ...prev]);
+
+    // Build canonical DbPlanParticipant for owner
+    const ownerParticipant: DbPlanParticipant = {
+      participant_id: `PP_${Date.now()}_self`,
+      plan_id: planId,
+      user_id: activeUserId,
+      status: "going",
+      payment_status: "paid",
+      joined_at: new Date().toISOString()
+    };
+
+    // Build canonical DbPlanParticipant list for recipients
+    const recipientParticipants: DbPlanParticipant[] = [];
+    const recipientNames: string[] = [];
+
+    if (audienceType === "circle" && selectedCircleIds.length > 0) {
+      const circleId = selectedCircleIds[0];
+      // Get all members of this circle except owner
+      const members = dbCircleMembers.filter(cm => cm.circle_id === circleId && cm.user_id !== activeUserId);
+      members.forEach((m, idx) => {
+        recipientParticipants.push({
+          participant_id: `PP_${Date.now()}_cm_${idx}`,
+          plan_id: planId,
+          user_id: m.user_id,
+          status: "new", // spontaneous invitees start as new
+          payment_status: "unpaid",
+          joined_at: new Date().toISOString()
+        });
+        const u = dbUsers.find(user => user.user_id === m.user_id);
+        if (u) recipientNames.push(u.full_name);
+      });
+
+      // Update the circle's last activity
+      setCircles(prev => prev.map(c => c.id === circleId ? {
+        ...c,
+        lastSpontaneousActivity: `Spawned ${created.title} just now`
+      } : c));
+    } else if (audienceType === "multiple") {
+      let count = 0;
+      selectedCircleIds.forEach((circleId) => {
+        const members = dbCircleMembers.filter(cm => cm.circle_id === circleId && cm.user_id !== activeUserId);
+        members.forEach((m) => {
+          if (!recipientParticipants.some(rp => rp.user_id === m.user_id)) {
+            recipientParticipants.push({
+              participant_id: `PP_${Date.now()}_multi_${count++}`,
+              plan_id: planId,
+              user_id: m.user_id,
+              status: "new",
+              payment_status: "unpaid",
+              joined_at: new Date().toISOString()
+            });
+            const u = dbUsers.find(user => user.user_id === m.user_id);
+            if (u) recipientNames.push(u.full_name);
+          }
+        });
+
+        // Update each circle's last activity
+        setCircles(prev => prev.map(c => c.id === circleId ? {
+          ...c,
+          lastSpontaneousActivity: `Spawned ${created.title} just now`
+        } : c));
+      });
+    } else if (audienceType === "friends") {
+      selectedFriendIds.forEach((friendId, idx) => {
+        recipientParticipants.push({
+          participant_id: `PP_${Date.now()}_friend_${idx}`,
+          plan_id: planId,
+          user_id: friendId,
+          status: "new",
+          payment_status: "unpaid",
+          joined_at: new Date().toISOString()
+        });
+        const u = dbUsers.find(user => user.user_id === friendId);
+        if (u) recipientNames.push(u.full_name);
+      });
+    }
+
+    setDbPlanParticipants(prev => [...prev, ownerParticipant, ...recipientParticipants]);
+
+    // Create notifications for all recipients
+    const newNotifications: NotificationItem[] = [];
+
+    // Notification for Self
+    const selfNotif: NotificationItem = {
+      id: `n_${Date.now()}_self`,
+      type: "general",
+      title: `You hosted spontaneous plan "${created.title}" at ${created.location}`,
+      relativeTime: "1s"
+    };
+    newNotifications.push(selfNotif);
+
+    // Create a notification for each recipient inviting them to join
+    recipientParticipants.forEach((rp, idx) => {
+      newNotifications.push({
+        id: `n_${Date.now()}_rp_${idx}`,
+        type: "invitation",
+        title: `${userProfile.name} invited you to spontaneous "${created.title}"`,
+        relativeTime: "1s",
+        actionText: "Accept & Join",
+        planId: planId,
+        cost: created.cost,
+        creatorId: activeUserId
+      });
+    });
+
+    setNotifications(prev => [...newNotifications, ...prev]);
+
+    // Clean up all create variables & state
+    triggerToast(`⚡ Spontaneous plan posted live to ${audienceType}!`);
+
+    // Reset wizard states
+    setCreateFlowStep("BROWSE");
+    setSelectedExperience(null);
+    setSelectedCircleIds([]);
+    setSelectedFriendIds([]);
+    setAudienceType("circle");
+    setCustomPlanNotes("");
+
+    // Reset standard form inputs as well
+    setNewPlanTitle("");
+    setNewPlanLocation("");
+    setNewPlanTime("");
+    setNewPlanCost("0");
+    setNewPlanSpots("6");
+    setNewPlanUploadedImage(null);
+
+    // Push back to main home feed to see it immediately
+    setActiveTab("home");
+  };
+
+  // Joining and toggling joining plans state
+  const handleToggleJoin = (plan: Plan) => {
+    const isJoined = plan.joinedUsers.some(u => {
+      const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
+      const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
+      return cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU);
+    });
+
+    if (isJoined) {
+      // Leave plan
+      const updatedJoined = plan.joinedUsers.filter(u => u.name !== userProfile.name);
+      const updatedPlan = {
+        ...plan,
+        confirmedCount: Math.max(1, plan.confirmedCount - 1),
+        joinedUsers: updatedJoined,
+        seatsLeft: plan.seatsLeft !== undefined ? plan.seatsLeft + 1 : undefined
+      };
+
+      setPlans(prev => prev.map(p => p.id === plan.id ? updatedPlan : p));
+      if (selectedPlan?.id === plan.id) setSelectedPlan(updatedPlan);
+
+      // Schema relational matching: remove participant
+      setDbPlanParticipants(prev => prev.filter(pp => !(pp.plan_id === plan.id && pp.user_id === activeUserId)));
+
+      triggerToast(`Left ${plan.title}`);
+    } else {
+      // Join plan
+      // Check if spots remain using real-time joinedUsers length
+      if (plan.joinedUsers.length >= plan.maxSpots) {
+        triggerToast("Sorry, this plan is fully booked!");
+        return;
+      }
+
+      // Check balance is sufficient if there's a cost associated - auto-topup for seamless interactive demo
+      if (plan.cost > walletBalance) {
+        const depositAmountVal = plan.cost - walletBalance;
+        setWalletBalance(plan.cost);
+        const depositTx: Transaction = {
+          id: `t_frictionless_deposit_${Date.now()}`,
+          title: "Frictionless Auto-Topup",
+          amount: depositAmountVal,
+          type: "credit",
+          timestamp: "Today",
+          settled: true
+        };
+        setTransactions(prev => [depositTx, ...prev]);
+        setDbUsers(prevUsers => prevUsers.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: plan.cost } : u));
+        triggerToast(`Auto-topped ₹${depositAmountVal.toFixed(0)} to join!`);
+      }
+
+      // Deduct balance if join has upfront fees
+      if (plan.cost > 0) {
+        setWalletBalance(prev => prev - plan.cost);
+        const feeTransaction: Transaction = {
+          id: `t_${Date.now()}`,
+          title: `Paid for ${plan.title}`,
+          amount: plan.cost,
+          type: "debit",
+          timestamp: "Today",
+          settled: true
+        };
+        setTransactions([feeTransaction, ...transactions]);
+
+        // Schema relational matching: append transaction & update user balance
+        const newDbTx: DbTransaction = {
+          transaction_id: `T_${Date.now()}`,
+          sender_id: activeUserId,
+          receiver_id: plan.creatorId || "U002",
+          plan_id: plan.id,
+          amount: plan.cost,
+          transaction_type: "split_payment",
+          status: "success",
+          timestamp: "Today"
+        };
+        setDbTransactions(prev => [newDbTx, ...prev]);
+        setDbUsers(prev => prev.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: u.wallet_balance - plan.cost } : u));
+      }
+
+      const updatedJoined = [
+        ...plan.joinedUsers,
+        { name: userProfile.name, avatar: userProfile.avatar, checkedIn: true }
+      ];
+      const updatedPlan = {
+        ...plan,
+        confirmedCount: plan.confirmedCount + 1,
+        joinedUsers: updatedJoined,
+        seatsLeft: plan.seatsLeft !== undefined ? Math.max(0, plan.seatsLeft - 1) : undefined
+      };
+
+      setPlans(prev => prev.map(p => p.id === plan.id ? updatedPlan : p));
+      if (selectedPlan?.id === plan.id) setSelectedPlan(updatedPlan);
+
+      // Schema relational matching: update existing record if present to prevent duplicates, otherwise append
+      const existingRecord = dbPlanParticipants.find(pp => pp.plan_id === plan.id && pp.user_id === activeUserId);
+      if (existingRecord) {
+        setDbPlanParticipants(prev => prev.map(pp =>
+          (pp.plan_id === plan.id && pp.user_id === activeUserId)
+            ? { ...pp, status: "going" }
+            : pp
+        ));
+      } else {
+        const newPartRecord: DbPlanParticipant = {
+          participant_id: `PP_${Date.now()}`,
+          plan_id: plan.id,
+          user_id: activeUserId,
+          status: "going",
+          payment_status: plan.cost > 0 ? "paid" : "unpaid",
+          joined_at: new Date().toISOString()
+        };
+        setDbPlanParticipants(prev => [...prev, newPartRecord]);
+      }
+    }
+  };
+
+  const handleWaitlistPlan = (planId: string, userProfile: any) => {
+    // 1. Update plans store waitlist
+    waitlistPlan(planId, userProfile);
+
+    // 2. Relational database schema status sync
+    const existingRecord = dbPlanParticipants.find(pp => pp.plan_id === planId && pp.user_id === activeUserId);
+    if (existingRecord) {
+      setDbPlanParticipants(prev => prev.map(pp =>
+        (pp.plan_id === planId && pp.user_id === activeUserId)
+          ? { ...pp, status: "waitlist" }
+          : pp
+      ));
+    } else {
+      const newPartRecord: DbPlanParticipant = {
+        participant_id: `PP_${Date.now()}`,
+        plan_id: planId,
+        user_id: activeUserId,
+        status: "waitlist",
+        payment_status: "unpaid",
+        joined_at: new Date().toISOString()
+      };
+      setDbPlanParticipants(prev => [...prev, newPartRecord]);
+    }
+  };
+
+  // Adding Cash deposit mock
+  const handleDepositMoney = (e: React.FormEvent) => {
+    e.preventDefault();
+    const amountNum = parseFloat(depositAmount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      triggerToast("Enter a valid amount to deposit");
+      return;
+    }
+
+    setWalletBalance(prev => prev + amountNum);
+    const newTx: Transaction = {
+      id: `t_${Date.now()}`,
+      title: "Added Money (UPI)",
+      amount: amountNum,
+      type: "credit",
+      timestamp: "Today",
+      settled: true
+    };
+
+    setTransactions([newTx, ...transactions]);
+
+    // Schema relational matching: update User state and Transactions state
+    setDbUsers(prevUsers => prevUsers.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: u.wallet_balance + amountNum } : u));
+    const newDbTx: DbTransaction = {
+      transaction_id: `T_${Date.now()}`,
+      sender_id: "UPI",
+      receiver_id: activeUserId,
+      plan_id: null,
+      amount: amountNum,
+      transaction_type: "deposit",
+      status: "success",
+      timestamp: "Today"
+    };
+    setDbTransactions(prev => [newDbTx, ...prev]);
+
+    setDepositAmount("");
+    setShowDepositModal(false);
+    triggerToast(`💰 Added ₹${amountNum} successfully!`);
+  };
+
+  // Settling custom overdue obligations from Notifications list
+  const handleSettleOverdue = (notification: NotificationItem) => {
+    const cost = notification.cost || 0;
+    if (cost > walletBalance) {
+      triggerToast(`Unable to settle. Please top-up ₹${cost - walletBalance} into wallet.`);
+      setActiveTab("profile");
+      setActiveProfileSubView("payments");
+      return;
+    }
+
+    // Settle balance
+    setWalletBalance(prev => prev - cost);
+
+    // Add debit transaction
+    const settleTx: Transaction = {
+      id: `t_${Date.now()}`,
+      title: `Settled ${notification.title.split("-")[0]}`,
+      amount: cost,
+      type: "debit",
+      timestamp: "Today",
+      settled: true
+    };
+    setTransactions([settleTx, ...transactions]);
+
+    // Schema relational matching: update User state and Transactions state
+    setDbUsers(prevUsers => prevUsers.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: u.wallet_balance - cost } : u));
+    const newDbTx: DbTransaction = {
+      transaction_id: `T_${Date.now()}`,
+      sender_id: activeUserId,
+      receiver_id: notification.creatorId || "U002",
+      plan_id: notification.planId || null,
+      amount: cost,
+      transaction_type: "settlement",
+      status: "success",
+      timestamp: "Today"
+    };
+    setDbTransactions(prev => [newDbTx, ...prev]);
+
+    // Keep notifications list marked as settled
+    setNotifications(prev => prev.map(n => n.id === notification.id ? { ...n, settled: true } : n));
+    triggerToast("✅ Settled & shared with circle!");
+  };
+
+  // Accept a general invitation from notification
+  const handleAcceptInviteFromNotif = (notif: NotificationItem) => {
+    if (!notif.planId) return;
+    const targetPlan = plans.find(p => p.id === notif.planId);
+    if (targetPlan) {
+      handleToggleJoin(targetPlan);
+      setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, settled: true } : n));
+    }
+  };
+
+  // Create new buddy group circles
+  const handleCreateCircle = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCircleName.trim()) {
+      triggerToast("Give your circle a name!");
+      return;
+    }
+
+    const customAud: Circle = {
+      id: `c_${Date.now()}`,
+      name: newCircleName,
+      membersCount: 1,
+      avatars: [newCircleUploadedImage || getInitialsAvatar(newCircleName)],
+      groupImage: newCircleUploadedImage || getInitialsAvatar(newCircleName),
+      lastSpontaneousActivity: "Newly spawned circle",
+      description: "An active private circle for coordination.",
+      type: "Custom Group",
+      location: "Spontaneous",
+      format: "Chill crew",
+      playersOnField: 5,
+      timeWindow: "Anytime",
+      membersList: [
+        { name: userProfile.name, phone: userProfile.phone, avatar: userProfile.avatar }
+      ]
+    };
+
+    setCircles([...circles, customAud]);
+
+    // Schema relational matching: append circle and circle member row records
+    const newDbCircle: DbCircle = {
+      circle_id: customAud.id,
+      name: customAud.name,
+      description: "An active private circle for spontaneous coordination.",
+      category: "custom",
+      created_by: activeUserId,
+      cover_image: customAud.avatars[0],
+      location_anchor: "Spontaneous",
+      privacy: "private",
+      created_at: new Date().toISOString()
+    };
+    setDbCircles(prev => [...prev, newDbCircle]);
+
+    const newMemberRecord: DbCircleMember = {
+      circle_member_id: `CM_${Date.now()}`,
+      circle_id: customAud.id,
+      user_id: activeUserId,
+      role: "admin",
+      joined_at: new Date().toISOString()
+    };
+    setDbCircleMembers(prev => [...prev, newMemberRecord]);
+
+    setNewCircleName("");
+    setNewCircleUploadedImage(null);
+    setShowNewCircleForm(false);
+    triggerToast(`👥 Circle "${newCircleName}" created!`);
+  };
+
+  // Filter plans list — use participant ID lookup (reliable) instead of name-string match
+  const filteredPlans = plans.filter(p => {
+    const circleName = p.circleId ? circles.find(c => c.id === p.circleId)?.name || "" : "";
+    const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      circleName.toLowerCase().includes(searchQuery.toLowerCase());
+
+    // Reliable membership check: look up dbPlanParticipants by activeUserId
+    const myParticipant = dbPlanParticipants.find(pp => pp.plan_id === p.id && pp.user_id === activeUserId);
+    const isGoing = myParticipant?.status === "going";
+    const isWaitlisted = myParticipant?.status === "waitlist" ||
+      (p.waitlistUsers || []).some(u => u.name === userProfile.name) ||
+      (p.interestedUsers || []).some(u => u.name === userProfile.name);
+    const isHosted = p.creatorId === "u_self" || p.creatorName === userProfile.name;
+    const autoPassed = (passedByPlanId[p.id] || []).includes(userProfile.name);
+
+    if (plansFilter === "going") {
+      return isGoing && !p.isHappened && !autoPassed && matchesSearch;
+    } else if (plansFilter === "waitlist") {
+      return isWaitlisted && !p.isHappened && matchesSearch;
+    } else if (plansFilter === "passed") {
+      const historicallyJoined = p.isHappened && (isGoing || isWaitlisted);
+      return (autoPassed || historicallyJoined) && matchesSearch;
+    } else if (plansFilter === "hosted") {
+      return isHosted && matchesSearch;
+    }
+    return matchesSearch;
+  });
+
+
+  // Filter notifications list
+  const filteredNotifications = notifications.filter(n => {
+    if (notificationFilter === "all") return true;
+    if (notificationFilter === "plans") return n.type === "invitation" || n.type === "urgency";
+    if (notificationFilter === "payments") return n.type === "payment";
+    if (notificationFilter === "activity") return n.type === "general";
+    return true;
+  });
+
+  const discoverablePlans = getHomeFeedPlans(activeUserId).filter(p => {
+    if (p.isHappened) return false;
+
+    // Check if user is joined
+    const isJoined = p.joinedUsers.some(u => {
+      if (u.joinState === "waitlist") return false;
+      const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
+      const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
+      return cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU);
+    });
+
+    // Check if user is waitlisted
+    const isWaitlisted = p.joinedUsers.some(u => {
+      if (u.joinState !== "waitlist") return false;
+      const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
+      const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
+      return cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU);
+    });
+
+    return !isJoined && !isWaitlisted;
+  });
+
+  const homeBadgeCount = discoverablePlans.filter(p => {
+    const isSnoozed = snoozedPlanIds.includes(p.id);
+    return !isSnoozed;
+  }).length;
+
+  React.useEffect(() => {
+    if (activeTab === "home" && homeFeedRef.current && discoverablePlans.length > 1) {
+      const el = homeFeedRef.current;
+      const scrollInit = () => {
+        if (el.clientHeight > 0) {
+          el.scrollTop = el.clientHeight;
+        } else {
+          requestAnimationFrame(scrollInit);
+        }
+      };
+      scrollInit();
+    }
+  }, [activeTab, discoverablePlans.length]);
+
+  return (
+    <div id="main_app_container" className="h-full flex flex-col justify-between text-zinc-100 bg-[#0C0C0E] overflow-hidden select-none relative font-sans">
+
+      {/* Toast Alert Indicator */}
+      {toastMessage && (
+        <div id="toast" className="absolute top-18 left-4 right-4 bg-zinc-900 border border-brand-orange/40 text-xs py-3 px-4 rounded-xl shadow-xl z-50 flex items-center gap-2 animate-fade-in text-zinc-200">
+          <CheckCircle className="w-4 h-4 text-brand-orange shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* ---------------- APP ACCENT HEADER ---------------- */}
+      <header
+        id="main_app_header"
+        className={`h-16 shrink-0 flex items-center justify-between px-5 z-30 relative select-none transition-all ${activeTab === "home"
+          ? "absolute top-0 left-0 right-0 bg-gradient-to-b from-black/75 to-transparent border-none"
+          : "border-b border-zinc-900 bg-zinc-950/90 backdrop-blur-md"
+          }`}
+      >
+        {/* Left: Avatar circle with built-in hidden file input */}
+        <div className="flex items-center gap-3">
+          <label className="relative group cursor-pointer shrink-0 block">
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    if (typeof reader.result === "string" && onUpdateProfile) {
+                      onUpdateProfile({
+                        ...userProfile,
+                        avatar: reader.result
+                      });
+                      triggerToast("Profile picture updated!");
+                    }
+                  };
+                  reader.readAsDataURL(file);
+                }
+              }}
+            />
+            <img
+              src={userProfile.avatar}
+              alt={userProfile.name}
+              className="w-9 h-9 rounded-full border-2 border-zinc-800 object-cover hover:border-[#ff8b66] transition-colors"
+              referrerPolicy="no-referrer"
+            />
+          </label>
+        </div>
+
+        {/* Center: Absolute brand heading matching Figma screenshot */}
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          <h1 className="text-stone-100 font-sans font-black text-xl tracking-[0.25em] leading-none text-center">
+            PLANLESS
+          </h1>
+        </div>
+
+        {/* Right: Triggers and pink-indicator Notification Bell */}
+        <div className="flex items-center gap-1.5 z-10">
+          {/* Figma-style Notification bell with pink dot */}
+          <button
+            id="bell_notification_trigger"
+            onClick={() => setShowNotifications(!showNotifications)}
+            className={`w-9 h-9 rounded-full flex items-center justify-center relative cursor-pointer transition-all ${showNotifications ? "bg-zinc-900 text-white" : "text-zinc-400 hover:text-white"
+              }`}
+          >
+            <Bell className="w-4.5 h-4.5" />
+            {notifications.some(n => !n.settled) && (
+              <span className="absolute top-2 right-2 w-2 h-2 bg-[#ff5d41] rounded-full ring-2 ring-zinc-950 shadow animate-pulse" />
+            )}
+          </button>
+        </div>
+      </header>
+
+      {/* ---------------- MAIN APP SCREEN FRAME BODY ---------------- */}
+      <main
+        id="app_tab_content_wrapper"
+        className={`flex-1 relative ${activeTab === "home" ? "overflow-hidden p-0" : "overflow-y-auto no-scrollbar p-4 pb-12"
+          }`}
+      >
+
+        {/* TAB 1: HOME PANEL */}
+        {activeTab === "home" && (() => {
+          const N = discoverablePlans.length;
+          const plansToRender = N > 1
+            ? [
+              { ...discoverablePlans[N - 1], id: `${discoverablePlans[N - 1].id}-loop-prev-dup` },
+              ...discoverablePlans,
+              { ...discoverablePlans[0], id: `${discoverablePlans[0].id}-loop-next-dup` }
+            ]
+            : discoverablePlans;
+
+          const handleScrollLoop = (e: React.UIEvent<HTMLDivElement>) => {
+            const target = e.currentTarget;
+            const { scrollTop, clientHeight } = target;
+            if (N <= 1) return;
+
+            const maxThreshold = (N + 1) * clientHeight - 10;
+            if (scrollTop >= maxThreshold) {
+              target.scrollTop = clientHeight;
+            } else if (scrollTop <= 10) {
+              target.scrollTop = N * clientHeight;
+            }
+          };
+
+          return (
+            <div id="home_tab_pane" className="w-full h-full relative overflow-hidden bg-[#0C0C0E]">
+              {discoverablePlans.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center p-6 space-y-4">
+                  <span className="text-4xl text-zinc-650 animate-pulse">✨</span>
+                  <p className="text-zinc-400 font-sans text-xs max-w-xs leading-relaxed">
+                    You have joined all active plans! Head to the <strong className="text-brand-orange">Circles</strong> or <strong className="text-brand-orange">Plans Board</strong> tab to view and coordinate.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div
+                    id="home_swipe_feed"
+                    ref={homeFeedRef}
+                    className="h-full w-full overflow-y-scroll snap-y snap-mandatory no-scrollbar"
+                    style={{
+                      scrollSnapType: 'y mandatory',
+                      WebkitOverflowScrolling: 'touch'
+                    }}
+                    onScroll={handleScrollLoop}
+                  >
+                    {plansToRender.map((plan) => (
+                      <PlanReelCard
+                        key={plan.id}
+                        plan={plan}
+                        userProfile={userProfile}
+                        interestedPlanIds={interestedPlanIds}
+                        setSelectedPlan={setSelectedPlan}
+                        setPaymentConfirmationPlan={setPaymentConfirmationPlan}
+                        walletBalance={walletBalance}
+                        handleToggleJoin={handleToggleJoin}
+                        setShowPaymentSuccess={setShowPaymentSuccess}
+                        setShowWaitlistSuccess={setShowWaitlistSuccess}
+                        setNotifications={setNotifications}
+                        triggerToast={triggerToast}
+                        activeCardId={activeCardId}
+                        onSelectCard={setActiveCardId}
+                        handleSnoozePlan={handleSnoozePlan}
+                        waitlistPlan={handleWaitlistPlan}
+                      />
+                    ))}
+                  </div>
+
+
+                </>
+              )}
+            </div>
+          );
+        })()}
+
+
+        {/* TAB 2: PLANS — PREMIUM ACTIVITY HUB */}
+        {activeTab === "plans" && (() => {
+          const SEGMENTS = [
+            { key: "going" as const, label: "Going" },
+            { key: "waitlist" as const, label: "Waitlist" },
+            { key: "passed" as const, label: "Passed" },
+            { key: "hosted" as const, label: "Hosted" },
+          ];
+
+          const emptyMessages: Record<string, string> = {
+            going: "No upcoming plans yet",
+            waitlist: "No waitlisted plans currently",
+            passed: "No past plans to show",
+            hosted: "You haven't hosted a plan yet",
+          };
+
+          const getTimelineSection = (plan: Plan) => {
+            const dt = plan.date.toUpperCase();
+            if (dt.includes("TODAY")) return "Today";
+            if (dt.includes("TOMORROW")) return "Tomorrow";
+            return "This Week";
+          };
+
+          const parseTimeToMinutes = (timeStr: string) => {
+            if (!timeStr) return 0;
+            const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+            if (!match) return 0;
+            let hours = parseInt(match[1]);
+            const minutes = parseInt(match[2]);
+            const ampm = match[3].toUpperCase();
+            if (ampm === "PM" && hours < 12) hours += 12;
+            if (ampm === "AM" && hours === 12) hours = 0;
+            return hours * 60 + minutes;
+          };
+
+          const getDayIndex = (dateStr: string) => {
+            const d = dateStr.toUpperCase();
+            if (d.includes("MON")) return 1;
+            if (d.includes("TUE")) return 2;
+            if (d.includes("WED")) return 3;
+            if (d.includes("THU")) return 4;
+            if (d.includes("FRI")) return 5;
+            if (d.includes("SAT")) return 6;
+            if (d.includes("SUN")) return 7;
+            return 8;
+          };
+
+          const todayPlans = filteredPlans
+            .filter(p => getTimelineSection(p) === "Today")
+            .sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
+
+          const tomorrowPlans = filteredPlans
+            .filter(p => getTimelineSection(p) === "Tomorrow")
+            .sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
+
+          const thisWeekPlans = filteredPlans
+            .filter(p => getTimelineSection(p) === "This Week")
+            .sort((a, b) => {
+              const dayA = getDayIndex(a.date);
+              const dayB = getDayIndex(b.date);
+              if (dayA !== dayB) return dayA - dayB;
+              return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
+            });
+
+          // ── Filter button active color classes (synced to filter type)
+          const getFilterTriggerClass = (key: string) => {
+            switch (key) {
+              case "going":
+                return "bg-emerald-500/12 border-emerald-500/25 text-emerald-400";
+              case "waitlist":
+                return "bg-amber-500/12 border-amber-500/25 text-amber-400";
+              case "passed":
+                return "bg-rose-500/12 border-rose-500/25 text-rose-400";
+              case "hosted":
+                return "bg-white/8 border-white/15 text-zinc-200";
+              default:
+                return "bg-zinc-900/50 border-white/[0.04] text-zinc-400";
+            }
+          };
+
+          const getFilterBtnClass = (key: string, active: boolean) => {
+            const base = "flex-1 py-2 rounded-xl text-[10px] font-sans font-semibold transition-all duration-200 border cursor-pointer select-none text-center tracking-wide";
+            if (!active) {
+              return `${base} bg-transparent border-transparent text-zinc-600 hover:text-zinc-400`;
+            }
+            switch (key) {
+              case "going":
+                return `${base} bg-emerald-500/15 border-emerald-500/25 text-emerald-400`;
+              case "waitlist":
+                return `${base} bg-amber-500/15 border-amber-500/25 text-amber-400`;
+              case "passed":
+                return `${base} bg-rose-500/15 border-rose-500/25 text-rose-400`;
+              case "hosted":
+                return `${base} bg-white/10 border-white/20 text-white`;
+              default:
+                return `${base} bg-white/10 border-white/20 text-white`;
+            }
+          };
+
+          // Status badge config per filter
+          const getStatusBadge = (key: string) => {
+            switch (key) {
+              case "going":
+                return { label: "Going ✓", cls: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300", bar: "bg-emerald-500" };
+              case "waitlist":
+                return { label: "Waitlisted", cls: "bg-amber-500/20 border-amber-500/40 text-amber-300", bar: "bg-amber-500" };
+              case "passed":
+                return { label: "Passed", cls: "bg-rose-500/15 border-rose-500/30 text-rose-400", bar: "bg-rose-500" };
+              case "hosted":
+                return { label: "Hosted ★", cls: "bg-white/12 border-white/25 text-zinc-100", bar: "bg-zinc-200" };
+              default:
+                return null;
+            }
+          };
+
+          // Section header accent color per filter
+          const getSectionAccentColor = (key: string) => {
+            switch (key) {
+              case "going": return "bg-emerald-500";
+              case "waitlist": return "bg-amber-500";
+              case "passed": return "bg-rose-500";
+              case "hosted": return "bg-zinc-400";
+              default: return "bg-zinc-600";
+            }
+          };
+
+          const renderPlanRow = (plan: Plan) => {
+            const planCircle = plan.circleId ? circles.find(c => c.id === plan.circleId) : null;
+            const circleName = planCircle?.name || null;
+            const badge = getStatusBadge(plansFilter);
+
+            return (
+              <motion.div
+                key={plan.id}
+                layout
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                onClick={() => setSelectedPlan(plan)}
+                className="group flex items-center justify-between p-3.5 rounded-2xl bg-zinc-950/70 border border-white/[0.03] hover:border-white/[0.08] hover:bg-zinc-900/40 active:scale-[0.99] transition-all duration-200 select-none text-left cursor-pointer"
+              >
+                {/* Left side details */}
+                <div className="flex items-center gap-3 min-w-0">
+                  {/* Left glow status indicator dot */}
+                  <div className="relative shrink-0 flex items-center justify-center">
+                    <span className="absolute w-3 h-3 rounded-full opacity-20 blur-[2px]" style={{
+                      backgroundColor: badge ? (badge.bar === "bg-emerald-500" ? "#10b981" : badge.bar === "bg-amber-500" ? "#f59e0b" : badge.bar === "bg-rose-500" ? "#f43f5e" : "#e4e4e7") : "#a1a1aa"
+                    }} />
+                    <span className="w-1.5 h-1.5 rounded-full" style={{
+                      backgroundColor: badge ? (badge.bar === "bg-emerald-500" ? "#10b981" : badge.bar === "bg-amber-500" ? "#f59e0b" : badge.bar === "bg-rose-500" ? "#f43f5e" : "#e4e4e7") : "#a1a1aa"
+                    }} />
+                  </div>
+
+                  <div className="min-w-0">
+                    <h4 className="text-xs font-extrabold text-zinc-100 uppercase tracking-wide truncate">
+                      {plan.title}
+                    </h4>
+                    <div className="text-[9px] font-mono text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                      <span>⏰ {plan.time}</span>
+                      <span>•</span>
+                      <span className="truncate max-w-[130px]">📍 {plan.location}</span>
+                      {circleName && (
+                        <>
+                          <span>•</span>
+                          <span className="text-zinc-650 font-sans font-semibold">👥 {circleName.toUpperCase()}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right side status / management controls */}
+                <div className="flex items-center gap-2 shrink-0 pl-2">
+                  {plan.cost > 0 && (
+                    <span className="text-[10px] font-mono font-bold text-zinc-400 bg-zinc-900 border border-white/[0.04] px-2 py-0.5 rounded-md">
+                      ₹{plan.cost}
+                    </span>
+                  )}
+                  {badge && (
+                    <span className={`text-[8px] font-mono font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${badge.cls.replace('bg-emerald-500/20', 'bg-emerald-500/10').replace('bg-amber-500/20', 'bg-amber-500/10').replace('bg-rose-500/15', 'bg-rose-500/8').replace('bg-white/12', 'bg-white/5')}`}>
+                      {badge.label.replace(' ✓', '')}
+                    </span>
+                  )}
+                  <ChevronRight className="w-3.5 h-3.5 text-zinc-650 group-hover:text-zinc-400 transition-colors" />
+                </div>
+              </motion.div>
+            );
+          };
+
+          return (
+            <div id="plans_tab_pane" className="space-y-4 pb-4 text-left pt-2">
+
+              {/* Search Bar - Main top element pushed upward with no large page header */}
+              <div className="px-1 relative">
+                <span className="absolute left-4.5 top-1/2 -translate-y-1/2 text-zinc-550 text-xs">🔍</span>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search your plans"
+                  className="w-full pl-9 pr-4 py-2.5 rounded-2xl bg-zinc-900/40 border border-white/[0.04] text-xs font-sans text-white placeholder-zinc-550 focus:outline-none focus:border-white/[0.12] transition-colors shadow-inner"
+                />
+              </div>
+
+              {/* Color-synced filter trigger button */}
+              <div className="px-1 pt-0.5">
+                <div className={`flex items-center rounded-2xl border p-1 gap-1 transition-all duration-300 ${getFilterTriggerClass(plansFilter)}`}>
+                  {SEGMENTS.map(seg => {
+                    const active = plansFilter === seg.key;
+                    // Dynamic count calculation matching segment filters perfectly
+                    const count = plans.filter(p => {
+                      const circleName = p.circleId ? circles.find(c => c.id === p.circleId)?.name || "" : "";
+                      const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        p.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        circleName.toLowerCase().includes(searchQuery.toLowerCase());
+                      const myParticipant = dbPlanParticipants.find(pp => pp.plan_id === p.id && pp.user_id === activeUserId);
+                      const isGoing = myParticipant?.status === "going";
+                      const isWaitlisted = myParticipant?.status === "waitlist" ||
+                        (p.waitlistUsers || []).some(u => u.name === userProfile.name) ||
+                        (p.interestedUsers || []).some(u => u.name === userProfile.name);
+                      const isHosted = p.creatorId === "u_self" || p.creatorName === userProfile.name;
+                      const autoPassed = (passedByPlanId[p.id] || []).includes(userProfile.name);
+
+                      if (seg.key === "going") return isGoing && !p.isHappened && !autoPassed && matchesSearch;
+                      if (seg.key === "waitlist") return isWaitlisted && !p.isHappened && matchesSearch;
+                      if (seg.key === "passed") {
+                        const historicallyJoined = p.isHappened && (isGoing || isWaitlisted);
+                        return (autoPassed || historicallyJoined) && matchesSearch;
+                      }
+                      if (seg.key === "hosted") return isHosted && matchesSearch;
+                      return false;
+                    }).length;
+
+                    return (
+                      <button
+                        key={seg.key}
+                        onClick={() => setPlansFilter(seg.key)}
+                        className={getFilterBtnClass(seg.key, active)}
+                      >
+                        {seg.label} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Chronological Plan sections — Today / Tomorrow / This Week */}
+              <div className="space-y-5 pt-1">
+                {filteredPlans.length === 0 ? (
+                  <div className="py-16 flex flex-col items-center gap-2 text-center">
+                    <span className="text-3xl opacity-30">
+                      {plansFilter === "hosted" ? "🎯" : plansFilter === "waitlist" ? "⏳" : plansFilter === "passed" ? "📜" : "✅"}
+                    </span>
+                    <p className="text-[11px] font-sans text-zinc-600 leading-relaxed max-w-[200px]">
+                      {emptyMessages[plansFilter]}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {/* TODAY SECTION */}
+                    {todayPlans.length > 0 && (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-2 px-1">
+                          <div className={`w-1.5 h-1.5 rounded-full ${getSectionAccentColor(plansFilter)}`} />
+                          <h4 className="text-[10px] font-mono text-zinc-400 uppercase tracking-[0.22em] font-bold">Today</h4>
+                          <div className="flex-1 h-[1px] bg-white/[0.04]" />
+                          <span className="text-[9px] font-mono text-zinc-600">{todayPlans.length} plan{todayPlans.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {todayPlans.map(plan => renderPlanRow(plan))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* TOMORROW SECTION */}
+                    {tomorrowPlans.length > 0 && (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-2 px-1">
+                          <div className={`w-1.5 h-1.5 rounded-full ${getSectionAccentColor(plansFilter)}`} />
+                          <h4 className="text-[10px] font-mono text-zinc-400 uppercase tracking-[0.22em] font-bold">Tomorrow</h4>
+                          <div className="flex-1 h-[1px] bg-white/[0.04]" />
+                          <span className="text-[9px] font-mono text-zinc-600">{tomorrowPlans.length} plan{tomorrowPlans.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {tomorrowPlans.map(plan => renderPlanRow(plan))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* THIS WEEK SECTION */}
+                    {thisWeekPlans.length > 0 && (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-2 px-1">
+                          <div className={`w-1.5 h-1.5 rounded-full ${getSectionAccentColor(plansFilter)}`} />
+                          <h4 className="text-[10px] font-mono text-zinc-400 uppercase tracking-[0.22em] font-bold">This Week</h4>
+                          <div className="flex-1 h-[1px] bg-white/[0.04]" />
+                          <span className="text-[9px] font-mono text-zinc-600">{thisWeekPlans.length} plan{thisWeekPlans.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {thisWeekPlans.map(plan => renderPlanRow(plan))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* TAB 3: SPONTANEOUS CREATOR - INSTANT PRODUCTIVITY AESTHETICS */}
+        {activeTab === "create" && (
+          <div id="create_tab_pane" className="space-y-5 animate-fade-in max-w-sm mx-auto">
+            {/* MVP Stepper Progress Indicator */}
+            <div className="flex items-center justify-between bg-zinc-950/40 border border-zinc-900 rounded-2xl p-3 mb-1 select-none">
+              {[
+                { step: "BROWSE" as const, label: "Custom" },
+                { step: "DETAILS" as const, label: "Info" },
+                { step: "RECIPIENTS" as const, label: "Invite" },
+                { step: "EXTRA" as const, label: "Setups" },
+                { step: "PREVIEW" as const, label: "Host" }
+              ].map((s, idx) => {
+                const stepOrder = ["BROWSE", "DETAILS", "RECIPIENTS", "EXTRA", "PREVIEW"] as const;
+                const currentIdx = stepOrder.indexOf(createFlowStep);
+                const active = s.step === createFlowStep;
+                const done = stepOrder.indexOf(s.step) < currentIdx;
+                return (
+                  <React.Fragment key={s.step}>
+                    <button
+                      type="button"
+                      disabled={!done && stepOrder.indexOf(s.step) > currentIdx}
+                      onClick={() => setCreateFlowStep(s.step as any)}
+                      className="flex items-center gap-1.5 focus:outline-none cursor-pointer text-left"
+                    >
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-mono font-bold transition-all ${active
+                        ? "bg-[#ff8b66] text-black ring-4 ring-[#ff8b66]/20 font-extrabold"
+                        : done
+                          ? "bg-emerald-950 text-emerald-400 border border-emerald-900"
+                          : "bg-zinc-900 text-zinc-500 border border-zinc-850"
+                        }`}>
+                        {done ? "✓" : idx + 1}
+                      </span>
+                      <span className={`text-[10px] font-mono tracking-tighter ${active ? "text-[#ff8b66] font-semibold" : "text-zinc-500"
+                        }`}>
+                        {s.label}
+                      </span>
+                    </button>
+                    {idx < 4 && (
+                      <div className={`flex-1 h-[1px] mx-1 ${stepOrder.indexOf(s.step) < currentIdx ? "bg-emerald-900" : "bg-zinc-900"
+                        }`} />
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+
+            {/* STEP 4: BROWSE EXPERIENCES OR TRIGGER CREATE CUSTOM PLAN DIRECTLY */}
+            {createFlowStep === "BROWSE" && (
+              <div className="space-y-5 animate-fade-in text-left">
+                <div className="space-y-1">
+                  <h2 className="text-xl font-display font-black text-zinc-100 tracking-tight">Spawn Spontaneous Hanging</h2>
+                  <p className="text-xs text-zinc-500">Pick template coordinates or plan from absolute scratch instantly.</p>
+                </div>
+
+                {/* 🌟 AI COORDINATION SPARK / PLANNER */}
+                <div
+                  id="ai_plan_coordinator_card"
+                  className="relative bg-gradient-to-br from-zinc-950 to-zinc-900 border border-[#ff8b66]/35 rounded-3xl p-5 shadow-xl overflow-hidden"
+                >
+                  <div className="absolute -left-12 -bottom-12 w-28 h-28 bg-[#ff8b66]/10 blur-2xl rounded-full" />
+                  <div className="absolute -right-8 -top-8 w-24 h-24 bg-[#ff5d41]/5 blur-2xl rounded-full" />
+
+                  <div className="relative space-y-3.5 z-10">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-[#ff8b66]/10 border border-[#ff8b66]/30 flex items-center justify-center shrink-0">
+                          <Sparkles className="w-4 h-4 text-[#ff8b66]" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-sans font-bold text-white flex items-center gap-1.5 leading-none">
+                            AI Social Coordinator
+                          </h3>
+                          <span className="text-[8px] font-mono text-brand-peach/80 font-bold uppercase tracking-wider">Gemini 3.5 Flash Powered</span>
+                        </div>
+                      </div>
+                      <span className="text-[7.5px] font-mono text-emerald-400 font-extrabold px-2 py-0.5 rounded-full bg-emerald-950/40 border border-emerald-900/30">● COORDINATE ONLINE</span>
+                    </div>
+
+                    <p className="text-[10px] text-zinc-400 leading-relaxed font-sans">
+                      Describe your plan vibe (e.g. <span className="text-zinc-300 italic">"spontaneous football session tonight"</span> or <span className="text-zinc-300 italic">"late night coffee talk"</span>) and let Gemini instantly align all coordinates.
+                    </p>
+
+                    <div className="space-y-2">
+                      <textarea
+                        value={aiVibePrompt}
+                        onChange={(e) => setAiVibePrompt(e.target.value)}
+                        placeholder="Tell AI your vibe..."
+                        className="w-full bg-zinc-950/80 border border-zinc-850 focus:border-brand-peach/50 focus:outline-none rounded-xl p-2.5 text-[11px] text-zinc-200 placeholder-zinc-650 resize-none h-14 transition-all no-scrollbar"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={handleAiGeneratePlan}
+                        disabled={isGeneratingAiPlan || !aiVibePrompt.trim()}
+                        className={`w-full py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${isGeneratingAiPlan
+                          ? "bg-zinc-900 text-zinc-500 cursor-not-allowed"
+                          : !aiVibePrompt.trim()
+                            ? "bg-zinc-900 text-zinc-550 cursor-not-allowed"
+                            : "bg-brand-peach text-zinc-950 hover:bg-opacity-90 active:scale-[0.98]"
+                          }`}
+                      >
+                        {isGeneratingAiPlan ? (
+                          <>
+                            <span className="w-3 h-3 border-2 border-zinc-500 border-t-white rounded-full animate-spin" />
+                            <span>Aligning coordinates with AI...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Generate Plan with AI Spark ✨</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* OFFICIAL CREATE CUSTOM PLAN HERO CTA - Step 4 of Custom Flow */}
+                <div
+                  id="create_custom_plan_hero"
+                  onClick={() => {
+                    // Initialize as standard custom template
+                    const customPreset = suggestedExperiences.find(s => s.category === "custom") || {
+                      id: "exp_custom",
+                      title: "Custom Spontaneous Plan",
+                      category: "custom" as const,
+                      tag: "CUSTOM",
+                      description: "Spawn spontaneous coordinator coordinates for your groups...",
+                      time: "TODAY • 8:30 PM",
+                      venue: "Cozy Cafe HQ",
+                      price: 0,
+                      image: "https://images.unsplash.com/photo-1543807535-eceef0bc6599?auto=format&fit=crop&w=600&q=80"
+                    };
+                    setSelectedExperience(customPreset as any);
+                    setNewPlanTitle("");
+                    setNewPlanLocation("");
+                    setNewPlanTime("TODAY • 8:30 PM");
+                    setNewPlanCost("0");
+                    setNewPlanSpots("6");
+                    setCreateFlowStep("DETAILS");
+                  }}
+                  className="relative bg-gradient-to-br from-zinc-900 to-zinc-950 border border-brand-peach/20 hover:border-brand-peach/40 rounded-3xl p-5 cursor-pointer shadow-xl transition-all select-none overflow-hidden group"
+                >
+                  {/* Background ambient sunset glow */}
+                  <div className="absolute -right-12 -top-12 w-28 h-28 bg-[#ff8b66]/10 blur-2xl rounded-full group-hover:bg-[#ff8b66]/15 transition-all duration-300" />
+
+                  <div className="flex gap-4 items-center">
+                    <div className="w-11 h-11 rounded-2xl bg-[#ff8b66]/10 border border-[#ff8b66]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-300">
+                      <Plus className="w-5 h-5 text-[#ff8b66]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[8px] font-mono tracking-widest text-[#ff8b66] uppercase font-bold bg-[#ff8b66]/10 px-2 py-0.5 rounded-full border border-[#ff8b66]/15">Lightweight</span>
+                        <span className="text-[8px] font-mono text-emerald-400 font-bold">● FAST TO COMPLETE</span>
+                      </div>
+                      <h3 className="text-sm font-sans font-bold text-white mt-1.5 flex items-center gap-1">
+                        Create Custom Plan
+                        <Sparkles className="w-3.5 h-3.5 text-[#ff8b66] animate-pulse" />
+                      </h3>
+                      <p className="text-[10px] text-zinc-500 leading-normal mt-0.5">Define your own activity name, venue / coordinates, and timings</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-zinc-650 group-hover:text-white group-hover:translate-x-0.5 transition-all mr-1" />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 py-1">
+                  <div className="h-[1px] bg-zinc-900 flex-1" />
+                  <span className="text-[8px] font-mono uppercase tracking-widest text-[#ff8b66]/50">Or choose spontaneous presets</span>
+                  <div className="h-[1px] bg-zinc-900 flex-1" />
+                </div>
+
+                {/* Categories Fast Filter Selector */}
+                <div className="flex gap-2 overflow-x-auto no-scrollbar py-0.5">
+                  {[
+                    { key: "all", label: "All Suggested", icon: Sparkles },
+                    { key: "movies", label: "Movies", icon: Film },
+                    { key: "sports", label: "Sports", icon: Trophy },
+                    { key: "restaurants", label: "Table Booking", icon: Utensils }
+                  ].map((cat) => (
+                    <button
+                      key={cat.key}
+                      type="button"
+                      onClick={() => {
+                        setNewPlanCategory(cat.key);
+                      }}
+                      className={`flex items-center gap-1.5 shrink-0 px-3 py-1.5 rounded-full text-[10px] font-mono border transition-all cursor-pointer ${newPlanCategory === cat.key
+                        ? "bg-[#ff8b66]/15 text-brand-peach border-brand-peach/30 font-semibold shadow-inner"
+                        : "bg-zinc-950/40 text-zinc-400 border-zinc-900 hover:text-zinc-200"
+                        }`}
+                    >
+                      <cat.icon className="w-3 h-3" />
+                      <span>{cat.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Lightweight swipe-friendly experience carousel with partial next-card peek */}
+                <div className="relative w-full overflow-hidden py-1">
+                  <div
+                    ref={carouselRef}
+                    onScroll={handleScroll}
+                    className="flex gap-4 overflow-x-auto snap-x snap-mandatory no-scrollbar pb-2 px-1"
+                    style={{ scrollSnapType: "x mandatory" }}
+                  >
+                    {suggestedExperiences
+                      .filter(item => {
+                        if (newPlanCategory === "all") return item.category !== "custom";
+                        return item.category === newPlanCategory;
+                      })
+                      .map((item) => (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            setSelectedExperience(item);
+                            setNewPlanTitle(item.title);
+                            setNewPlanLocation(item.venue);
+                            setNewPlanTime(item.time);
+                            setNewPlanCost(item.price.toString());
+                            setNewPlanSpots("6");
+                            setCreateFlowStep("DETAILS");
+                          }}
+                          className="w-[85%] sm:w-[88%] shrink-0 snap-center rounded-3xl aspect-[10/12] relative overflow-hidden bg-zinc-955 border border-zinc-900 shadow-xl flex flex-col justify-between p-5 cursor-pointer hover:border-zinc-850 transition-all group"
+                          style={{ scrollSnapAlign: "center" }}
+                        >
+                          <img
+                            src={item.image}
+                            alt={item.title}
+                            className="absolute inset-0 w-full h-full object-cover opacity-45 group-hover:scale-102 transition-all duration-500"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/20" />
+
+                          {/* Tag and category branding */}
+                          <div className="z-10 flex items-center justify-between">
+                            <span className="bg-white/5 backdrop-blur-sm text-zinc-350 border border-white/5 text-[8px] font-mono uppercase tracking-[0.14em] px-2.5 py-1 rounded-full whitespace-nowrap">
+                              {item.tag}
+                            </span>
+                            <span className="text-[8px] font-mono font-bold text-[#ff8b66] bg-[#ff8b66]/10 px-2.5 py-1 rounded-full border border-[#ff8b66]/20 uppercase tracking-wider">
+                              {item.category}
+                            </span>
+                          </div>
+
+                          {/* Title and tap CTA */}
+                          <div className="z-10 space-y-3 mt-auto">
+                            <div className="space-y-1">
+                              <h3 className="text-base font-display font-medium text-white tracking-tight leading-none text-left">
+                                {item.title}
+                              </h3>
+                              <p className="text-[10px] text-zinc-400 font-sans line-clamp-2 leading-relaxed text-left">
+                                {item.description}
+                              </p>
+                            </div>
+
+                            <div className="w-full bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/10 text-white font-medium text-[10px] py-2 px-3 rounded-xl flex items-center justify-between transition-colors shadow-inner">
+                              <span className="font-mono">Fill in spontaneous timings</span>
+                              <ChevronRight className="w-3.5 h-3.5 text-brand-peach" />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 5: FILL DRAFT ACTIVITY/PLAN DETAILS (Activity Name, Location, Date & Time) */}
+            {createFlowStep === "DETAILS" && selectedExperience && (
+              <div className="space-y-5 animate-fade-in text-left">
+
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => setCreateFlowStep("BROWSE")}
+                  className="text-xs font-mono font-medium text-zinc-500 hover:text-zinc-200 flex items-center gap-1.5 cursor-pointer py-1"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to suggestions</span>
+                </button>
+
+                <div className="space-y-1">
+                  <h3 className="text-sm font-display font-semibold text-zinc-200">Set Core Coordinates</h3>
+                  <p className="text-[11px] text-zinc-500 font-sans">Enter name, spot & timing. Select suggestions to bypass typing.</p>
+                </div>
+
+                <div className="bg-zinc-905 border border-zinc-900 rounded-2xl p-4 space-y-4">
+
+                  {/* Title input + quick selection pills */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-brand-peach">1. Activity Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g., Turf Football Session, Rooftop Sundowner"
+                      value={newPlanTitle}
+                      onChange={(e) => setNewPlanTitle(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-brand-peach transition-all"
+                      required
+                    />
+
+                    {/* Activity name recommendation pills */}
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 max-w-full">
+                      {[
+                        "⚽ Turf Football",
+                        "🍿 Cinema Crew",
+                        "☕ Late Brew Coffee",
+                        "🍜 Ramen Dinner",
+                        "🍹 Drinks Lounge",
+                        "🎮 FIFA League"
+                      ].map((pillText) => (
+                        <button
+                          key={pillText}
+                          type="button"
+                          onClick={() => setNewPlanTitle(pillText)}
+                          className={`shrink-0 px-2.5 py-1 rounded-full text-[9px] font-semibold font-mono border transition-all ${newPlanTitle === pillText
+                            ? "bg-brand-peach/15 text-brand-peach border-brand-peach/40"
+                            : "bg-zinc-950/50 text-zinc-500 border-zinc-900 hover:text-zinc-300"
+                            }`}
+                        >
+                          {pillText}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Location input + quick locations */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-brand-peach">2. Target Venue / Spot</label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                        <MapPin className="w-3.5 h-3.5 text-[#ff8b66]" />
+                      </span>
+                      <input
+                        type="text"
+                        placeholder="e.g., Starbucks Corner, City Football Turf"
+                        value={newPlanLocation}
+                        onChange={(e) => setNewPlanLocation(e.target.value)}
+                        className="w-full bg-zinc-950 border border-zinc-850 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-brand-peach transition-all"
+                        required
+                      />
+                    </div>
+
+                    {/* Quick Location Pills */}
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 max-w-full">
+                      {[
+                        "📍 Starbucks HQ",
+                        "📍 Elite Turf Area",
+                        "📍 Phoenix Sky Deck",
+                        "📍 Downtown Pizzeria",
+                        "📍 Brew House Cafe",
+                        "📍 Local Park Loft"
+                      ].map((loc) => {
+                        const cleanVal = loc.replace("📍 ", "");
+                        return (
+                          <button
+                            key={loc}
+                            type="button"
+                            onClick={() => setNewPlanLocation(cleanVal)}
+                            className={`shrink-0 px-2.5 py-1 rounded-full text-[9px] font-semibold font-mono border transition-all ${newPlanLocation === cleanVal
+                              ? "bg-brand-peach/15 text-brand-peach border-brand-peach/40"
+                              : "bg-zinc-950/50 text-zinc-500 border-zinc-900 hover:text-zinc-300"
+                              }`}
+                          >
+                            {loc}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Timing Input + Spontaneous Pills */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-brand-peach">3. Spontaneous Timing</label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                        <Clock className="w-3.5 h-3.5 text-[#ff8b66]" />
+                      </span>
+                      <input
+                        type="text"
+                        placeholder="e.g., TODAY • 8:30 PM, TOMORROW • 6:00 PM"
+                        value={newPlanTime}
+                        onChange={(e) => setNewPlanTime(e.target.value)}
+                        className="w-full bg-zinc-950 border border-zinc-850 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-brand-peach transition-all"
+                        required
+                      />
+                    </div>
+
+                    {/* Quick timing button pills */}
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 max-w-full">
+                      {[
+                        "⚡ Right Now!",
+                        "⏰ TODAY • 8:30 PM",
+                        "⏰ TODAY • 10:00 PM",
+                        "⏰ TOMORROW • 6:00 PM",
+                        "⏰ TOMORROW • 8:00 PM"
+                      ].map((tme) => {
+                        const cleanVal = tme.replace("⚡ ", "").replace("⏰ ", "");
+                        return (
+                          <button
+                            key={tme}
+                            type="button"
+                            onClick={() => setNewPlanTime(cleanVal)}
+                            className={`shrink-0 px-2.5 py-1 rounded-full text-[9px] font-semibold font-mono border transition-all ${newPlanTime === cleanVal
+                              ? "bg-brand-peach/15 text-brand-peach border-brand-peach/40"
+                              : "bg-zinc-950/50 text-zinc-500 border-zinc-900 hover:text-zinc-300"
+                              }`}
+                          >
+                            {tme}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const titleToUse = newPlanTitle.trim();
+                    const locationToUse = newPlanLocation.trim();
+                    const timeToUse = newPlanTime.trim();
+
+                    if (!titleToUse) {
+                      triggerToast("Please enter or pick an Activity Name first.");
+                      return;
+                    }
+                    if (!locationToUse) {
+                      triggerToast("Please specify a target venue/spot first.");
+                      return;
+                    }
+                    if (!timeToUse) {
+                      triggerToast("Please select spontaneous timings.");
+                      return;
+                    }
+
+                    setCreateFlowStep("RECIPIENTS");
+                  }}
+                  className="w-full py-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-955 font-display font-semibold text-xs uppercase tracking-wider transition-colors text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 font-bold"
+                >
+                  <span>Continue</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* STEP 6: SELECT RECIPIENTS AUDIENCE (CIRCLE, FRIENDS OR MULTIPLE) */}
+            {createFlowStep === "RECIPIENTS" && (
+              <div className="space-y-5 animate-fade-in text-left">
+
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => setCreateFlowStep("DETAILS")}
+                  className="text-xs font-mono font-medium text-zinc-500 hover:text-zinc-200 flex items-center gap-1.5 cursor-pointer py-1"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to core info</span>
+                </button>
+
+                <div className="space-y-1">
+                  <h3 className="text-sm font-display font-semibold text-zinc-200">Who's invited?</h3>
+                  <p className="text-[11px] text-zinc-500">Pick circles or individual friends.</p>
+                </div>
+
+                {/* Recipient Category Tab Pill Indicators */}
+                <div className="grid grid-cols-3 gap-1 bg-zinc-905 p-1 rounded-xl">
+                  {[
+                    { key: "circle" as const, label: "Circle" },
+                    { key: "friends" as const, label: "Friends" },
+                    { key: "multiple" as const, label: "Multi Group" }
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      onClick={() => {
+                        setAudienceType(tab.key);
+                        setRecipientSearchQuery("");
+                      }}
+                      className={`py-1.5 text-[10px] font-mono rounded-lg transition-all border cursor-pointer ${audienceType === tab.key
+                        ? "bg-zinc-950 text-white border-zinc-850 shadow-md font-semibold"
+                        : "text-zinc-500 hover:text-zinc-350 border-transparent"
+                        }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Real recipient list search */}
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                    <Search className="w-3.5 h-3.5 text-zinc-650" />
+                  </span>
+                  <input
+                    type="text"
+                    placeholder={
+                      audienceType === "friends"
+                        ? "Search by username or mobile..."
+                        : "Search intimate buddy groups..."
+                    }
+                    value={recipientSearchQuery}
+                    onChange={(e) => setRecipientSearchQuery(e.target.value)}
+                    className="w-full bg-zinc-905 border border-zinc-850 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-zinc-650 focus:outline-none"
+                  />
+                </div>
+
+                {/* AUDIENCE LIST CONTAINER */}
+                <div className="bg-zinc-905/60 border border-zinc-900 rounded-3xl p-3 max-h-52 overflow-y-auto space-y-2 no-scrollbar">
+
+                  {/* Option A: Circle Member (Select exact ONE Circle) */}
+                  {audienceType === "circle" && (
+                    <div className="space-y-1.5">
+                      {circles
+                        .filter(circle => circle.name.toLowerCase().includes(recipientSearchQuery.toLowerCase()))
+                        .map((circle) => {
+                          const isSelected = selectedCircleIds.includes(circle.id);
+                          return (
+                            <div
+                              key={circle.id}
+                              onClick={() => {
+                                // Toggle Circle selection exclusively
+                                setSelectedCircleIds([circle.id]);
+                              }}
+                              className={`p-3 rounded-2xl flex items-center justify-between cursor-pointer border transition-all ${isSelected
+                                ? "bg-[#ff8b66]/10 border-[#ff8b66]/30"
+                                : "bg-zinc-950/40 border-zinc-900 hover:border-zinc-850"
+                                }`}
+                            >
+                              <div className="flex items-center gap-2.5 text-left">
+                                <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 overflow-hidden shrink-0">
+                                  <img
+                                    src={circle.groupImage || circle.avatars[0]}
+                                    className="w-full h-full object-cover"
+                                    alt=""
+                                    referrerPolicy="no-referrer"
+                                  />
+                                </div>
+                                <div className="min-w-0">
+                                  <span className="text-xs text-zinc-200 block font-semibold leading-none truncate">{circle.name}</span>
+                                  <span className="text-[9px] text-zinc-500 font-mono mt-1.5 block uppercase leading-none">{circle.membersCount} members</span>
+                                </div>
+                              </div>
+                              <input
+                                type="radio"
+                                checked={isSelected}
+                                readOnly
+                                className="accent-[#ff8b66] w-3.5 h-3.5 pointer-events-none"
+                              />
+                            </div>
+                          );
+                        })}
+                      {circles.filter(circle => circle.name.toLowerCase().includes(recipientSearchQuery.toLowerCase())).length === 0 && (
+                        <span className="text-xs text-zinc-650 block text-center py-4 font-mono">No matching group circles seen.</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Option B: Friends Directory (Select multiple friends) */}
+                  {audienceType === "friends" && (
+                    <div className="space-y-1.5">
+                      {dbUsers
+                        .filter(user => user.user_id !== activeUserId && user.full_name.toLowerCase().includes(recipientSearchQuery.toLowerCase()))
+                        .map((user) => {
+                          const isSelected = selectedFriendIds.includes(user.user_id);
+                          return (
+                            <div
+                              key={user.user_id}
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedFriendIds(prev => prev.filter(id => id !== user.user_id));
+                                } else {
+                                  setSelectedFriendIds(prev => [...prev, user.user_id]);
+                                }
+                              }}
+                              className={`p-2.5 rounded-2xl flex items-center justify-between cursor-pointer border transition-all ${isSelected
+                                ? "bg-[#ff8b66]/10 border-[#ff8b66]/30"
+                                : "bg-zinc-950/40 border-zinc-900 hover:border-zinc-805"
+                                }`}
+                            >
+                              <div className="flex items-center gap-2.5 text-left">
+                                <div className="w-7 h-7 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center font-bold text-[10px] font-mono text-zinc-300">
+                                  {user.full_name[0]}
+                                </div>
+                                <div className="min-w-0">
+                                  <span className="text-xs text-zinc-205 block font-semibold leading-none">{user.full_name}</span>
+                                  <span className="text-[9px] text-zinc-500 font-mono mt-1 block">@{user.username}</span>
+                                </div>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                readOnly
+                                className="accent-[#ff8b66] w-3.5 h-3.5 rounded pointer-events-none"
+                              />
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+
+                  {/* Option C: Blast multiple groups checklist */}
+                  {audienceType === "multiple" && (
+                    <div className="space-y-1.5">
+                      {circles
+                        .filter(circle => circle.name.toLowerCase().includes(recipientSearchQuery.toLowerCase()))
+                        .map((circle) => {
+                          const isSelected = selectedCircleIds.includes(circle.id);
+                          return (
+                            <div
+                              key={circle.id}
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedCircleIds(prev => prev.filter(id => id !== circle.id));
+                                } else {
+                                  setSelectedCircleIds(prev => [...prev, circle.id]);
+                                }
+                              }}
+                              className={`p-2.5 rounded-2xl flex items-center justify-between cursor-pointer border transition-all ${isSelected
+                                ? "bg-[#ff8b66]/10 border-[#ff8b66]/30"
+                                : "bg-zinc-950/40 border-zinc-900 hover:border-zinc-800"
+                                }`}
+                            >
+                              <div className="flex items-center gap-2.5 text-left">
+                                <div className="w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800 overflow-hidden shrink-0">
+                                  <img
+                                    src={circle.groupImage || circle.avatars[0]}
+                                    className="w-full h-full object-cover"
+                                    alt=""
+                                    referrerPolicy="no-referrer"
+                                  />
+                                </div>
+                                <span className="text-xs text-zinc-205 font-medium truncate max-w-[170px] leading-none">{circle.name}</span>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                readOnly
+                                className="accent-[#ff8b66] w-3.5 h-3.5 pointer-events-none"
+                              />
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Feedback indicator section */}
+                <div className="p-3 bg-zinc-950 border border-zinc-900 rounded-2xl text-center select-none">
+                  <span className="text-[10px] font-mono text-brand-peach font-semibold">
+                    {audienceType === "circle"
+                      ? selectedCircleIds.length > 0
+                        ? `✓ Selected (1) Circle Target: ${circles.find(c => c.id === selectedCircleIds[0])?.name}`
+                        : "Pick exactly one target buddy group circle"
+                      : audienceType === "friends"
+                        ? selectedFriendIds.length > 0
+                          ? `✓ Chosen (${selectedFriendIds.length}) recipient friends`
+                          : "Configure select recipient friends checklist"
+                        : selectedCircleIds.length > 0
+                          ? `✓ Chosen (${selectedCircleIds.length}) group circles to blast`
+                          : "Choose multiple group circles to target"
+                    }
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const hasCircleRecipients = audienceType === "circle" && selectedCircleIds.length > 0;
+                    const hasFriendsRecipients = audienceType === "friends" && selectedFriendIds.length > 0;
+                    const hasMultiRecipients = audienceType === "multiple" && selectedCircleIds.length > 0;
+
+                    if (!hasCircleRecipients && !hasFriendsRecipients && !hasMultiRecipients) {
+                      triggerToast("Please pick at least one recipient first before proceeding.");
+                      return;
+                    }
+
+                    // Tweak details and progress to custom note splitting step
+                    setCreateFlowStep("EXTRA");
+                  }}
+                  className="w-full py-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-955 font-display font-semibold text-xs uppercase tracking-wider transition-colors text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 font-bold"
+                >
+                  <span>Continue</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* STEP 7: SET UP NOTES & SPLIT EXPENSES (Optional) */}
+            {createFlowStep === "EXTRA" && selectedExperience && (
+              <div className="space-y-5 animate-fade-in text-left">
+
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => setCreateFlowStep("RECIPIENTS")}
+                  className="text-xs font-mono font-medium text-zinc-500 hover:text-zinc-200 flex items-center gap-1.5 cursor-pointer py-1"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to recipients selection</span>
+                </button>
+
+                <div className="space-y-1">
+                  <h3 className="text-sm font-display font-semibold text-zinc-200">Extra details</h3>
+                  <p className="text-[11px] text-zinc-500 font-sans">Add optional notes or a split amount.</p>
+                </div>
+
+                <div className="bg-zinc-905 border border-zinc-900 rounded-2xl p-4 space-y-4">
+
+                  {/* Co-ordination notes (Optional) */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-[#ff8b66]">1. Notes (Optional)</label>
+                    <textarea
+                      rows={2}
+                      placeholder="e.g., Meet near Gate B inside Starbucks. Wear white sneakers, and don't be late!"
+                      value={customPlanNotes}
+                      onChange={(e) => setCustomPlanNotes(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-brand-peach transition-all"
+                    />
+                  </div>
+
+                  {/* Split amount layout setup (Optional) */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-[#ff8b66]">2. Social Split Amount (Optional)</label>
+                      <span className="text-[9px] font-mono text-zinc-550 italic">Non-fintech, secondary</span>
+                    </div>
+
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-zinc-500 font-mono text-xs">
+                        ₹
+                      </span>
+                      <input
+                        type="number"
+                        placeholder="0 (Free hang)"
+                        value={newPlanCost === "0" ? "" : newPlanCost}
+                        onChange={(e) => setNewPlanCost(e.target.value)}
+                        className="w-full bg-zinc-950 border border-zinc-850 rounded-xl pl-8 pr-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-brand-peach transition-all"
+                      />
+                    </div>
+
+                    {/* Fast presets split buttons to eliminate typing */}
+                    <div className="flex gap-1.5 py-0.5 max-w-full overflow-x-auto no-scrollbar">
+                      {[
+                        { val: "0", display: "Free Hang" },
+                        { val: "100", display: "₹100" },
+                        { val: "250", display: "₹250" },
+                        { val: "500", display: "₹500" },
+                        { val: "1000", display: "₹1k" }
+                      ].map((preset) => (
+                        <button
+                          key={preset.val}
+                          type="button"
+                          onClick={() => setNewPlanCost(preset.val)}
+                          className={`shrink-0 px-3 py-1 rounded-full text-[9px] font-semibold font-mono border transition-all ${newPlanCost === preset.val
+                            ? "bg-brand-peach/15 text-brand-peach border-brand-peach/40"
+                            : "bg-zinc-950/50 text-zinc-500 border-zinc-900 hover:text-zinc-300"
+                            }`}
+                        >
+                          {preset.display}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Spots limit dropdown */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-[#ff8b66]">3. Spot Limit Cap</label>
+                    <select
+                      value={newPlanSpots}
+                      onChange={(e) => setNewPlanSpots(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none cursor-pointer"
+                    >
+                      <option value="4">Limit to 4 intimate friends</option>
+                      <option value="6">Limit to 6 friend spots</option>
+                      <option value="8">Limit to 8 friend spots</option>
+                      <option value="12">Limit to 12 squad spot cap</option>
+                      <option value="20">Limit to 20 large meetup slots</option>
+                    </select>
+                  </div>
+
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Force zero on blank
+                    if (!newPlanCost) setNewPlanCost("0");
+                    setCreateFlowStep("PREVIEW");
+                  }}
+                  className="w-full py-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-955 font-display font-semibold text-xs uppercase tracking-wider transition-colors text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 font-bold"
+                >
+                  <span>Continue</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* STEP 8 & 9: PREVIEW AND HOST SPONTANEOUS COORDINATE SCREEN */}
+            {createFlowStep === "PREVIEW" && selectedExperience && (
+              <div className="space-y-5 animate-fade-in text-left">
+
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => setCreateFlowStep("EXTRA")}
+                  className="text-xs font-mono font-medium text-zinc-500 hover:text-zinc-200 flex items-center gap-1.5 cursor-pointer py-1"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to setups</span>
+                </button>
+
+                <div className="space-y-1">
+                  <h3 className="text-sm font-display font-semibold text-zinc-200">Review Slate Coordinate</h3>
+                  <p className="text-[11px] text-zinc-500 font-sans">Distraction-free summary preview cards. Host plan instantly.</p>
+                </div>
+
+                {/* THE BEAUTIFUL DRAFT CARD PREVIEW - Step 8 of Custom Flow */}
+                <div className="bg-gradient-to-br from-zinc-900 via-zinc-950 to-black border border-zinc-850 rounded-3xl p-5 space-y-4 shadow-2xl relative select-none">
+
+                  {/* Subtle banner decoration */}
+                  <div className="relative w-full h-28 rounded-2xl overflow-hidden border border-zinc-900 bg-zinc-950">
+                    <img
+                      src={newPlanUploadedImage || selectedExperience.image}
+                      className="w-full h-full object-cover opacity-60"
+                      alt="Plan cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent" />
+
+                    {/* Date badge */}
+                    <span className="absolute bottom-3 left-3 bg-[#ff8b66]/20 backdrop-blur-md text-brand-peach font-mono font-bold text-[8px] uppercase tracking-widest px-3 py-1 rounded-full border border-brand-peach/30">
+                      SPONTANEOUS DRAFT
+                    </span>
+                  </div>
+
+                  {/* Core details readout */}
+                  <div className="space-y-3">
+                    <div className="space-y-0.5">
+                      <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-[#ff8b66] font-bold">ACTIVITY COORDINATE</span>
+                      <h2 className="text-lg font-display font-black text-white tracking-tight leading-snug uppercase">
+                        {newPlanTitle || "Untitled Coordinate"}
+                      </h2>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 border-t border-b border-zinc-900/60 py-3">
+
+                      {/* Timing details */}
+                      <div className="flex items-center gap-2.5">
+                        <Clock className="w-3.5 h-3.5 text-brand-peach shrink-0" />
+                        <span className="text-xs text-zinc-300 font-mono font-medium truncate">
+                          {newPlanTime || "TBD TIMINGS"}
+                        </span>
+                      </div>
+
+                      {/* Location Spot */}
+                      <div className="flex items-center gap-2.5">
+                        <MapPin className="w-3.5 h-3.5 text-brand-peach shrink-0" />
+                        <span className="text-xs text-zinc-350 truncate">
+                          {newPlanLocation || "TBD COORDINATE VENUE"}
+                        </span>
+                      </div>
+
+                      {/* Split cost badges */}
+                      <div className="flex items-center gap-2.5">
+                        <Landmark className="w-3.5 h-3.5 text-zinc-550 shrink-0" />
+                        <span className="text-xs text-zinc-400 font-mono">
+                          {parseFloat(newPlanCost) > 0 ? (
+                            <span className="text-[#ff8b66] font-semibold">₹{newPlanCost} split amount</span>
+                          ) : (
+                            <span className="text-emerald-400 font-semibold">Bring Spontaneous Vibes (Free)</span>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Targeted recipients summary screen */}
+                      <div className="flex items-center gap-2.5">
+                        <Users className="w-3.5 h-3.5 text-zinc-550 shrink-0" />
+                        <span className="text-xs text-zinc-300 font-sans">
+                          {audienceType === "circle" && `Target Circle: ${circles.find(c => c.id === selectedCircleIds[0])?.name || "Workspace Circle"}`}
+                          {audienceType === "friends" && `Target: ${selectedFriendIds.length} specific friends`}
+                          {audienceType === "multiple" && `Multiple Blast: ${selectedCircleIds.length} group circles`}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Optional custom notes display quote text style */}
+                    {customPlanNotes.trim() && (
+                      <div className="bg-zinc-950/60 border border-zinc-900 rounded-xl p-3 select-none text-left">
+                        <span className="text-[8px] font-mono text-zinc-550 block uppercase tracking-wider mb-1 font-extrabold">COORDINATORS NOTE</span>
+                        <p className="text-[11px] text-zinc-400 leading-relaxed italic font-serif">
+                          “{customPlanNotes.trim()}”
+                        </p>
+                      </div>
+                    )}
+
+                  </div>
+
+                  {/* Banner Upload Option integrated inside preview step */}
+                  <div className="flex items-center justify-between pt-1 border-t border-zinc-900 text-xs">
+                    <span className="text-[10px] text-zinc-500 font-mono">Tweak Banner cover?</span>
+                    <label className="text-[9px] font-mono text-[#ff8b66] hover:text-[#ffab8f] cursor-pointer bg-zinc-950/40 border border-zinc-850 px-2.5 py-1 rounded-lg">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              if (typeof reader.result === "string") {
+                                setNewPlanUploadedImage(reader.result);
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                      <span>{newPlanUploadedImage ? "📷 Change image" : "📷 Upload file"}</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Form to invoke the submission */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleHostPlanSubmit();
+                  }}
+                  className="space-y-3"
+                >
+                  {/* STEP 9: OFFICIAL HOST PLAN TRIGGER */}
+                  <button
+                    id="host_plan_submit_btn"
+                    type="submit"
+                    className="w-full py-4 rounded-xl bg-brand-orange text-white font-display font-black text-xs uppercase tracking-widest hover:bg-opacity-80 active:scale-[0.99] transition-all text-center cursor-pointer shadow-lg flex items-center justify-center gap-2"
+                  >
+                    <span>Host Plan</span>
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 4: CIRCLES / BUDDY GROUPS THREAD */}
+        {activeTab === "circles" && (
+          <div id="circles_tab_pane" className="space-y-6">
+            {!selectedCircle ? (
+              // ---------------- USER VIEWS ALL CIRCLES ----------------
+              <div id="view_all_circles_container" className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-display font-semibold text-zinc-200">Circles</h2>
+                    <p className="text-xs text-zinc-500">Your intimate private spontaneous groups</p>
+                  </div>
+                </div>
+
+                {/* Upcoming Plans within Circles */}
+                <div className="space-y-3 bg-zinc-900/35 border border-zinc-850 rounded-3xl p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-display font-semibold text-zinc-100">Upcoming plans</h3>
+                      <p className="text-[11px] text-zinc-500 mt-1">Tap to reveal active circle plans.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowUpcomingPlans(prev => !prev)}
+                      className="inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-[10px] uppercase tracking-[0.3em] font-semibold text-zinc-200 transition hover:border-[#ff8b66] hover:text-[#ff8b66]"
+                    >
+                      <span>{showUpcomingPlans ? "Hide" : `Show ${upcomingCirclePlans.length}`}</span>
+                      <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showUpcomingPlans ? "rotate-90" : ""}`} />
+                    </button>
+                  </div>
+
+                  {showUpcomingPlans && (
+                    <div className="space-y-3">
+                      {upcomingCirclePlans.length > 0 ? (
+                        upcomingCirclePlans.slice(0, 4).map(plan => {
+                          const planCircle = circles.find(circle => circle.id === plan.circleId);
+                          return (
+                            <div key={plan.id} className="bg-zinc-950/80 border border-zinc-850 rounded-3xl p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500 mb-1">{planCircle?.name || "Circle"}</p>
+                                  <h4 className="text-sm font-semibold text-zinc-100 truncate">{plan.title}</h4>
+                                  <p className="text-[10px] text-zinc-500 mt-2 leading-snug truncate">{plan.location} · {plan.date} · {plan.time}</p>
+                                </div>
+                                <span className="text-[10px] rounded-full bg-[#ff8b66]/10 text-[#ff8b66] font-semibold px-2 py-1">₹{plan.cost}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="bg-zinc-950/80 border border-zinc-850 rounded-3xl p-3 text-[10px] text-zinc-500">No upcoming circle plans yet. Create a plan inside any circle to see it here.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Custom Create Circle Form toggle */}
+                {showNewCircleForm && (
+                  <form onSubmit={handleCreateCircle} className="bg-zinc-900 border border-zinc-850 p-4 rounded-2xl space-y-4 animate-fade-in">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] text-[#ff8b66] font-display font-semibold uppercase tracking-widest block">New Circle Name</label>
+                      <input
+                        id="new_circle_name_input"
+                        type="text"
+                        value={newCircleName}
+                        onChange={(e) => setNewCircleName(e.target.value)}
+                        placeholder="e.g. Office Lunch Club, Matchday Football"
+                        className="w-full bg-zinc-950 border border-zinc-855 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] text-zinc-400 font-display font-semibold uppercase tracking-widest block block">Group Photo (Optional)</label>
+                      <div className="flex items-center gap-3">
+                        <label className="bg-zinc-950 border border-zinc-805 rounded-xl px-3 py-2 text-xs text-zinc-400 hover:text-white cursor-pointer transition-colors block">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                  if (typeof reader.result === "string") {
+                                    setNewCircleUploadedImage(reader.result);
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          <span>{newCircleUploadedImage ? "✓ Photo Selected" : "📷 Upload Cover Image"}</span>
+                        </label>
+                        {newCircleUploadedImage && (
+                          <img src={newCircleUploadedImage} className="w-8 h-8 rounded-full object-cover border border-[#ff8b66]" alt="Preview" />
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="submit"
+                        className="bg-[#ff8b66] text-black text-xs px-4 py-2 rounded-xl font-bold uppercase transition-all shadow-md cursor-pointer"
+                      >
+                        Create
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowNewCircleForm(false);
+                          setNewCircleUploadedImage(null);
+                          setNewCircleName("");
+                        }}
+                        className="text-zinc-500 text-xs px-3 py-2"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Interactive Circles View */}
+                <div id="circles_list" className="space-y-3 pb-8">
+                  {circles.map(circle => {
+                    const circleActivePlans = plans.filter(p => p.circleId === circle.id && !p.isHappened);
+                    const isExpanded = expandedCircleIds.includes(circle.id);
+                    const activePlanLabel = circleActivePlans.length > 0 ? circleActivePlans[0].title : "No active plan";
+                    const shortDescription = circle.description.length > 72 ? `${circle.description.slice(0, 72)}...` : circle.description;
+
+                    return (
+                      <div key={circle.id} className={`border rounded-3xl overflow-hidden transition-all duration-300 ${isExpanded ? "bg-zinc-900/80 border-zinc-700 shadow-[0_10px_30px_rgba(0,0,0,0.35)]" : "bg-zinc-900/40 border-zinc-900 hover:bg-zinc-850/50 hover:border-zinc-800/80"}`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedCircleIds(prev => prev.includes(circle.id) ? prev.filter(id => id !== circle.id) : [...prev, circle.id]);
+                            setIsInvitingFriends(false);
+                          }}
+                          className="w-full px-4 py-4 flex items-start gap-3 text-left"
+                        >
+                          <div className="relative shrink-0 w-12 h-12 rounded-2xl overflow-hidden border border-zinc-800 shadow-lg">
+                            <img
+                              src={circle.groupImage || circle.avatars[0] || "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=200"}
+                              className="w-full h-full object-cover"
+                              alt={`${circle.name} cover`}
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 justify-between">
+                              <div className="min-w-0">
+                                <h4 className="text-sm font-display font-semibold text-zinc-100 truncate">{circle.name}</h4>
+                                <p className="text-[11px] text-zinc-400 mt-1 leading-snug truncate">{activePlanLabel}</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#ff8b66]">{circleActivePlans.length}</span>
+                                <ChevronRight className={`w-4 h-4 text-zinc-400 transition-transform ${isExpanded ? "rotate-90 text-[#ff8b66]" : ""}`} />
+                              </div>
+                            </div>
+                            <p className="text-[11px] text-zinc-500 mt-3 leading-snug">{shortDescription}</p>
+                          </div>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="border-t border-zinc-800/70 px-4 pb-4 pt-3 space-y-3 bg-zinc-950/70">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+                              <span className="rounded-2xl bg-zinc-900/90 px-2 py-2">Location: {circle.location}</span>
+                              <span className="rounded-2xl bg-zinc-900/90 px-2 py-2">Format: {circle.format}</span>
+                            </div>
+
+                            <div className="text-[11px] text-zinc-300 leading-relaxed">
+                              {circle.description}
+                            </div>
+
+                            <div className="grid gap-2">
+                              {circleActivePlans.length > 0 ? (
+                                circleActivePlans.map(plan => (
+                                  <div key={plan.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <span className="text-xs font-semibold text-zinc-100 truncate">{plan.title}</span>
+                                      <span className="text-[10px] text-zinc-500 uppercase tracking-[0.18em]">{plan.time}</span>
+                                    </div>
+                                    <p className="text-[10.5px] text-zinc-500 mt-2 truncate">{plan.location}</p>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3 text-[10.5px] text-zinc-500">No active plans right now. Create one to start the circle.</div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[9px] uppercase tracking-[0.26em] text-zinc-500">Members once you open</span>
+                              <span className="text-[9px] text-zinc-500">{circle.membersCount} in circle</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewCircleForm(prev => !prev)}
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#ff8b66] text-black shadow-[0_10px_30px_rgba(255,139,102,0.35)] transition-transform hover:scale-[1.03]"
+                    aria-label="Create Circle"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // ---------------- CIRCLE DETAIL PAGE (THE HUB) ----------------
+              <div id="circle_detail_page" className="space-y-6 animate-fade-in">
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCircle(null);
+                    setIsInvitingFriends(false);
+                  }}
+                  className="text-xs font-mono font-semibold text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+                >
+                  ← Back to Circles
+                </button>
+
+                {/* Cover representation */}
+                <div className="bg-zinc-900/40 border border-zinc-805 rounded-3xl overflow-hidden">
+                  <div className="relative h-28 bg-zinc-950">
+                    <img
+                      src={selectedCircle.groupImage || selectedCircle.avatars[0] || "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=800"}
+                      className="w-full h-full object-cover opacity-25 object-center filter blur-[1px]"
+                      alt=""
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-x-6 bottom-4 flex items-center gap-3">
+                      <img
+                        src={selectedCircle.groupImage || selectedCircle.avatars[0]}
+                        className="w-11 h-11 rounded-xl object-cover border border-zinc-900 shadow-xl"
+                        alt=""
+                        referrerPolicy="no-referrer"
+                      />
+                      <div>
+                        <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest block font-extrabold">Social Circle</span>
+                        <h3 className="text-base font-display font-medium text-white tracking-tight">{selectedCircle.name}</h3>
+                        <span className="text-[9.5px] font-mono text-[#ff8b66] uppercase tracking-wider">{selectedCircle.location || "Spontaneous Location"}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-5 space-y-3.5">
+                    <p className="text-[11px] text-zinc-400 leading-relaxed font-sans">{selectedCircle.description || "An active spontaneous social group. Organized, contextual coordination without endless noise."}</p>
+
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[9px] font-mono text-zinc-500 uppercase tracking-widest border-t border-zinc-950 pt-3">
+                      <span>Anchor: {selectedCircle.location}</span>
+                      <span>Format: {selectedCircle.format}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fast Action Buttons */}
+                <div className="flex gap-2.5">
+                  <button
+                    onClick={() => {
+                      setNewPlanCircleId(selectedCircle.id);
+                      setNewPlanTitle(`Meetup with ${selectedCircle.name}`);
+                      setSelectedPreset("custom");
+                      setAudienceType("circle");
+                      setSelectedCircleIds([selectedCircle.id]);
+                      setActiveTab("create");
+                      setCreateFlowStep("DETAILS");
+                      triggerToast(`Fast Hosted: targeting ${selectedCircle.name}`);
+                    }}
+                    className="flex-1 py-3 text-center bg-[#ff8b66] hover:bg-[#ff9a7c] text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-md cursor-pointer"
+                  >
+                    Host Plan
+                  </button>
+
+                  <button
+                    onClick={() => setIsInvitingFriends(!isInvitingFriends)}
+                    className="flex-1 py-3 text-center bg-zinc-900 border border-zinc-850 hover:bg-zinc-850 text-zinc-250 text-xs font-extrabold uppercase tracking-widest rounded-xl transition-colors cursor-pointer"
+                  >
+                    {isInvitingFriends ? "Close Invite" : "Invite Friends"}
+                  </button>
+                </div>
+
+                {/* Inline Invite Buddies form */}
+                {isInvitingFriends && (
+                  <div className="bg-zinc-900 border border-zinc-850 p-4 rounded-2xl space-y-3.5 animate-fade-in">
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-[9px] font-display uppercase tracking-widest text-[#ff8b66] font-bold">Add Buddies directly to circle</span>
+                      <span className="text-[8.5px] text-zinc-550">Spontaneous Continuity</span>
+                    </div>
+
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1 no-scrollbar">
+                      {dbUsers
+                        .filter(u => u.user_id !== activeUserId && !selectedCircle.membersList.some(m => m.name === u.full_name))
+                        .map(friend => (
+                          <div key={friend.user_id} className="flex items-center justify-between p-2 bg-zinc-950/40 rounded-xl border border-zinc-910">
+                            <div className="flex items-center gap-2">
+                              <img src={friend.profile_photo} className="w-5.5 h-5.5 rounded-full object-cover shrink-0" alt="" referrerPolicy="no-referrer" />
+                              <div>
+                                <span className="text-[10px] font-bold text-zinc-200 block">{friend.full_name}</span>
+                                <span className="text-[8px] font-mono text-zinc-550 block">{friend.phone_number}</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updatedMembersList = [
+                                  ...selectedCircle.membersList,
+                                  { name: friend.full_name, phone: friend.phone_number, avatar: friend.profile_photo }
+                                ];
+                                const updated = {
+                                  ...selectedCircle,
+                                  membersCount: updatedMembersList.length,
+                                  avatars: updatedMembersList.slice(0, 5).map(m => m.avatar),
+                                  membersList: updatedMembersList
+                                };
+                                setCircles(prev => prev.map(c => c.id === selectedCircle.id ? updated : c));
+                                setSelectedCircle(updated);
+                                triggerToast(`Added ${friend.full_name} to ${selectedCircle.name}! 👥`);
+                              }}
+                              className="text-[8.5px] font-mono uppercase bg-zinc-900 text-brand-peach border border-zinc-800 px-2 rounded-md py-1 font-bold cursor-pointer"
+                            >
+                              Add Friend
+                            </button>
+                          </div>
+                        ))}
+                      {dbUsers.filter(u => u.user_id !== activeUserId && !selectedCircle.membersList.some(m => m.name === u.full_name)).length === 0 && (
+                        <span className="text-[10px] text-zinc-505 block text-center py-2">Everyone has been added to this circle!</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* SECTION 1: ACTIVE PLANS IN WORKSPACE */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[9.5px] font-display uppercase tracking-[0.15em] text-[#ff8b66] font-bold">Active Spontaneous Group Plans</span>
+                    <span className="text-[8px] font-mono text-emerald-400 bg-emerald-950/20 px-1.5 py-0.5 rounded uppercase font-bold leading-none tracking-wider">LIVE CHAT AVAILABLE</span>
+                  </div>
+
+                  {plans.filter(p => p.circleId === selectedCircle.id && !p.isHappened).length === 0 ? (
+                    <div className="bg-zinc-900/10 border border-zinc-900 rounded-3xl p-5 text-center">
+                      <p className="text-[10.5px] text-zinc-505 font-sans">No live plans currently active. Create one to begin coordination chat!</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {plans
+                        .filter(p => p.circleId === selectedCircle.id && !p.isHappened)
+                        .map(plan => {
+                          const isAlreadyJoined = plan.joinedUsers.some(u => u.name === userProfile.name);
+                          return (
+                            <div key={plan.id} className="bg-zinc-900/40 border border-zinc-805 rounded-2xl p-4.5 space-y-3">
+                              <div className="flex items-start justify-between gap-2.5">
+                                <div>
+                                  <h4 className="text-xs font-sans font-black text-zinc-100 uppercase">{plan.title}</h4>
+                                  <div className="text-[10px] text-zinc-400 font-mono mt-0.5 leading-snug">
+                                    <span className="text-[#ff8b66] font-medium block">🗓️ {plan.date} • {plan.time}</span>
+                                    <span>📍 {plan.location}</span>
+                                  </div>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="text-[10.5px] font-black text-zinc-200 block font-mono">₹{plan.cost}</span>
+                                  <span className="text-[7.5px] font-mono text-zinc-500 uppercase tracking-wider block">Split/Head</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1 border-t border-zinc-950/50">
+                                <div className="flex items-center gap-1.5">
+                                  <div className="flex -space-x-1.5">
+                                    {plan.joinedUsers.map((u, ui) => (
+                                      <img key={ui} src={u.avatar} className="w-5 h-5 rounded-full object-cover border border-zinc-955" alt="" referrerPolicy="no-referrer" />
+                                    ))}
+                                  </div>
+                                  <span className="text-[9.5px] text-zinc-400">{plan.confirmedCount} inside ({plan.maxSpots - plan.confirmedCount} spots left)</span>
+                                </div>
+                                <span className="text-[8px] font-mono text-zinc-500 uppercase">ACTIVE</span>
+                              </div>
+
+                              <div className="flex gap-2">
+                                {!isAlreadyJoined ? (
+                                  <button
+                                    onClick={() => {
+                                      if (plan.cost > 0) {
+                                        setPaymentConfirmationPlan(plan);
+                                      } else {
+                                        handleToggleJoin(plan);
+                                        triggerToast(`Joined active coordination! ⚡`);
+                                      }
+                                    }}
+                                    className="flex-1 py-2 text-center bg-[#ff8b66] hover:bg-[#ff9a7c] text-black text-xs font-bold uppercase tracking-wider rounded-xl cursor-pointer shadow"
+                                  >
+                                    Join Plan
+                                  </button>
+                                ) : (
+                                  <button
+                                    disabled
+                                    className="flex-1 py-1.5 text-center bg-zinc-955 border border-zinc-900 text-[#ff8b66] text-xs font-bold uppercase rounded-xl"
+                                  >
+                                    Joined
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPlan(plan)}
+                                  className="flex-1 py-2 text-center bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs font-bold uppercase tracking-wider hover:bg-zinc-855 rounded-xl cursor-pointer"
+                                >
+                                  Open Chat
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
+
+                {/* SECTION 2: PAST PLANS AND RECAPS */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1 border-t border-zinc-955 pt-4">
+                    <span className="text-[9.5px] font-display uppercase tracking-[0.15em] text-zinc-500 font-bold">Past Spontaneous Meetups</span>
+                    <span className="text-[8px] font-mono text-zinc-505 uppercase bg-zinc-950 px-1.5 py-0.5 rounded border border-zinc-900">ARCHIVED READ-ONLY</span>
+                  </div>
+
+                  {plans.filter(p => p.circleId === selectedCircle.id && p.isHappened).length === 0 ? (
+                    <div className="bg-zinc-905/20 border border-zinc-950 p-4.5 rounded-2xl text-center">
+                      <p className="text-[10px] text-zinc-505 italic">No past plans registered inside this private circle yet.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {plans
+                        .filter(p => p.circleId === selectedCircle.id && p.isHappened)
+                        .map(plan => (
+                          <div key={plan.id} className="bg-zinc-905/30 border border-zinc-950 rounded-2xl p-4 flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                              <h5 className="text-[11px] font-extrabold uppercase text-zinc-300 truncate font-mono">{plan.title}</h5>
+                              <span className="text-[8.5px] text-zinc-555 block mt-0.5 leading-none font-mono">Completed: {plan.date} • {plan.joinedUsers.length} attended</span>
+                            </div>
+
+                            <div className="flex gap-1.5 shrink-0">
+                              <button
+                                onClick={() => setActiveStoryRecap(plan)}
+                                className="text-[8.5px] font-mono font-bold uppercase text-[#ff8b66] hover:bg-[#ff8b66]/10 px-2 py-1 border border-[#ff8b66]/20 rounded-md cursor-pointer"
+                              >
+                                View Recap
+                              </button>
+                              <button
+                                onClick={() => setSelectedPlan(plan)}
+                                className="text-[8.5px] font-mono font-medium uppercase text-zinc-500 hover:text-zinc-350 bg-zinc-950 px-2 py-1 rounded-md cursor-pointer border border-zinc-900"
+                              >
+                                Chat Archive
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* SECTION 3: MEMBERS DETAIL LIST */}
+                <div className="space-y-3">
+                  <div className="text-[9.5px] font-display uppercase tracking-[0.15em] text-zinc-500 font-bold px-1 border-t border-zinc-955 pt-4">Circle Members Directory</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-zinc-950/40 p-3 rounded-2xl border border-zinc-910">
+                    {selectedCircle.membersList?.map((m, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-2 bg-zinc-900/40 rounded-xl border border-zinc-910">
+                        <div className="flex items-center gap-2">
+                          <img src={m.avatar} className="w-5.5 h-5.5 rounded-full object-cover shrink-0" alt="" referrerPolicy="no-referrer" />
+                          <div className="min-w-0">
+                            <span className="text-[10px] font-bold text-zinc-250 truncate block leading-tight">{m.name}</span>
+                            <span className="text-[8px] font-mono text-zinc-555 block">{m.phone}</span>
+                          </div>
+                        </div>
+                        <span className="text-[7.5px] font-mono uppercase bg-zinc-950 border border-zinc-900 px-1 py-0.5 rounded text-zinc-500 select-none">
+                          {idx === 0 ? "Founder" : "Member"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 5: PROFILE & ACCOUNT MANAGEMENT */}
+        {activeTab === "profile" && (
+          <div id="profile_tab_pane" className="space-y-6 animate-fade-in relative">
+
+            {/* SUB-VIEW 1: STANDARD USER PROFILE */}
+            {activeProfileSubView === "none" && (
+              <div id="profile_view_regular" className="space-y-6">
+
+                {/* Header Row */}
+                <div id="profile_header_row" className="flex items-center justify-between pb-2 border-b border-zinc-950">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-brand-peach animate-pulse" />
+                    <h2 className="text-xs font-display font-black text-white tracking-[0.2em] uppercase">
+                      Profile Space
+                    </h2>
+                  </div>
+                  <button
+                    id="profile_settings_gear_btn"
+                    onClick={() => setActiveProfileSubView("settings")}
+                    className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-all cursor-pointer"
+                    title="Access Preferences & Settings"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Profile Identity Card */}
+                <div id="profile_identity_card" className="bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-900 rounded-3xl p-5 space-y-4 relative overflow-hidden">
+
+                  {/* Backdrop subtle ambient highlights */}
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-[#ff8b66]/5 rounded-full blur-xl pointer-events-none" />
+
+                  <div className="flex items-start gap-4">
+                    <div className="relative shrink-0">
+                      <img
+                        src={userProfile.avatar}
+                        alt={userProfile.name}
+                        className="w-16 h-16 rounded-full border-2 border-zinc-800 object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                      <span className="absolute bottom-0 right-0 w-4 h-4 bg-emerald-500 rounded-full border-2 border-zinc-900 flex items-center justify-center">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white block" />
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <h1 className="text-base font-display font-black text-white leading-none truncate">
+                          {userProfile.name}
+                        </h1>
+                        <span className="text-[7.5px] uppercase tracking-wide font-mono bg-brand-orange/15 text-brand-peach px-1.5 py-0.5 rounded border border-brand-orange/20 select-none">
+                          PRO
+                        </span>
+                      </div>
+
+                      <span className="text-[10px] font-mono text-zinc-500 block">
+                        @thilak_sundar
+                      </span>
+
+                      {userProfile.college_or_work && (
+                        <div className="inline-flex items-center gap-1 bg-zinc-950 px-2 py-0.5 rounded-full border border-zinc-90 w-fit">
+                          <span className="text-[8px] text-zinc-400 font-sans">🎓 {userProfile.college_or_work}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {userProfile.bio && (
+                    <p className="text-xs text-zinc-350 leading-relaxed font-sans font-light">
+                      {userProfile.bio}
+                    </p>
+                  )}
+
+                  {/* Actions Bar */}
+                  <div className="flex gap-2.5 pt-1">
+                    <button
+                      id="edit_profile_trigger_btn"
+                      onClick={() => {
+                        setEditProfileName(userProfile.name);
+                        setEditProfileBio(userProfile.bio || "");
+                        setEditProfileCollege(userProfile.college_or_work || "");
+                        setEditProfileAvatar(userProfile.avatar || "");
+                        setIsEditingProfile(true);
+                      }}
+                      className="flex-1 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 text-zinc-200 font-sans text-xs font-semibold tracking-wide transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <UserIcon className="w-3.5 h-3.5" />
+                      <span>Edit Profile</span>
+                    </button>
+
+                    <button
+                      id="direct_wallet_jump_btn"
+                      onClick={() => setActiveProfileSubView("payments")}
+                      className="py-2.5 px-4 rounded-xl bg-zinc-950 border border-zinc-900 hover:border-zinc-800 text-zinc-350 font-mono text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Wallet className="w-3.5 h-3.5 text-[#ff8b66]" />
+                      <span>₹{walletBalance.toFixed(0)}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Inline Profile Edit View Card */}
+                {isEditingProfile && (
+                  <form
+                    id="inline_profile_edit_form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      setDbUsers(prev => prev.map(u => u.user_id === activeUserId ? {
+                        ...u,
+                        full_name: editProfileName,
+                        bio: editProfileBio,
+                        college_or_work: editProfileCollege,
+                        profile_photo: editProfileAvatar
+                      } : u));
+                      if (onUpdateProfile) {
+                        onUpdateProfile({
+                          ...userProfile,
+                          name: editProfileName,
+                          bio: editProfileBio,
+                          college_or_work: editProfileCollege,
+                          avatar: editProfileAvatar
+                        });
+                        setIsEditingProfile(false);
+                        triggerToast("✓ Profile edits saved to database! ⚡");
+                      }
+                    }}
+                    className="bg-zinc-950 border border-zinc-900 rounded-3xl p-5 space-y-4 animate-slide-up text-left"
+                  >
+                    <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+                      <span className="text-[10px] font-mono font-bold text-zinc-400 uppercase tracking-wider">
+                        📝 MINIMALIST PROFILE EDITOR
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingProfile(false);
+                          triggerToast("Profile edits cancelled");
+                        }}
+                        className="text-[10px] text-zinc-500 hover:text-white"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+
+                    {/* Choose Avatar */}
+                    <div className="flex items-center gap-3 py-1">
+                      <div className="relative shrink-0">
+                        <img
+                          src={editProfileAvatar}
+                          className="w-12 h-12 rounded-full object-cover border border-zinc-800"
+                          alt="preview"
+                          referrerPolicy="no-referrer"
+                        />
+                        <label className="absolute -bottom-1 -right-1 w-5 h-5 bg-brand-orange hover:opacity-90 transition-opacity rounded-full flex items-center justify-center cursor-pointer shadow-lg border border-zinc-950">
+                          <Camera className="w-3 text-white" />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                  if (typeof reader.result === "string") {
+                                    setEditProfileAvatar(reader.result);
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <div className="text-[10px] font-sans text-zinc-500 space-y-0.5">
+                        <p className="text-zinc-300 font-semibold">Change Profile Picture</p>
+                        <p>Upload jpeg/png or click default initials button below</p>
+                        <button
+                          type="button"
+                          onClick={() => setEditProfileAvatar(getInitialsAvatar(editProfileName))}
+                          className="text-[#ff8b66] hover:underline font-mono text-[9px] mt-1 block"
+                        >
+                          Generative Initials Avatar 🌀
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Fields */}
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">Full Name</label>
+                        <input
+                          type="text"
+                          required
+                          value={editProfileName}
+                          onChange={(e) => setEditProfileName(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-850 rounded-xl px-3 py-2 text-xs focus:border-[#ff8b66] focus:outline-none text-white font-sans"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">Academic / Work Group</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. SRM Chennai"
+                          value={editProfileCollege}
+                          onChange={(e) => setEditProfileCollege(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-850 rounded-xl px-3 py-2 text-xs focus:border-[#ff8b66] focus:outline-none text-white font-sans"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">Short Bio</label>
+                        <textarea
+                          rows={2}
+                          value={editProfileBio}
+                          onChange={(e) => setEditProfileBio(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-850 rounded-xl px-3 py-2 text-xs focus:border-[#ff8b66] focus:outline-none text-white font-sans resize-none"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3 rounded-xl bg-brand-orange hover:bg-opacity-90 text-white font-sans font-extrabold text-xs uppercase tracking-wider cursor-pointer"
+                    >
+                      Save Profile Signature
+                    </button>
+                  </form>
+                )}
+
+                {/* Spontaneous Stats Grid Row */}
+                <div id="spontaneous_stats_grid" className="grid grid-cols-3 gap-3">
+                  <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
+                    <span className="text-[16px]">👥</span>
+                    <h3 className="text-base font-display font-black text-white leading-none">
+                      {plans.filter(p => p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).length}
+                    </h3>
+                    <p className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">Plans Join</p>
+                  </div>
+
+                  <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
+                    <span className="text-[16px]">🕸️</span>
+                    <h3 className="text-base font-display font-black text-white leading-none">
+                      {circles.filter(c => c.membersList.some(m => m.name === userProfile.name)).length}
+                    </h3>
+                    <p className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">Active Cells</p>
+                  </div>
+
+                  <button
+                    onClick={() => setActiveProfileSubView("payments")}
+                    className="bg-zinc-900/60 border border-zinc-900/80 hover:bg-zinc-900 hover:border-zinc-800 rounded-2xl p-3 text-center space-y-1 cursor-pointer transition-all active:scale-95 text-left"
+                  >
+                    <div className="text-center space-y-1">
+                      <span className="text-[16px]">💳</span>
+                      <h3 className="text-base font-display font-black text-brand-peach leading-none">
+                        ₹{walletBalance.toFixed(0)}
+                      </h3>
+                      <p className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">Wallet Net</p>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Attended Spontaneous Meetups Horizontal Row */}
+                <div id="recently_attended_segment" className="space-y-2.5 text-left">
+                  <div className="flex items-center justify-between px-1">
+                    <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
+                      Spontaneous History
+                    </h4>
+                    <span className="text-[8.5px] font-mono text-zinc-650">
+                      Completed Adventures
+                    </span>
+                  </div>
+
+                  {plans.filter(p => p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).length === 0 ? (
+                    <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-5 text-center text-zinc-500 text-xs font-sans">
+                      Your completed spontaneous meets will stack here. Go to plans to archive!
+                    </div>
+                  ) : (
+                    <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1 snap-x">
+                      {plans.filter(p => p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).map(p => (
+                        <div
+                          key={p.id}
+                          onClick={() => setSelectedPlan(p)}
+                          className="bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl w-[140px] shrink-0 p-2.5 text-left snap-start cursor-pointer transition-colors space-y-2 select-none"
+                        >
+                          <div className="h-20 rounded-xl overflow-hidden relative">
+                            <img
+                              src={p.coverImage}
+                              alt={p.title}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute top-1 right-1 bg-black/70 backdrop-blur-sm px-1 rounded">
+                              <span className="text-[7px] font-mono text-emerald-400 capitalize">{p.category}</span>
+                            </div>
+                          </div>
+                          <div className="min-w-0">
+                            <h5 className="text-[10px] font-display font-black text-zinc-200 truncate leading-snug">
+                              {p.title}
+                            </h5>
+                            <p className="text-[8px] font-sans text-zinc-500 truncate mt-0.5">
+                              📅 {p.date}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Core Shared Memories Snapshot Gallery */}
+                <div id="memories_gallery_segment" className="space-y-3.5 text-left">
+                  <div className="flex items-center justify-between px-1 border-b border-zinc-950 pb-1.5">
+                    <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
+                      📸 Snapshot Memories
+                    </h4>
+                    <span className="text-[8.5px] font-mono text-zinc-600">
+                      {dbMemories.filter(m => m.uploaded_by === activeUserId).length} snaps saved
+                    </span>
+                  </div>
+
+                  {dbMemories.filter(m => m.uploaded_by === activeUserId).length === 0 ? (
+                    <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-6 text-center text-zinc-500 text-xs font-sans">
+                      Upload spontaneous snapshot stories inside Completed plans to view them here.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      {dbMemories.filter(m => m.uploaded_by === activeUserId).map(mem => (
+                        <div
+                          key={mem.memory_id}
+                          onClick={() => {
+                            setEditingMemory(mem);
+                            setEditedCaption(mem.caption || "");
+                          }}
+                          className="aspect-square bg-zinc-900 border border-zinc-850 rounded-xl overflow-hidden relative group cursor-pointer active:scale-95 transition-all shadow-md"
+                          title="Click to tweak caption or delete snapshot"
+                        >
+                          <img
+                            src={mem.media_url}
+                            alt="Your memory"
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-end p-1.5 transition-opacity pointer-events-none">
+                            <span className="text-[7.5px] font-sans font-bold text-white truncate w-full">
+                              "{mem.caption}"
+                            </span>
+                          </div>
+                          <span className="absolute top-1 right-1 bg-[#ff8b66] text-white text-[6.5px] font-sans font-bold px-1 rounded-sm shadow">
+                            You
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {/* SUB-VIEW 2: FIGMA SETTINGS DIRECTORY OVERLAY */}
+            {activeProfileSubView === "settings" && (
+              <div id="settings_preferences_directory" className="space-y-5 animate-slide-up text-left">
+
+                {/* Back Button and Title */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
+                  <button
+                    onClick={() => setActiveProfileSubView("none")}
+                    className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Back
+                  </button>
+                  <span className="text-[9.5px] font-mono text-[#ff8b66] font-bold uppercase tracking-widest">Preferences Console</span>
+                  <div className="w-8 shrink-0" /> {/* spacing balances */}
+                </div>
+
+                <div className="space-y-1">
+                  <h3 className="text-xs font-display font-black text-zinc-100 uppercase tracking-wider">
+                    TRUST & ACCOUNT OPTIONS
+                  </h3>
+                  <p className="text-[10px] text-zinc-550 font-sans">
+                    Configure your spontaneous presence, notification pings, ledger and split payment wallets.
+                  </p>
+                </div>
+
+                {/* Directory Navigation Rails */}
+                <div id="settings_list_navigator" className="space-y-2 pt-1">
+
+                  {/* Account Detail rail */}
+                  <button
+                    onClick={() => setActiveProfileSubView("account")}
+                    className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-[#ff5d41]/10 text-brand-peach flex items-center justify-center">
+                        <UserIcon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-zinc-200">Profile & Verification Node</h4>
+                        <span className="text-[9px] font-mono text-zinc-500 uppercase">Verified identity status</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-zinc-500" />
+                  </button>
+
+                  {/* Pings Detail rail */}
+                  <button
+                    onClick={() => setActiveProfileSubView("notifications")}
+                    className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center">
+                        <Bell className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-zinc-200">Alerts & Spontaneous Pings</h4>
+                        <span className="text-[9px] font-mono text-zinc-500 uppercase">Manage invite & scheduling push</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-zinc-500" />
+                  </button>
+
+                  {/* Payments Detail rail */}
+                  <button
+                    onClick={() => setActiveProfileSubView("payments")}
+                    className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                        <CreditCard className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-zinc-200">Payments & Co-Pay Ledger</h4>
+                        <span className="text-[9px] font-mono text-[#ff8b66] uppercase font-bold">Available balance • ₹{walletBalance.toFixed(0)}</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-zinc-500" />
+                  </button>
+
+                  {/* Privacy Detail rail */}
+                  <button
+                    onClick={() => setActiveProfileSubView("privacy")}
+                    className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-sky-500/10 text-sky-400 flex items-center justify-center">
+                        <Shield className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-zinc-200">Privacy & Coordinate Lock</h4>
+                        <span className="text-[9px] font-mono text-zinc-500 uppercase">Hide map drift and active indicators</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-zinc-500" />
+                  </button>
+
+                  {/* Help Detail rail */}
+                  <button
+                    onClick={() => setActiveProfileSubView("help")}
+                    className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+                        <HelpCircle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-zinc-200">Planless FAQ & Guides</h4>
+                        <span className="text-[9px] font-mono text-zinc-500 uppercase">Bill split rules & circles info</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-zinc-500" />
+                  </button>
+
+                  {/* System Relational Terminal rail */}
+                  <button
+                    onClick={() => {
+                      setShowDbExplorer(true);
+                      triggerToast("Opened SQLite Relational Console! 📊");
+                    }}
+                    className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
+                        <Database className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-zinc-200">System Relational Terminal</h4>
+                        <span className="text-[9px] font-mono text-zinc-550 uppercase">Inspect Live SQL-Like Schema Tables</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-zinc-500" />
+                  </button>
+
+                  {/* Switch Profile / Log Out rail */}
+                  <button
+                    onClick={() => {
+                      triggerToast("Switching profile sessions... Bye! 👋");
+                      setTimeout(() => {
+                        onLogout();
+                      }, 500);
+                    }}
+                    className="w-full bg-[#ff5d41]/5 hover:bg-[#ff5d41]/10 border border-[#ff5d41]/20 rounded-2xl p-4 flex items-center justify-between transition-colors text-left text-[#ff5d41]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-[#ff5d41]/10 flex items-center justify-center">
+                        <LogOut className="w-4 h-4 text-[#ff5d41]" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold">Exit Session / Log Out</h4>
+                        <span className="text-[9px] font-mono text-[#ff8b66]/60 uppercase">Reset onboarding profile database</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-[#ff5d41]/60" />
+                  </button>
+
+                </div>
+              </div>
+            )}
+
+            {/* DIRECT SUBMENU: ACCOUNT PRIVACY/IDENTITY (1) */}
+            {activeProfileSubView === "account" && (
+              <div id="subview_account_details" className="space-y-5 animate-slide-up text-left">
+
+                {/* Header breadcrumb */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
+                  <button
+                    onClick={() => setActiveProfileSubView("settings")}
+                    className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Settings
+                  </button>
+                  <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Identity Node Info</span>
+                  <div className="w-8 shrink-0" />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="bg-zinc-950 border border-zinc-900 rounded-3xl p-5 space-y-4">
+                    <h3 className="text-xs font-display font-black text-white uppercase tracking-wider">
+                      Academic Verified Node
+                    </h3>
+                    <p className="text-[11px] text-zinc-400 leading-relaxed">
+                      Planless matches people from verified campus cohorts or trusted coordinates. Your profile was automatically mapped via verified credentials.
+                    </p>
+
+                    <div className="space-y-2 border-t border-zinc-900 pt-3">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-zinc-500 font-mono text-[10px]">VERIFIED PHONE:</span>
+                        <span className="text-zinc-300 font-semibold">{userProfile.phone || "+91 90002 00001"}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-zinc-500 font-mono text-[10px]">VERIFIED GROUP:</span>
+                        <span className="text-zinc-300 font-semibold">{userProfile.college_or_work || "SRM Chennai"}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-zinc-500 font-mono text-[10px]">AUTHENTICATED AT:</span>
+                        <span className="text-zinc-300 font-mono text-[10px]">May 2026</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-zinc-500 font-mono text-[10px]">IDENTITY TOKEN:</span>
+                        <span className="text-zinc-300 font-mono text-[9px] select-all uppercase">{activeUserId}_VERIFIED_SEC_SSL</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900/40 border border-zinc-900 rounded-2xl p-4 space-y-1.5">
+                    <span className="text-[10px] font-mono text-sky-400 font-bold">✓ CORE RELATIONAL DATA MATCH: TRUE</span>
+                    <p className="text-[10px] text-zinc-500 leading-relaxed font-mono">
+                      Your identity coordinates securely bind with SQL index (dbUsers, Primary Key user_id: '{activeUserId}'). Changing college require verified email resubmissions.
+                    </p>
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* DIRECT SUBMENU: NOTIFICATION OVERRIDES (2) */}
+            {activeProfileSubView === "notifications" && (
+              <div id="subview_notifications_settings" className="space-y-5 animate-slide-up text-left">
+
+                {/* Header breadcrumb */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
+                  <button
+                    onClick={() => setActiveProfileSubView("settings")}
+                    className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Settings
+                  </button>
+                  <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Spontaneous Alerts</span>
+                  <div className="w-8 shrink-0" />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <h3 className="text-xs font-display font-black text-white uppercase tracking-wider">
+                      PING TRIGGERS
+                    </h3>
+                    <p className="text-[10px] text-zinc-550">
+                      Sp spontaneous pings should strictly respect low cognitive load. Customize alerts to your comfort.
+                    </p>
+                  </div>
+
+                  <div className="bg-zinc-950 border border-zinc-900 rounded-3xl p-2.5 divide-y divide-zinc-900">
+                    {/* Toggle 1 */}
+                    <div className="flex items-center justify-between p-3.5">
+                      <div className="space-y-0.5 max-w-[70%]">
+                        <h4 className="text-xs font-semibold text-zinc-200">SMS Spontaneous Invites</h4>
+                        <p className="text-[9.5px] text-zinc-500">Recieve urgent coordinate pings from friends</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setNotifInvites(!notifInvites);
+                          triggerToast(notifInvites ? "Spontaneous invite alerts paused" : "✓ Spontaneous invites enabled!");
+                        }}
+                        className={`w-10 h-6.5 rounded-full p-1 transition-all ${notifInvites ? "bg-brand-orange text-right" : "bg-zinc-800 text-left"
+                          }`}
+                      >
+                        <div className={`w-4.5 h-4.5 rounded-full bg-white shadow transition-all ${notifInvites ? "translate-x-3.5" : "translate-x-0"
+                          }`} />
+                      </button>
+                    </div>
+
+                    {/* Toggle 2 */}
+                    <div className="flex items-center justify-between p-3.5">
+                      <div className="space-y-0.5 max-w-[70%]">
+                        <h4 className="text-xs font-semibold text-zinc-200">Circle Match Pings</h4>
+                        <p className="text-[9.5px] text-zinc-500">Live chat, meetup updates, or soccer matches</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setNotifCircles(!notifCircles);
+                          triggerToast(notifCircles ? "Circles match pings muted" : "✓ Infinite circle alerts active!");
+                        }}
+                        className={`w-10 h-6.5 rounded-full p-1 transition-all ${notifCircles ? "bg-brand-orange text-right" : "bg-zinc-800 text-left"
+                          }`}
+                      >
+                        <div className={`w-4.5 h-4.5 rounded-full bg-white shadow transition-all ${notifCircles ? "translate-x-3.5" : "translate-x-0"
+                          }`} />
+                      </button>
+                    </div>
+
+                    {/* Toggle 3 */}
+                    <div className="flex items-center justify-between p-3.5">
+                      <div className="space-y-0.5 max-w-[70%]">
+                        <h4 className="text-xs font-semibold text-zinc-200">Wallet & Co-pay Reminders</h4>
+                        <p className="text-[9.5px] text-zinc-500">Overdue bills, cinema settlements, or refund statuses</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setNotifBills(!notifBills);
+                          triggerToast(notifBills ? "Wallet pings paused" : "✓ Co-pay ledger reminders active!");
+                        }}
+                        className={`w-10 h-6.5 rounded-full p-1 transition-all ${notifBills ? "bg-brand-orange text-right" : "bg-zinc-800 text-left"
+                          }`}
+                      >
+                        <div className={`w-4.5 h-4.5 rounded-full bg-white shadow transition-all ${notifBills ? "translate-x-3.5" : "translate-x-0"
+                          }`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-[9px] text-zinc-500 text-center font-mono italic">
+                    Planless never sells or forwards your numbers. Privacy is absolute.
+                  </p>
+                </div>
+
+              </div>
+            )}
+
+            {/* DIRECT SUBMENU: PAYMENTS, balances & LEDGER HISTORY (3) */}
+            {activeProfileSubView === "payments" && (
+              <div id="subview_payments_wallet" className="space-y-6 animate-slide-up text-left">
+
+                {/* Header breadcrumb */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
+                  <button
+                    onClick={() => setActiveProfileSubView("settings")}
+                    className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Settings
+                  </button>
+                  <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Spontaneous Pocket</span>
+                  <div className="w-8 shrink-0" />
+                </div>
+
+                {/* LARGE BALANCE DISPLAY SEAMLESSLY ADOPTED */}
+                <div id="wallet_balance_card" className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-900 rounded-3xl p-6 relative overflow-hidden shadow-xl text-center space-y-4">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-mono text-zinc-550 uppercase tracking-[0.25em]">SPONTANEOUS BALANCE</span>
+                    <h1 className="text-4xl font-display font-black text-white select-all">
+                      ₹{walletBalance.toLocaleString("en-IN")}
+                    </h1>
+                  </div>
+
+                  <div className="flex justify-center gap-3">
+                    <button
+                      id="add_money_btn"
+                      onClick={() => setShowDepositModal(true)}
+                      className="bg-zinc-100 hover:bg-white text-black font-semibold text-xs px-6 py-2.5 rounded-full transition-all shadow-md cursor-pointer"
+                    >
+                      Deposit Cash (UPI)
+                    </button>
+                  </div>
+                </div>
+
+                {/* ACTIVE HANGOUT COPAYS (Rule 19: Prioritize active plan payments, completed payments) */}
+                <div className="space-y-3">
+                  <h3 className="text-[10.5px] font-display uppercase tracking-[0.15em] text-zinc-500 font-bold px-1">
+                    Active Plan Co-pays
+                  </h3>
+
+                  {(() => {
+                    const activePaidPlans = plans.filter(p => p.cost > 0 && p.joinedUsers.some(u => u.name === userProfile.name));
+                    if (activePaidPlans.length === 0) {
+                      return (
+                        <p className="text-[10px] text-zinc-500 italic p-3 text-center bg-zinc-950 rounded-2xl border border-zinc-900">
+                          No active plan co-pays yet. Join a plan with a ticket/shuffled split!
+                        </p>
+                      );
+                    }
+                    return (
+                      <div className="space-y-2">
+                        {activePaidPlans.map(p => (
+                          <div key={p.id} className="bg-zinc-950 border border-zinc-900/60 rounded-2xl p-3 flex items-center justify-between">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="text-lg shrink-0">⚡</span>
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-sans font-bold text-zinc-200 truncate">{p.title}</h4>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className="text-[8.5px] text-emerald-400 font-mono font-bold uppercase">SOCIALLY SETTLED</span>
+                                  <span className="text-[8px] text-zinc-650">•</span>
+                                  <div className="flex -space-x-1">
+                                    {p.joinedUsers.slice(0, 3).map((u, ui) => (
+                                      <img key={ui} src={u.avatar} className="w-3.5 h-3.5 rounded-full object-cover border border-zinc-950" alt="avatar" />
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="font-mono text-xs font-bold text-emerald-400 shrink-0">
+                              ₹{p.cost}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* SPONTANEOUS PEER LEDGER HISTORY */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h3 className="text-[10.5px] font-display uppercase tracking-[0.15em] text-zinc-500 font-bold">
+                      Spontaneous Peer Ledger
+                    </h3>
+                    <span className="text-[7.5px] font-mono text-[#ff8b66] bg-[#ff8b66]/10 px-2 py-0.5 rounded border border-[#ff8b66]/15 font-bold">
+                      Settle & Share History
+                    </span>
+                  </div>
+
+                  <div id="transactions_list" className="space-y-2 max-h-[190px] overflow-y-auto no-scrollbar">
+                    {transactions.map(tx => (
+                      <div key={tx.id} className="bg-zinc-900/40 border border-zinc-900 rounded-2xl p-4 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold font-mono text-sm leading-none ${tx.type === "credit" ? "bg-emerald-500/10 text-emerald-400 font-black" : "bg-[#ff5e3a]/10 text-brand-peach"
+                            }`}>
+                            {tx.type === "credit" ? "+" : "−"}
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-sans font-semibold text-zinc-200">{tx.title}</h4>
+                            <span className="text-[9px] font-mono text-zinc-550 block mt-0.5 uppercase">{tx.timestamp}</span>
+                          </div>
+                        </div>
+
+                        <div className="font-mono text-xs font-bold text-zinc-200">
+                          {tx.type === "credit" ? "+" : "−"} ₹{tx.amount}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* DIRECT SUBMENU: PRIVACY & MAP indicators (4) */}
+            {activeProfileSubView === "privacy" && (
+              <div id="subview_privacy_rules" className="space-y-5 animate-slide-up text-left">
+
+                {/* Header breadcrumb */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
+                  <button
+                    onClick={() => setActiveProfileSubView("settings")}
+                    className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Settings
+                  </button>
+                  <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase font-sans">Privacy Rules</span>
+                  <div className="w-8 shrink-0" />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <h3 className="text-xs font-display font-black text-white uppercase tracking-wider">
+                      COORDINATE VISIBILITY
+                    </h3>
+                    <p className="text-[10px] text-zinc-550 leading-relaxed">
+                      Planless maps only verified location anchors. You never share broad realtime live telemetry paths.
+                    </p>
+                  </div>
+
+                  <div className="bg-zinc-950 border border-zinc-900 rounded-3xl p-2.5 divide-y divide-zinc-900">
+                    <div className="flex items-center justify-between p-3.5">
+                      <div className="space-y-0.5 max-w-[70%]">
+                        <h4 className="text-xs font-semibold text-zinc-200">Share Campus Anchors</h4>
+                        <p className="text-[9.5px] text-zinc-500">Allow friends to spot your preferred hangout nodes</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setPrivacyShareLocation(!privacyShareLocation);
+                          triggerToast(privacyShareLocation ? "Campus anchor syncing paused" : "✓ Campus anchors are active!");
+                        }}
+                        className={`w-10 h-6.5 rounded-full p-1 transition-all ${privacyShareLocation ? "bg-brand-orange text-right" : "bg-zinc-800 text-left"
+                          }`}
+                      >
+                        <div className={`w-4.5 h-4.5 rounded-full bg-white shadow transition-all ${privacyShareLocation ? "translate-x-3.5" : "translate-x-0"
+                          }`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-3.5">
+                      <div className="space-y-0.5 max-w-[70%]">
+                        <h4 className="text-xs font-semibold text-zinc-200">Ghost Mode</h4>
+                        <p className="text-[9.5px] text-zinc-500">Completely hide spontaneous active markers</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setPrivacyInvisible(!privacyInvisible);
+                          triggerToast(privacyInvisible ? "Ghost mode disabled" : "✓ Ghost mode fully enabled! 👻");
+                        }}
+                        className={`w-10 h-6.5 rounded-full p-1 transition-all ${privacyInvisible ? "bg-brand-orange text-right" : "bg-zinc-800 text-left"
+                          }`}
+                      >
+                        <div className={`w-4.5 h-4.5 rounded-full bg-white shadow transition-all ${privacyInvisible ? "translate-x-3.5" : "translate-x-0"
+                          }`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900/40 border border-zinc-900 rounded-2xl p-4 font-mono text-[9px] text-zinc-500 leading-relaxed">
+                    ⚙️ STATUS INDICATOR LOG: CURRENTLY ACTIVE INDEPENDENT • NO EXTERNAL TRACKING AGENTS LOADED
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* DIRECT SUBMENU: FAQ & METHODOLOGY (5) */}
+            {activeProfileSubView === "help" && (
+              <div id="subview_help_faqs" className="space-y-5 animate-slide-up text-left">
+
+                {/* Header breadcrumb */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
+                  <button
+                    onClick={() => setActiveProfileSubView("settings")}
+                    className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Settings
+                  </button>
+                  <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Help Desk FAQ</span>
+                  <div className="w-8 shrink-0" />
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-xs font-display font-black text-white uppercase tracking-wider">
+                    Frequently Asked Questions
+                  </h3>
+
+                  <div className="space-y-2.5">
+                    {[
+                      {
+                        q: "How does UPI co-pay splitting work?",
+                        a: "When you join Cinema, Dining, or turf bookings with cost metrics, the split amount is instantly reserved and transferred from your wallet. Refund matches return here instantly."
+                      },
+                      {
+                        q: "Who can see my spontaneous plans?",
+                        a: "Only verified friends inside your Circles have coordinates mapping to your active sessions. Complete strangers can never spot your plans."
+                      },
+                      {
+                        q: "Is there a push fee or service penalty?",
+                        a: "Zero fees. Planless operates entirely without marketing margins, keeping spontaneous real-world coordination free of transactional noise."
+                      }
+                    ].map((item, i) => (
+                      <div key={i} className="bg-zinc-950 border border-zinc-900 rounded-2xl p-4 space-y-1.5 shadow-sm">
+                        <h4 className="text-xs font-bold text-zinc-200">Q: {item.q}</h4>
+                        <p className="text-[10px] text-zinc-400 leading-relaxed font-sans">{item.a}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="border border-zinc-900 rounded-2xl p-4 bg-zinc-900/10 space-y-1">
+                    <p className="text-[10px] font-semibold text-zinc-355 text-center font-mono uppercase">Planless Campus Support Cell</p>
+                    <p className="text-[9px] text-zinc-550 text-center font-sans mt-0.5">Contact coordinate coordinators: support@planless.space</p>
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+          </div>
+        )}
+
+      </main>
+
+      {/* ---------------- ACTIVE DETAILED OVERLAY POPUP (PLAN DETAILS) ---------------- */}
+      {selectedPlan && (
+        <div
+          id="detailed_plan_modal"
+          className="absolute inset-0 bg-black/95 backdrop-blur-md z-45 flex flex-col justify-between animate-fade-in touch-none select-none overflow-hidden"
+          onPointerDown={startDetailHolding}
+          onPointerUp={stopDetailHolding}
+          onPointerLeave={cancelDetailHolding}
+          style={{
+            transform: detailIsHolding ? `scale(${1 - (detailHoldProgress / 100) * 0.02})` : 'scale(1)',
+            transition: detailIsHolding ? 'none' : 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+            boxShadow: detailIsHolding
+              ? `0 0 ${15 + (detailHoldProgress / 100) * 35}px rgba(255, 139, 102, ${(detailHoldProgress / 100) * 0.25})`
+              : 'none',
+          }}
+        >
+
+          {/* Header block */}
+          <div className="p-4 flex items-center justify-between border-b border-zinc-900">
+            <button
+              onClick={() => setSelectedPlan(null)}
+              className="text-zinc-500 hover:text-white flex items-center gap-1.5 text-xs"
+            >
+              <ArrowLeft className="w-4 h-4" /> Close
+            </button>
+            <span className="text-[11px] font-sans text-zinc-400 font-medium tracking-wide">
+              Host: <span className="text-zinc-200 font-semibold">{selectedPlan.creatorName}</span>
+            </span>
+            <button className="text-zinc-500 hover:text-white">
+              <Share2 className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-6">
+
+            {/* Premium Host Control Center */}
+            {selectedPlan.creatorName === userProfile.name && (
+              <div className="bg-zinc-950 border border-white/[0.04] rounded-[2.2rem] p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.8)] text-left animate-fade-in">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-widest font-black">Host Control Center</h3>
+                    <h2 className="text-base font-display font-black text-white uppercase tracking-tight leading-none mt-1">
+                      {selectedPlan.title}
+                    </h2>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={reminderSentPlanIds.includes(selectedPlan.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (reminderSentPlanIds.includes(selectedPlan.id)) return;
+
+                      setReminderSentPlanIds(prev => [...prev, selectedPlan.id]);
+                      triggerToast("Reminder sent to pending participants");
+
+                      setTimeout(() => {
+                        setPassedByPlanId(prev => ({
+                          ...prev,
+                          [selectedPlan.id]: [...(prev[selectedPlan.id] || []), "Guhan", "Keerthana"]
+                        }));
+                        triggerToast("Pending users ignored reminder: Auto-Passed");
+                      }, 3500);
+                    }}
+                    className={`px-3.5 py-1.5 rounded-full text-[9px] font-mono font-black uppercase tracking-wider transition-all duration-200 border cursor-pointer ${reminderSentPlanIds.includes(selectedPlan.id)
+                      ? "bg-zinc-900 border-zinc-800 text-zinc-500 cursor-not-allowed"
+                      : "bg-[#ff8b66]/10 border-[#ff8b66]/30 text-[#ff8b66] hover:bg-[#ff8b66]/20 active:scale-95 shadow-md"
+                      }`}
+                  >
+                    {reminderSentPlanIds.includes(selectedPlan.id) ? "Reminder Sent ✓" : "⚡ Send Reminder"}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2.5 pt-1 text-center">
+                  <div className="bg-zinc-900/60 rounded-2xl p-3 border border-white/[0.02]">
+                    <div className="text-[16px] font-display font-black text-emerald-400">
+                      {selectedPlan.joinedUsers.length}
+                    </div>
+                    <div className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider mt-0.5">Going</div>
+                  </div>
+
+                  <div className="bg-zinc-900/60 rounded-2xl p-3 border border-white/[0.02]">
+                    <div className="text-[16px] font-display font-black text-amber-400">
+                      {reminderSentPlanIds.includes(selectedPlan.id) ? 0 : 2}
+                    </div>
+                    <div className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider mt-0.5">Pending</div>
+                  </div>
+
+                  <div className="bg-zinc-900/60 rounded-2xl p-3 border border-white/[0.02]">
+                    <div className="text-[16px] font-display font-black text-rose-400">
+                      {(passedByPlanId[selectedPlan.id] || []).length + (reminderSentPlanIds.includes(selectedPlan.id) ? 2 : 0)}
+                    </div>
+                    <div className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider mt-0.5">Passed</div>
+                  </div>
+                </div>
+
+                {/* Status lists with elegant name pills */}
+                <div className="space-y-2 pt-1 text-[10px] border-t border-white/[0.02] mt-1">
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    <span className="text-zinc-500 font-mono text-[9px]">Going:</span>
+                    {selectedPlan.joinedUsers.map((u, idx) => (
+                      <span key={idx} className="bg-emerald-950/40 border border-emerald-900/30 text-emerald-400 px-2.5 py-0.5 rounded-md font-sans font-medium text-[9px] flex items-center gap-1">
+                        <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                        {u.name}
+                      </span>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    <span className="text-zinc-500 font-mono text-[9px]">Pending:</span>
+                    {!reminderSentPlanIds.includes(selectedPlan.id) ? (
+                      <>
+                        <span className="bg-amber-950/40 border border-amber-900/30 text-amber-400 px-2.5 py-0.5 rounded-md font-sans font-medium text-[9px] flex items-center gap-1">
+                          <span className="w-1 h-1 rounded-full bg-amber-400" />
+                          Guhan
+                        </span>
+                        <span className="bg-amber-950/40 border border-amber-900/30 text-amber-400 px-2.5 py-0.5 rounded-md font-sans font-medium text-[9px] flex items-center gap-1">
+                          <span className="w-1 h-1 rounded-full bg-amber-400" />
+                          Keerthana
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-zinc-650 italic text-[9px]">None pending</span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    <span className="text-zinc-500 font-mono text-[9px]">Passed:</span>
+                    {reminderSentPlanIds.includes(selectedPlan.id) ? (
+                      <>
+                        <span className="bg-zinc-900 border border-zinc-800 text-zinc-500 px-2.5 py-0.5 rounded-md font-sans font-medium text-[9px] flex items-center gap-1 line-through">
+                          Guhan
+                        </span>
+                        <span className="bg-zinc-900 border border-zinc-800 text-zinc-500 px-2.5 py-0.5 rounded-md font-sans font-medium text-[9px] flex items-center gap-1 line-through">
+                          Keerthana
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-zinc-650 italic text-[9px]">None passed</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* FIGMA PLAN HAPPENS LIFE-CYCLE PROGRESS TRACKER */}
+            {selectedPlan.category !== "movies" && (
+              <>
+                <div className="bg-zinc-950/80 border border-zinc-900 rounded-[2.2rem] p-5 space-y-4">
+                  <div
+                    onClick={() => setIsTrackerExpanded(!isTrackerExpanded)}
+                    className="flex items-center justify-between cursor-pointer select-none"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#ff5d41] animate-pulse" />
+                      <div>
+                        <h3 className="text-xs font-display font-black text-zinc-100 uppercase tracking-wider">
+                          PLAN HAPPENS FLOW
+                        </h3>
+                        <p className="text-[9.5px] text-zinc-400 font-sans mt-0.5">
+                          {selectedPlan.isHappened
+                            ? "🎉 Phase 7/7 Achieved: Archived to History"
+                            : selectedPlan.isActive
+                              ? selectedPlan.reminderNotificationSent
+                                ? "🕒 Phase 3/7 Checked: Participants syncing & preparing"
+                                : "⚡ Phase 2/7 Checked: Active pre-meet coordination open"
+                              : "🕒 Phase 1/7 Checked: Upcoming plan time approaches"}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-xs text-[#ff8b66] font-mono hover:underline flex items-center gap-0.5">
+                      {isTrackerExpanded ? "Collapse Flow ▴" : "Expand 7-Steps ▾"}
+                    </span>
+                  </div>
+
+                  {isTrackerExpanded && (
+                    <div className="pt-3 border-t border-zinc-900/60 space-y-4 animate-fade-in text-left">
+                      {/* Flow description */}
+                      <p className="text-[10px] text-zinc-400 font-sans leading-relaxed">
+                        Official active-plan lifecycle tracking for the Planless MVP. Guide the coordination loop from a Spontaneous idea into a real-world Shared Memory.
+                      </p>
+
+                      {/* 7-Step sequential path rendered with high-fidelity styling */}
+                      <div className="space-y-3 pt-2 relative">
+                        {/* Vertical connecting line */}
+                        <div className="absolute left-[17px] top-4 bottom-4 w-[1px] bg-zinc-850 z-0" />
+
+                        {[
+                          {
+                            stepNumber: 1,
+                            badgeColor: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+                            activeColor: "ring-purple-500/40 border-purple-400/50 bg-purple-950/40",
+                            icon: Calendar,
+                            title: "Plan Time Approaches",
+                            desc: "The plan time is getting close.",
+                            isCompleted: selectedPlan.isActive || selectedPlan.isHappened,
+                            isActive: !selectedPlan.isHappened && !selectedPlan.isActive,
+                            extraAction: !selectedPlan.isActive && !selectedPlan.isHappened && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const updatedPlan = { ...selectedPlan, isActive: true };
+                                  setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updatedPlan : p));
+                                  setSelectedPlan(updatedPlan);
+
+                                  // Send subtle approach notification
+                                  const subtleNotif: NotificationItem = {
+                                    id: `n_approach_${Date.now()}`,
+                                    type: "urgency",
+                                    title: `⚡ "${selectedPlan.title}" is approaching today! Live coordination is now open.`,
+                                    relativeTime: "Just now",
+                                    planId: selectedPlan.id
+                                  };
+                                  setNotifications([subtleNotif, ...notifications]);
+                                  triggerToast("⚡ Plan is now approaching! Pre-Meet coordination unlocked!");
+                                }}
+                                className="text-[8.5px] font-mono uppercase bg-[#ff8b66] hover:bg-[#ff8b66]/90 text-black px-2 py-1 rounded font-black mt-1.5 transition cursor-pointer shrink-0 block w-fit"
+                              >
+                                ⚡ Activate Approaching State
+                              </button>
+                            )
+                          },
+                          {
+                            stepNumber: 2,
+                            badgeColor: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                            activeColor: "ring-amber-500/40 border-amber-400/50 bg-amber-950/40",
+                            icon: Bell,
+                            title: "Reminder Notification Sent",
+                            desc: "Subtle, lightweight reminder 1 hour before scheduled start.",
+                            isCompleted: selectedPlan.reminderNotificationSent || selectedPlan.isHappened,
+                            isActive: selectedPlan.isActive && !selectedPlan.reminderNotificationSent,
+                            extraAction: selectedPlan.isActive && !selectedPlan.reminderNotificationSent && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const updatedPlan = { ...selectedPlan, reminderNotificationSent: true };
+                                  setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updatedPlan : p));
+                                  setSelectedPlan(updatedPlan);
+
+                                  // Add unread reminder notification inside tray
+                                  const customReminder: NotificationItem = {
+                                    id: `n_reminder_${Date.now()}`,
+                                    type: "urgency",
+                                    title: `🕒 [REMINDER] "${selectedPlan.title}" kicks off in 1 hour at ${selectedPlan.location}! Prepare for arrival.`,
+                                    relativeTime: "1h",
+                                    planId: selectedPlan.id,
+                                    actionText: "Go to Active Plan"
+                                  };
+                                  setNotifications([customReminder, ...notifications]);
+                                  triggerToast("🔔 1-Hour Reminder notification dispatched to active user feeds!");
+                                }}
+                                className="text-[8.5px] font-mono uppercase bg-amber-500 hover:bg-amber-600 text-black px-2 py-1 rounded font-black mt-1.5 transition cursor-pointer shrink-0 block w-fit"
+                              >
+                                🔔 Send 1h Reminder Ping
+                              </button>
+                            )
+                          },
+                          {
+                            stepNumber: 3,
+                            badgeColor: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+                            activeColor: "ring-blue-500/40 border-blue-400/50 bg-blue-950/40",
+                            icon: Smartphone,
+                            title: "Participants Open Active Plan",
+                            desc: "Everyone opens the plan to coordinate seatings, logistics, or menu picks.",
+                            isCompleted: selectedPlan.isActive && (selectedPlan.reminderNotificationSent || selectedPlan.isHappened),
+                            isActive: selectedPlan.isActive && selectedPlan.reminderNotificationSent && !selectedPlan.isHappened,
+                          },
+                          {
+                            stepNumber: 4,
+                            badgeColor: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+                            activeColor: "ring-emerald-500/40 border-emerald-400/50 bg-emerald-950/40",
+                            icon: Sparkles,
+                            title: "Plan Happens (Real-Life)",
+                            desc: "Experience occurs in real life! Friendly matches, cinema feats, or delicious curries.",
+                            isCompleted: selectedPlan.isHappened,
+                            isActive: selectedPlan.isActive && selectedPlan.reminderNotificationSent && !selectedPlan.isHappened,
+                            extraAction: selectedPlan.isActive && !selectedPlan.isHappened && (
+                              <span className="text-[8.5px] text-zinc-500 font-mono uppercase font-black block mt-1 tracking-wider">
+                                🤝 LIVE MEETUP IN PROGRESS
+                              </span>
+                            )
+                          },
+                          {
+                            stepNumber: 5,
+                            badgeColor: "bg-pink-500/10 text-pink-400 border-pink-500/20",
+                            activeColor: "ring-pink-500/40 border-pink-400/50 bg-pink-950/40",
+                            icon: Camera,
+                            title: "Users Upload Photos/Videos",
+                            desc: "Share spontaneous snapshot stories directly inside the experience.",
+                            isCompleted: dbMemories.some(m => m.plan_id === selectedPlan.id),
+                            isActive: !selectedPlan.isHappened && selectedPlan.isActive,
+                            extraAction: (
+                              <div className="mt-2.5">
+                                <label className="text-[8.5px] font-mono bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white px-2 py-1 cursor-pointer transition rounded w-fit block">
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const reader = new FileReader();
+                                        reader.onload = () => {
+                                          if (typeof reader.result === "string") {
+                                            const captionText = prompt("Enter a lovely caption for this memory:", "Captured spontaneous matchday energy! ✨");
+                                            if (captionText !== null) {
+                                              const newMemory: DbMemory = {
+                                                memory_id: `M_${Date.now()}`,
+                                                plan_id: selectedPlan.id,
+                                                uploaded_by: activeUserId,
+                                                media_url: reader.result,
+                                                caption: captionText || "Shared experience captured! ⭐",
+                                                timestamp: new Date().toISOString()
+                                              };
+                                              setDbMemories([newMemory, ...dbMemories]);
+                                              triggerToast("📸 Core post-plan memory photo saved successfully!");
+                                            }
+                                          }
+                                        };
+                                        reader.readAsDataURL(file);
+                                      }
+                                    }}
+                                  />
+                                  📸 Upload Photos/Videos
+                                </label>
+                              </div>
+                            )
+                          },
+                          {
+                            stepNumber: 6,
+                            badgeColor: "bg-violet-500/10 text-violet-400 border-violet-500/20",
+                            activeColor: "ring-violet-500/40 border-violet-400/50 bg-violet-950/40",
+                            icon: CheckCircle,
+                            title: "Host Marks Plan as Completed",
+                            desc: "Closes live coordination channels and archives into our shared visual memory wall.",
+                            isCompleted: selectedPlan.isHappened,
+                            isActive: selectedPlan.isActive && !selectedPlan.isHappened,
+                            extraAction: !selectedPlan.isHappened && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const updatedPlan = { ...selectedPlan, isHappened: true, isActive: false };
+                                  setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updatedPlan : p));
+                                  setSelectedPlan(updatedPlan);
+                                  setShowAddMemoriesPrompt(updatedPlan);
+                                  setMemoryUploadPreview(null);
+                                  setMemoryUploadCaption("");
+
+                                  // Log attendance for participants
+                                  const congratsNotif: NotificationItem = {
+                                    id: `n_complet_${Date.now()}`,
+                                    type: "general",
+                                    title: `🎉 "${selectedPlan.title}" completed successfully! Your social attendance has been verified.`,
+                                    relativeTime: "Just now",
+                                    planId: selectedPlan.id
+                                  };
+                                  setNotifications([congratsNotif, ...notifications]);
+                                  triggerToast("✅ Meetup complete! Please preserve today's joyful memories on our shared wall.");
+                                }}
+                                className="text-[8.5px] font-mono uppercase bg-[#ff8b66] hover:bg-[#ff8b66]/100 text-black px-2.5 py-1.5 rounded font-black mt-2 transition cursor-pointer shrink-0 block w-full text-center animate-pulse"
+                              >
+                                ✓ Mark Plan as Completed
+                              </button>
+                            )
+                          },
+                          {
+                            stepNumber: 7,
+                            badgeColor: "bg-sky-500/10 text-sky-450 border-sky-500/20",
+                            activeColor: "ring-sky-500/40 border-sky-400/50 bg-sky-950/40",
+                            icon: Database,
+                            title: "Plan Added to History",
+                            desc: "Preserves memories, active reactions, ratings, and attendance history logs.",
+                            isCompleted: selectedPlan.isHappened,
+                            isActive: selectedPlan.isHappened,
+                            extraAction: selectedPlan.isHappened ? (
+                              <div className="mt-1.5 space-y-1 bg-zinc-950/40 p-2 rounded-xl border border-zinc-900">
+                                <span className="text-[8px] text-amber-500 font-mono block">✓ Saved to Social Experience History</span>
+                                <div className="flex gap-1">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <button
+                                      key={star}
+                                      onClick={() => {
+                                        const updatedPlan = { ...selectedPlan, userRating: star };
+                                        setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updatedPlan : p));
+                                        setSelectedPlan(updatedPlan);
+                                        triggerToast(`Thank you for rating! Saved ${star} stars to history.`);
+                                      }}
+                                      className={`text-xs focus:outline-none ${star <= (selectedPlan.userRating || 0) ? "text-amber-400" : "text-zinc-700"
+                                        }`}
+                                    >
+                                      ★
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null
+                          }
+                        ].map((step) => {
+                          const IconComp = step.icon;
+                          const isStepDone = step.isCompleted;
+                          const isStepActive = step.isActive;
+
+                          return (
+                            <div
+                              key={step.stepNumber}
+                              className={`flex gap-3.5 items-start p-3.5 rounded-2xl border transition-all relative z-10 ${isStepActive
+                                ? `border-[#ff8b66]/30 bg-[#ff8b66]/5 ring-2 ring-[#ff8b66]/10`
+                                : isStepDone
+                                  ? "bg-zinc-950/80 border-zinc-900 opacity-90"
+                                  : "bg-zinc-950/35 border-zinc-950/40 opacity-45"
+                                }`}
+                            >
+                              {/* Step Badge with icon */}
+                              <div className={`w-9.5 h-9.5 rounded-full flex items-center justify-center shrink-0 border relative ${isStepActive
+                                ? "bg-zinc-950 border-[#ff8b66]/40 text-[#ff8b66]"
+                                : isStepDone
+                                  ? "bg-zinc-900 border-emerald-950 text-emerald-400"
+                                  : "bg-zinc-900 border-zinc-850 text-zinc-500"
+                                }`}>
+                                <IconComp className="w-4.5 h-4.5" />
+                                {/* Smaller overlay indicator */}
+                                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-zinc-900 border border-zinc-800 text-[8px] font-mono font-bold flex items-center justify-center">
+                                  {step.stepNumber}
+                                </span>
+                              </div>
+
+                              {/* Step details Column */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between">
+                                  <h4 className={`text-xs font-sans font-bold flex items-center gap-1.5 uppercase tracking-wide leading-none ${isStepActive ? "text-[#ff8b66]" : isStepDone ? "text-zinc-200" : "text-zinc-400"
+                                    }`}>
+                                    {step.title}
+                                    {isStepDone && <span className="text-[9px] text-emerald-400 font-mono lowercase">✓ checked</span>}
+                                  </h4>
+                                </div>
+                                <p className="text-[10px] text-zinc-400 font-sans leading-relaxed mt-1">
+                                  {step.desc}
+                                </p>
+
+                                {step.extraAction}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* FIGMA MEMORY FLOW & SHAREABLE STORY RECAP CONSOLE */}
+                {selectedPlan.isHappened && (
+                  <div className="bg-gradient-to-br from-zinc-950 to-zinc-900 border border-[#ff8b66]/15 rounded-[2.2rem] p-6 space-y-5 shadow-2xl relative overflow-hidden text-left">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-[#ff8b66]/5 rounded-full blur-3xl" />
+
+                    {/* Header */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2 w-2 relative">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-pink-500"></span>
+                        </span>
+                        <div>
+                          <h3 className="text-xs font-display font-black text-zinc-100 uppercase tracking-widest">
+                            🌈 MEMORIES & STORY RECAP
+                          </h3>
+                          <p className="text-[9px] text-[#ff8b66] font-mono mt-0.5 uppercase tracking-tight">
+                            ACTIVE COMPLETED MEMORY LOUNGE
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] bg-zinc-900/60 border border-zinc-800 text-zinc-400 px-2.5 py-0.5 rounded-full font-sans">
+                        {dbMemories.filter(m => m.plan_id === selectedPlan.id).length} Saved Memories
+                      </span>
+                    </div>
+
+                    <p className="text-[10px] text-zinc-400 font-sans leading-relaxed">
+                      Turn your real-world experience into shared social memories. Add your snapshots, coordinate reactions, and preview your automatic story recap.
+                    </p>
+
+                    {/* Grid layout containing Upload Column & Story Recap Automation Column */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
+
+                      {/* Column 1: Add Memories and Reactions Upload Box */}
+                      <div className="bg-zinc-950/40 border border-zinc-900 rounded-2xl p-4.5 space-y-4">
+                        <h4 className="text-[10px] font-sans font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                          📸 Add Memories (Photos / Videos / Reactions)
+                        </h4>
+
+                        {/* Quick drag/click file trigger */}
+                        <label className="border-2 border-dashed border-zinc-855 hover:border-[#ff8b66]/30 bg-zinc-955/45 rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-all space-y-2 group">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                  if (typeof reader.result === "string") {
+                                    const captionText = prompt("Add a lovely caption or memory post for this moment:", "Captured live memories with the gang! 🙌");
+                                    if (captionText !== null) {
+                                      const customNewMemory: DbMemory = {
+                                        memory_id: `M_${Date.now()}`,
+                                        plan_id: selectedPlan.id,
+                                        uploaded_by: activeUserId, // Active User
+                                        media_url: reader.result,
+                                        caption: captionText || "Shared experience captured! ⭐",
+                                        timestamp: new Date().toISOString()
+                                      };
+                                      setDbMemories([customNewMemory, ...dbMemories]);
+                                      triggerToast("📸 Saved to active experience memories! Story recap generated... ⚡");
+                                    }
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          <Camera className="w-5 h-5 text-zinc-400 group-hover:text-[#ff8b66] transition-colors" />
+                          <div>
+                            <span className="text-[10px] font-sans font-semibold text-zinc-300 block">Tap to upload a memory card</span>
+                            <span className="text-[8.5px] text-zinc-500 font-sans block mt-0.5">Supports vertical stories, live photos, or short clips</span>
+                          </div>
+                        </label>
+
+                        {/* Quick Reactions Slider Panel */}
+                        <div className="space-y-1.5 bg-zinc-950/50 p-2.5 rounded-xl border border-zinc-900/60">
+                          <span className="text-[8.5px] text-zinc-500 uppercase font-mono block">Tap reaction stamp to cast automatically</span>
+                          <div className="flex justify-between gap-1">
+                            {[
+                              { emoji: "❤️", label: "love" },
+                              { emoji: "🔥", label: "fire" },
+                              { emoji: "🍻", label: "cheers" },
+                              { emoji: "🏆", label: "clinch" },
+                              { emoji: "👀", label: "epic" },
+                              { emoji: "🎬", label: "cinema" }
+                            ].map((react) => (
+                              <button
+                                key={react.label}
+                                type="button"
+                                onClick={() => {
+                                  // Auto link a pure Reaction Memory to the Plan & Attendees
+                                  const reactMemory: DbMemory = {
+                                    memory_id: `M_emoji_${Date.now()}`,
+                                    plan_id: selectedPlan.id,
+                                    uploaded_by: activeUserId,
+                                    media_url: "https://images.unsplash.com/photo-1518173946687-a4c8a383392e?auto=format&fit=crop&q=80&w=400", // Soft background placeholder
+                                    caption: `Logged reaction emoji stamp: ${react.emoji} !`,
+                                    timestamp: new Date().toISOString()
+                                  };
+                                  setDbMemories([reactMemory, ...dbMemories]);
+                                  triggerToast(`Stamped emoji "${react.emoji}" onto this experience! Checked to memories.`);
+                                }}
+                                className="text-sm p-1.5 bg-zinc-900/80 hover:bg-zinc-800 transition rounded-lg hover:scale-110 active:scale-90"
+                              >
+                                {react.emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Column 2: Story Recap Automated Preview Card */}
+                      <div className="bg-zinc-950/40 border border-[#ff8b66]/10 rounded-2xl p-4.5 flex flex-col justify-between space-y-4">
+                        <div className="space-y-1.5">
+                          <h4 className="text-[10px] font-sans font-bold text-zinc-200 uppercase tracking-wider flex items-center justify-between">
+                            <span>🎬 AUTOMATED STORY RECAP</span>
+                            <span className="text-[8px] bg-[#ff8b66]/10 text-[#ff8b66] border border-[#ff8b66]/20 px-1.5 rounded-full">Recap Engine v2</span>
+                          </h4>
+                          <p className="text-[9.5px] text-zinc-400 leading-snug">
+                            Planless has automatically generated a personalized story recap with custom slide transitions, music cues, and attendee stats.
+                          </p>
+                        </div>
+
+                        {/* Mock Mini Player with Spotify style audio waveform */}
+                        <div className="bg-zinc-950 border border-zinc-900 rounded-xl p-3 flex items-center gap-3 relative overflow-hidden group">
+                          <div className="w-10 h-10 rounded-lg overflow-hidden border border-zinc-850 relative bg-zinc-900 shrink-0">
+                            {dbMemories.filter(m => m.plan_id === selectedPlan.id)[0] ? (
+                              <img
+                                src={dbMemories.filter(m => m.plan_id === selectedPlan.id)[0].media_url}
+                                className="w-full h-full object-cover"
+                                alt="recap thumbnail"
+                              />
+                            ) : (
+                              <div className="w-full h-full bg-gradient-to-tr from-purple-900 to-[#ff8b66] opacity-60 flex items-center justify-center text-xs">✨</div>
+                            )}
+                            <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-[10px]">▶</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <span className="text-[8px] text-[#ff8b66] font-mono block">AUTO GENERATING MIX</span>
+                            <span className="text-[10px] font-sans font-bold text-zinc-200 block truncate leading-tight">
+                              {selectedPlan.title} Story Recap
+                            </span>
+
+                            {/* Fake Waveform dots */}
+                            <div className="flex items-center gap-0.5 mt-1.5 h-3">
+                              <span className="w-0.5 h-2 bg-[#ff8b66] rounded-full animate-bounce" style={{ animationDelay: "0.1s" }} />
+                              <span className="w-0.5 h-3 bg-[#ff8b66] rounded-full animate-bounce" style={{ animationDelay: "0.3s" }} />
+                              <span className="w-0.5 h-1 bg-[#ff8b66] rounded-full animate-bounce" style={{ animationDelay: "0.5s" }} />
+                              <span className="w-0.5 h-2.5 bg-[#ff8b66] rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
+                              <span className="w-0.5 h-1.5 bg-[#ff8b66] rounded-full animate-bounce" style={{ animationDelay: "0.4s" }} />
+                              <span className="text-[8px] text-zinc-400 font-mono ml-1.5">♫ Sunset Ambient Mix</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const targetMemories = dbMemories.filter(m => m.plan_id === selectedPlan.id);
+                            setStoryIndex(0);
+                            setActiveStoryRecap(selectedPlan);
+                            setStoryPlaying(true);
+                            triggerToast("🎬 Staging Fullscreen Experience Recap Loop!");
+                          }}
+                          className="w-full bg-gradient-to-r from-[#ff8b66] to-[#ff5d41] hover:from-[#ff9f7d] hover:to-[#ff755b] text-black font-semibold text-xs py-2.5 rounded-xl uppercase font-display tracking-wider transition hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                        >
+                          🎥 WATCH STORY RECAP ({dbMemories.filter(m => m.plan_id === selectedPlan.id).length ? dbMemories.filter(m => m.plan_id === selectedPlan.id).length + " Photos" : "Dynamic Recap"} Available)
+                        </button>
+                      </div>
+
+                    </div>
+
+                    {/* Displaying Current Saved Memories List Horizontal Carousel with view/react/customize controls */}
+                    {dbMemories.filter(m => m.plan_id === selectedPlan.id).length > 0 && (
+                      <div className="space-y-2 pt-3 border-t border-zinc-900/60">
+                        <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest block font-bold">
+                          📸 CLICK MEMORY CARD TO EDIT OR REMOVE (PREVIEW & CUSTOMIZE)
+                        </span>
+                        <div className="flex gap-3 overflow-x-auto no-scrollbar py-1">
+                          {dbMemories.filter(m => m.plan_id === selectedPlan.id).map((mem) => {
+                            const isMyMemory = mem.uploaded_by === activeUserId;
+                            return (
+                              <div
+                                key={mem.memory_id}
+                                onClick={() => {
+                                  if (isMyMemory) {
+                                    setEditingMemory(mem);
+                                    setEditedCaption(mem.caption || "");
+                                  } else {
+                                    triggerToast(`Viewing Keval's Memory: "${mem.caption}"`);
+                                  }
+                                }}
+                                className="w-40 border border-zinc-900 bg-zinc-950/65 hover:border-[#ff8b66]/30 transition-all rounded-2xl p-3 shrink-0 flex flex-col space-y-2 relative group cursor-pointer"
+                              >
+                                <div className="w-full h-24 rounded-lg bg-zinc-900 overflow-hidden border border-zinc-900 relative">
+                                  <img src={mem.media_url} className="w-full h-full object-cover" alt="memory" />
+                                  <span className="absolute bottom-1 right-1 bg-black/70 text-[8px] text-zinc-400 px-1 py-0.5 rounded font-mono">
+                                    {isMyMemory ? "You" : "Friend"}
+                                  </span>
+                                </div>
+                                <p className="text-[9.5px] text-zinc-350 truncate pr-4 text-left font-sans">
+                                  {mem.caption || "Click to add caption"}
+                                </p>
+
+                                {/* Hover Edit Overlay Prompt */}
+                                {isMyMemory && (
+                                  <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                                    <span className="bg-[#ff8b66] text-black text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter">
+                                      ✎ EDIT
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Easy quick tap like icons */}
+                                <div className="flex items-center gap-1.5 pt-0.5 text-zinc-500 font-mono text-[9px]">
+                                  <span className="text-zinc-400">❤ {Math.floor((parseInt(mem.memory_id.replace(/[^\d]/g, '')) || 5) % 8) + 1} reacts</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {selectedPlan.category === "movies" ? (
+              <div className="space-y-6">
+                {/* Immersive Cinematic Artwork */}
+                <div className={`relative w-full rounded-[2.5rem] overflow-hidden border border-zinc-900/60 bg-zinc-950 shadow-[0_30px_80px_rgba(0,0,0,0.95)] group select-none flex flex-col justify-end transition-all duration-500 ease-out ${isProgressPopupOpen ? "min-h-[580px] py-4" : "min-h-[530px] h-auto pb-6 pt-12"
+                  }`}>
+                  {/* Movie Artwork background */}
+                  <img
+                    src={selectedPlan.coverImage}
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-103"
+                    alt={selectedPlan.title}
+                    referrerPolicy="no-referrer"
+                  />
+                  {/* Layered cinematic gradients for extreme immersion and readable floating text */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/85 to-transparent z-1" />
+                  <div className="absolute inset-x-0 bottom-0 h-4/5 bg-gradient-to-t from-black via-black/45 to-transparent z-1" />
+
+                  {/* Floating Content: Plan title and Participant progress bar with vertical metadata spacing */}
+                  <div className="relative z-10 p-8 space-y-6">
+                    {/* 1. Plan Title & Category */}
+                    <div className="space-y-1.5 text-left">
+                      <span className="text-[9px] font-mono text-[#ff8b66] font-extrabold uppercase tracking-[0.22em] drop-shadow">
+                        {selectedPlan.category.toUpperCase()} EXPERIENCE
+                      </span>
+                      <h1 className="text-4xl font-extrabold text-white leading-tight tracking-tight drop-shadow-[0_4px_16px_rgba(0,0,0,0.95)] uppercase">
+                        {selectedPlan.title.toUpperCase()}
+                      </h1>
+                    </div>
+
+                    {/* Sequential Metadata Layout (Vertically integrated, lightweight typography hierarchy) */}
+                    <div className="space-y-3 pt-1 text-left">
+                      {/* 2. Date & Time */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-sm">🕒</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">DATE TIME</span>
+                          <span className="font-sans text-[12px] font-medium text-zinc-200">
+                            {selectedPlan.date} • {selectedPlan.time}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 3. Location */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-xs">🎬</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">THEATRE / VENUE</span>
+                          <span className="font-sans text-[12px] font-medium text-zinc-200">
+                            {selectedPlan.location}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 4. Split Amount */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-xs">🪙</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">EST. SPLIT SHARE</span>
+                          <span className="font-sans text-[12.1px] font-bold text-[#ff8b66]">
+                            ₹{selectedPlan.cost} / HEAD
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 5. Notes */}
+                      {selectedPlan.notes && (
+                        <div className="mt-3.5 pt-3 border-t border-white/5">
+                          <span className="text-[8px] font-mono text-[#ff8b66] uppercase tracking-[0.2em] font-black block mb-1">
+                            HOST MEMO / NOTE
+                          </span>
+                          <p className="text-[11px] font-sans italic text-zinc-300 leading-normal">
+                            "{selectedPlan.notes}"
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 6. Participation Progress Bar */}
+                    <CinematicProgressBar
+                      plan={selectedPlan}
+                      isPopupOpen={isProgressPopupOpen}
+                      onTogglePopup={() => setIsProgressPopupOpen(!isProgressPopupOpen)}
+                      titleText="MOMENTUM"
+                      colorTheme="orange"
+                      userProfile={userProfile}
+                      planMessages={planMessages}
+                      setPlanMessages={setPlanMessages}
+                    />
+                  </div>
+                </div>
+
+                {/* DYNAMIC TRANSFORMATION: PRE-MOVIE OR POST-MOVIE SOCIAL SPACE */}
+                {selectedPlan.joinedUsers.some(u => u.name === userProfile.name) && (
+                  <div className="border-t border-zinc-900 pt-5 space-y-4">
+
+                    {!selectedPlan.isHappened ? (
+                      /* ========================================================= */
+                      /* STEP 11 & 12: PRE-MOVIE INTERACTION OPENS (TEMPORARY HUB) */
+                      /* ========================================================= */
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-pink-400 text-sm">⚡</span>
+                            <div>
+                              <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                                Spontaneous Pre-Movie Hub
+                              </h4>
+                              <p className="text-[8px] text-zinc-500 font-mono">Temporary Interactive Coordination Lounge</p>
+                            </div>
+                          </div>
+                          <span className="text-[7px] font-mono bg-pink-500/10 text-[#ff8b66] px-2 py-0.5 rounded-full uppercase tracking-widest leading-none">
+                            ACTIVE SPONTY
+                          </span>
+                        </div>
+
+                        {/* Interactive segments button layout bar */}
+                        <div className="flex bg-zinc-950 border border-zinc-900 rounded-xl p-1 justify-between select-none">
+                          {[
+                            { id: "chat", label: "💬 Chat", count: (planMessages[selectedPlan.id] || []).length },
+                            { id: "seat", label: "💺 Seats", count: null },
+                            { id: "time", label: "🕒 Showtime", count: null },
+                            { id: "changes", label: "🔔 Updates", count: null },
+                          ].map(tab => (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              onClick={() => setActiveMovieSubTab(tab.id as any)}
+                              className={`flex-1 py-1 text-center text-[9px] uppercase font-bold tracking-tight rounded-lg cursor-pointer transition-all ${activeMovieSubTab === tab.id
+                                ? "bg-gradient-to-r from-[#ff8b66] to-[#ff5d41] text-white"
+                                : "text-zinc-500 hover:text-zinc-300"
+                                }`}
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Segment Panels */}
+                        {activeMovieSubTab === "chat" && (
+                          <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 space-y-3">
+                            <div className="space-y-2 max-h-44 overflow-y-auto no-scrollbar scroll-smooth">
+                              {(planMessages[selectedPlan.id] || []).map((chat, ci) => (
+                                <div key={ci} className="flex gap-2 items-start">
+                                  <img src={chat.avatar} className="w-5 h-5 rounded-full object-cover mt-0.5 shrink-0" alt="sender" referrerPolicy="no-referrer" />
+                                  <div className="flex-1 bg-zinc-900 border border-zinc-855 p-2 rounded-xl text-left">
+                                    <div className="flex justify-between items-center bg-zinc-900">
+                                      <span className="text-[8px] font-bold text-zinc-300">{chat.sender}</span>
+                                      <span className="text-[7px] font-mono text-zinc-500">{chat.time}</span>
+                                    </div>
+                                    <p className="text-[10px] text-zinc-400 mt-0.5 leading-relaxed">{chat.text}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Text Input Row */}
+                            <div className="flex gap-2 border-t border-zinc-900 pt-2 bg-zinc-955">
+                              <input
+                                type="text"
+                                placeholder={selectedPlan.isHappened ? "This plan has ended. Chat is read-only." : "Type spontaneously..."}
+                                value={newChatMessage}
+                                disabled={selectedPlan.isHappened}
+                                onChange={(e) => setNewChatMessage(e.target.value)}
+                                className="flex-1 text-[10px] bg-zinc-900 border border-zinc-800 focus:border-[#ff8b66] rounded-xl px-3 py-1.5 text-white placeholder-zinc-550 focus:outline-none disabled:opacity-50"
+                              />
+                              <button
+                                type="button"
+                                disabled={selectedPlan.isHappened || !newChatMessage.trim()}
+                                onClick={() => {
+                                  if (!newChatMessage.trim() || selectedPlan.isHappened) return;
+                                  const newMsg = {
+                                    sender: userProfile.name,
+                                    avatar: userProfile.avatar,
+                                    text: newChatMessage,
+                                    time: "Just Now"
+                                  };
+                                  setPlanMessages(prev => ({
+                                    ...prev,
+                                    [selectedPlan.id]: [...(prev[selectedPlan.id] || []), newMsg]
+                                  }));
+                                  setNewChatMessage("");
+                                  triggerToast("Posted message in movie chat!");
+                                }}
+                                className="bg-gradient-to-r from-[#ff8b66] to-[#ff5d41] disabled:from-zinc-800 disabled:to-zinc-900 text-white font-black text-[10px] px-3.5 py-1.5 rounded-xl disabled:text-zinc-500 disabled:cursor-not-allowed"
+                              >
+                                Send
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {activeMovieSubTab === "seat" && (
+                          <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 text-center space-y-3">
+                            <div>
+                              <h5 className="text-[10px] font-mono text-[#ff8b66] uppercase tracking-wider">💺 adjacent Seat Matcher</h5>
+                              <p className="text-[9px] text-zinc-500 leading-tight mt-0.5">
+                                Pick a free seat next to your friends row to secure the sweet spots together
+                              </p>
+                            </div>
+
+                            {/* Seat interactive visual grid */}
+                            <div className="flex justify-center flex-wrap gap-1.5 p-1 select-none max-w-xs mx-auto">
+                              {[
+                                { id: "K-8", taken: false, user: null },
+                                { id: "K-9", taken: false, user: null },
+                                { id: "K-10", taken: true, user: "G", avatar: getInitialsAvatar("Guhan") },
+                                { id: "K-11", taken: true, user: "K", avatar: getInitialsAvatar("Keval") },
+                                { id: "K-12", taken: true, user: "M", avatar: getInitialsAvatar("Medhaj") },
+                                { id: "K-13", taken: true, user: "R", avatar: getInitialsAvatar("Raghavan") },
+                                { id: "K-14", taken: false, user: null },
+                                { id: "K-15", taken: true, user: "S", avatar: getInitialsAvatar("Sudeshna") },
+                              ].map(st => {
+                                const isUserSeat = selectedPlan.coordinatedSeat === st.id;
+                                return (
+                                  <button
+                                    key={st.id}
+                                    type="button"
+                                    disabled={st.taken && !isUserSeat}
+                                    onClick={() => {
+                                      const updatedPls = plans.map(p => p.id === selectedPlan.id ? { ...p, coordinatedSeat: st.id } : p);
+                                      setPlans(updatedPls);
+                                      setSelectedPlan(prev => prev ? { ...prev, coordinatedSeat: st.id } : null);
+                                      triggerToast(`Seat ${st.id} coordinated successfully! 💺`);
+                                    }}
+                                    className={`w-9 h-9 rounded-lg flex flex-col items-center justify-center text-[7.5px] font-mono border transition-all ${isUserSeat
+                                      ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow shadow-emerald-500/10"
+                                      : st.taken
+                                        ? "bg-zinc-900 border-zinc-850 text-zinc-650 opacity-50"
+                                        : "bg-zinc-950 border-zinc-900 text-zinc-350 hover:border-zinc-700"
+                                      }`}
+                                  >
+                                    <span className="text-[8px]">💺</span>
+                                    <span>{st.id}</span>
+                                    {st.user && <span className="text-[7px] text-[#ff8b66] leading-none font-bold">{st.user}</span>}
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            <p className="text-[9px] text-zinc-400">
+                              {selectedPlan.coordinatedSeat
+                                ? `Your verified seat coordinated at: ${selectedPlan.coordinatedSeat}.`
+                                : "Tap an empty Seat row to Sit with Keval and Medhaj."
+                              }
+                            </p>
+                          </div>
+                        )}
+
+                        {activeMovieSubTab === "time" && (
+                          <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 text-left space-y-3">
+                            <h5 className="text-[10px] font-mono text-[#ff8b66] uppercase tracking-wider">🕒 Live Timing & Status</h5>
+                            <div className="bg-zinc-900 border border-zinc-850 p-3 rounded-xl space-y-2">
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-zinc-500">Show start:</span>
+                                <span className="text-zinc-200 font-bold">Today • 8:30 PM</span>
+                              </div>
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-zinc-500">Theatre details:</span>
+                                <span className="text-zinc-200">IMAX Screen, PVR Phoenix Mall</span>
+                              </div>
+                              <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-zinc-850/60">
+                                <span className="text-emerald-400">🟢 STATUS:</span>
+                                <span className="text-emerald-400 font-mono text-[9px] uppercase font-black">
+                                  On Schedule (Running)
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-[9px] text-zinc-400 italic">"PVR desks verified - standard 12 min previews. Settle in!" — Raghavan</p>
+                          </div>
+                        )}
+
+                        {activeMovieSubTab === "changes" && (
+                          <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 text-left space-y-2">
+                            <h5 className="text-[10px] font-mono text-[#ff8b66] uppercase tracking-wider">🔔 Active Coordination Bulletin</h5>
+                            <ul className="text-[10px] text-zinc-350 space-y-1.5 list-disc pl-3">
+                              <li>Meet directly in front of the counter at 8:15 PM so we enter the hall together.</li>
+                              <li>Split cleared immediately with spontaneously digital wallet cacheout.</li>
+                              <li>Walk into Screen exactly at 8:25 PM. No cinematic delays.</li>
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* HOST SIMULATOR CONTROL */}
+                        <div className="bg-zinc-900/40 border border-zinc-850 rounded-2xl p-3 text-center space-y-2">
+                          <span className="text-[8px] font-mono text-[#ff8b66] uppercase tracking-widest block">ADMIN ACTION SIMULATOR</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const targetPlan = plans.find(p => p.id === selectedPlan.id) || selectedPlan;
+                              const updatedPlan = { ...targetPlan, isHappened: true };
+                              const updatedPls = plans.map(p => p.id === selectedPlan.id ? updatedPlan : p);
+                              setPlans(updatedPls);
+                              setSelectedPlan(updatedPlan);
+                              setShowAddMemoriesPrompt(updatedPlan);
+                              setMemoryUploadPreview(null);
+                              setMemoryUploadCaption("");
+                              triggerToast("🎬 Simulated Movie Completed! Let's preserve today's joyful memories together.");
+                            }}
+                            className="text-[9.5px] font-sans font-black uppercase tracking-wider bg-zinc-950 border border-zinc-850 hover:border-[#ff8b66]/40 text-zinc-300 hover:text-white py-2 rounded-xl transition-all w-full cursor-pointer"
+                          >
+                            ⏱️ Simulate Movie Finished (Unlock Post-Actions)
+                          </button>
+                        </div>
+
+                      </div>
+                    ) : (
+                      /* ========================================================= */
+                      /* STEP 13: POST-MOVIE ACTIONS BECOME AVAILABLE              */
+                      /* ========================================================= */
+                      <div className="space-y-4">
+                        <div className="bg-zinc-900 border border-[#ff8b66]/30 p-4 rounded-2xl text-center space-y-4 relative overflow-hidden">
+                          <div className="absolute top-0 right-0 bg-[#ff8b66]/10 px-2 py-0.5 text-[7px] font-mono text-[#ff8b66] uppercase rounded-bl">
+                            POST-MOVIE ACTIONS UNLOCKED
+                          </div>
+                          <div>
+                            <h4 className="text-[10.5px] font-bold text-[#ff8b66] camelcase uppercase tracking-wider">How was Christopher Nolan's masterpiece?</h4>
+                            <p className="text-[9px] text-zinc-500 leading-tight mt-0.5">
+                              Your attendance was verified. Upload memories, rate & post thoughts to history.
+                            </p>
+                          </div>
+
+                          {/* Rate Movie Stars Selection */}
+                          <div className="space-y-1">
+                            <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest block">RATE THE FILM</span>
+                            <div className="flex justify-center gap-1 text-base">
+                              {[1, 2, 3, 4, 5].map((st) => (
+                                <button
+                                  key={st}
+                                  type="button"
+                                  onClick={() => {
+                                    const updatedPls = plans.map(p => p.id === selectedPlan.id ? { ...p, userRating: st } : p);
+                                    setPlans(updatedPls);
+                                    setSelectedPlan(prev => prev ? { ...prev, userRating: st } : null);
+                                    triggerToast(`Rated Interstellar ${st}/5 stars!`);
+                                  }}
+                                  className="cursor-pointer hover:scale-110 active:scale-90 transition-all text-xl text-amber-400"
+                                >
+                                  {st <= (selectedPlan.userRating ?? 0) ? "★" : "☆"}
+                                </button>
+                              ))}
+                            </div>
+                            {selectedPlan.userRating && (
+                              <p className="text-[9px] font-mono font-bold text-amber-300">You Rated Interstellar {selectedPlan.userRating}/5 Stars!</p>
+                            )}
+                          </div>
+
+                          {/* Share Reactions Input */}
+                          <div className="space-y-1 border-t border-zinc-850 pt-2 text-left">
+                            <span className="text-[7.5px] font-mono text-zinc-500 uppercase tracking-widest block px-1">SHARE MOVIE REACTION / THOUGHTS</span>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                placeholder="E.g. Wormhole scene docking music was unbelievable!"
+                                value={selectedPlan.userReaction ?? ""}
+                                onChange={(e) => {
+                                  const term = e.target.value;
+                                  const updatedPls = plans.map(p => p.id === selectedPlan.id ? { ...p, userReaction: term } : p);
+                                  setPlans(updatedPls);
+                                  setSelectedPlan(prev => prev ? { ...prev, userReaction: term } : null);
+                                }}
+                                className="flex-1 text-[10px] bg-zinc-950 border border-zinc-850 focus:border-[#ff8b66] rounded-xl px-2.5 py-1.5 text-white placeholder-zinc-550 focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!selectedPlan.userReaction) {
+                                    triggerToast("Type a reaction first!");
+                                    return;
+                                  }
+                                  const newMemory: DbMemory = {
+                                    memory_id: `M_React_${Date.now()}`,
+                                    plan_id: selectedPlan.id,
+                                    uploaded_by: activeUserId,
+                                    media_url: selectedPlan.coverImage,
+                                    caption: `Reaction: "${selectedPlan.userReaction}"`,
+                                    timestamp: new Date().toISOString()
+                                  };
+                                  setDbMemories(prev => [newMemory, ...prev]);
+                                  triggerToast("Reaction shared successfully!");
+                                }}
+                                className="bg-gradient-to-r from-amber-400 to-amber-500 text-black font-extrabold text-[9px] px-3 rounded-xl uppercase hover:opacity-95"
+                              >
+                                Post
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Upload Pictures Slider */}
+                          <div className="space-y-2 text-left border-t border-zinc-850 pt-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[7.5px] font-mono text-zinc-500 uppercase tracking-widest">UPLOAD SCREENING MEMORIES</span>
+                              <label className="text-[9px] text-[#ff8b66] font-mono cursor-pointer hover:underline">
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onload = () => {
+                                        if (typeof reader.result === "string") {
+                                          const cap = prompt("Enter caption:", "Coordinated squad IMAX Interstellar memory! 🍿");
+                                          if (cap !== null) {
+                                            const newMem: DbMemory = {
+                                              memory_id: `M_${Date.now()}`,
+                                              plan_id: selectedPlan.id,
+                                              uploaded_by: activeUserId,
+                                              media_url: reader.result,
+                                              caption: cap || "Shared experience!",
+                                              timestamp: new Date().toISOString()
+                                            };
+                                            setDbMemories(prev => [newMem, ...prev]);
+                                            triggerToast("Memories uploaded!");
+                                          }
+                                        }
+                                      };
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }}
+                                />
+                                + Upload Picture
+                              </label>
+                            </div>
+                          </div>
+
+                          {/* Attendance Log Card */}
+                          <div className="bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-xl flex items-center justify-between mt-1">
+                            <div className="flex items-center gap-1.5 text-left">
+                              <span className="text-[11px]">🎫</span>
+                              <div>
+                                <span className="text-[8px] font-mono text-emerald-400 uppercase tracking-wide block">ATTENDANCE LOGGED</span>
+                                <span className="text-[9px] text-zinc-400">Verified at PVR Ticket Counter</span>
+                              </div>
+                            </div>
+                            <span className="text-[8px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded uppercase font-black">
+                              SUCCESS ✔
+                            </span>
+                          </div>
+
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                )}
+
+              </div>
+            ) : selectedPlan.category === "sports" ? (
+              // Specialized Sports Details Screen conforming 100% to Figma Layout
+              // Display: Immersive sports banner, Venue, Match Time, Players joined roster, Spots left, Entry fee, Notes, Live teams markup & MVP voting
+              <div className="space-y-6 text-left">
+
+                {/* Immersive Cinematic Sports Artwork */}
+                <div className={`relative w-full rounded-[2.5rem] overflow-hidden border border-zinc-900/60 bg-zinc-950 shadow-[0_30px_80px_rgba(0,0,0,0.95)] group select-none flex flex-col justify-end transition-all duration-500 ease-out ${isProgressPopupOpen ? "min-h-[580px] py-4" : "min-h-[530px] h-auto pb-6 pt-12"
+                  }`}>
+                  {/* Sports Artwork background */}
+                  <img
+                    src={selectedPlan.coverImage}
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-103"
+                    alt={selectedPlan.title}
+                    referrerPolicy="no-referrer"
+                  />
+                  {/* Layered cinematic gradients under text for ultimate readability */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/85 to-transparent z-1" />
+                  <div className="absolute inset-x-0 bottom-0 h-4/5 bg-gradient-to-t from-black via-black/45 to-transparent z-1" />
+
+                  {/* Floating Content: Plan title and Participant progress bar with vertical metadata spacing */}
+                  <div className="relative z-10 p-8 space-y-6">
+                    {/* 1. Plan Title & Category */}
+                    <div className="space-y-1.5 text-left">
+                      <span className="text-[9px] font-mono text-emerald-400 font-extrabold uppercase tracking-[0.22em] drop-shadow">
+                        {selectedPlan.category.toUpperCase()} FIXTURE
+                      </span>
+                      <h1 className="text-4xl font-extrabold text-white leading-tight tracking-tight drop-shadow-[0_4px_16px_rgba(0,0,0,0.95)] uppercase">
+                        {selectedPlan.title.toUpperCase()}
+                      </h1>
+                    </div>
+
+                    {/* Sequential Metadata Layout (Vertically integrated, lightweight typography hierarchy) */}
+                    <div className="space-y-3 pt-1 text-left">
+                      {/* 2. Date & Time */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-sm">🕒</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">DATE TIME</span>
+                          <span className="font-sans text-[12px] font-medium text-zinc-200">
+                            {selectedPlan.date} • {selectedPlan.time}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 3. Location */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-xs">🏟️</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">FIELD / VENUE</span>
+                          <span className="font-sans text-[12px] font-medium text-zinc-200">
+                            {selectedPlan.location}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 4. Split Amount */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-xs">🪙</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">EST. BILL SPLIT</span>
+                          <span className="font-sans text-[12.1px] font-bold text-[#ff8b66]">
+                            ₹{selectedPlan.cost} / HEAD
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 5. Notes */}
+                      {selectedPlan.notes && (
+                        <div className="mt-3.5 pt-3 border-t border-white/5">
+                          <span className="text-[8px] font-mono text-[#ff8b66] uppercase tracking-[0.2em] font-black block mb-1">
+                            HOST MEMO / NOTE
+                          </span>
+                          <p className="text-[11px] font-sans italic text-zinc-300 leading-normal">
+                            "{selectedPlan.notes}"
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 6. Participation Progress Bar */}
+                    <CinematicProgressBar
+                      plan={selectedPlan}
+                      isPopupOpen={isProgressPopupOpen}
+                      onTogglePopup={() => setIsProgressPopupOpen(!isProgressPopupOpen)}
+                      titleText="TEAM CAPACITY"
+                      colorTheme="green"
+                      userProfile={userProfile}
+                      planMessages={planMessages}
+                      setPlanMessages={setPlanMessages}
+                    />
+                  </div>
+                </div>
+
+                {/* DYNAMIC TRANSFORMATION: PRE-MATCH HUB OR POST-MATCH ACTIONS */}
+                {selectedPlan.joinedUsers.some(u => u.name === userProfile.name) && (
+                  <div className="border-t border-zinc-900 pt-5 space-y-4">
+
+                    {!selectedPlan.isHappened ? (
+                      /* ========================================================= */
+                      /* PRE-MATCH INTERACTION OPENS (TEMPORARY HUB)               */
+                      /* ========================================================= */
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-sans">
+                            <span className="text-emerald-400 text-sm">⚽</span>
+                            <div>
+                              <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                                Spontaneous Pre-Match Hub
+                              </h4>
+                              <p className="text-[8px] text-zinc-500 font-mono">Temporary Interactive Team Room</p>
+                            </div>
+                          </div>
+                          <span className="text-[7.5px] font-mono bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full uppercase tracking-widest leading-none border border-emerald-500/20 animate-pulse">
+                            ACTIVE SPONTY
+                          </span>
+                        </div>
+
+                        {/* Interactive segment selectors */}
+                        <div className="flex bg-zinc-950 border border-zinc-900 rounded-xl p-1 justify-between select-none">
+                          {[
+                            { id: "chat", label: "💬 Chat" },
+                            { id: "polls", label: "📊 Polls" },
+                            { id: "lineup", label: "📋 Lineup" },
+                            { id: "announcements", label: "📢 Bulletin" },
+                          ].map(tab => (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              onClick={() => setActiveSportsSubTab(tab.id as any)}
+                              className={`flex-1 py-1 text-center text-[9px] uppercase font-bold tracking-tight rounded-lg cursor-pointer transition-all ${activeSportsSubTab === tab.id
+                                ? "bg-gradient-to-r from-emerald-500 to-emerald-600 text-white"
+                                : "text-zinc-500 hover:text-zinc-300"
+                                }`}
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Sub-panels */}
+                        {activeSportsSubTab === "chat" && (
+                          <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 space-y-3">
+                            <h5 className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider text-left">💬 Team Conversation</h5>
+                            <div className="space-y-3 max-h-40 overflow-y-auto no-scrollbar pt-1 pr-1">
+                              {(planMessages[selectedPlan.id] || []).map((sc, scIdx) => (
+                                <div key={scIdx} className="flex gap-2.5 text-left">
+                                  <img src={sc.avatar} className="w-5.5 h-5.5 rounded-full object-cover shrink-0 mt-0.5" alt="user avatar" referrerPolicy="no-referrer" />
+                                  <div className="space-y-0.5 text-left">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10.5px] font-sans font-bold text-zinc-300 leading-none">{sc.sender}</span>
+                                      <span className="text-[7.5px] font-mono text-zinc-550 leading-none">{sc.time}</span>
+                                    </div>
+                                    <p className="text-[11px] text-zinc-400 leading-relaxed font-sans">{sc.text}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Type message panel */}
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                              }}
+                              className="flex gap-2 pt-1 border-t border-zinc-900"
+                            >
+                              <input
+                                type="text"
+                                placeholder={selectedPlan.isHappened ? "This plan has ended. Chat is read-only." : "E.g. We need one more boots set! ⚽"}
+                                value={newSportsChatMessage}
+                                disabled={selectedPlan.isHappened}
+                                onChange={(e) => setNewSportsChatMessage(e.target.value)}
+                                className="flex-1 text-[11px] bg-zinc-950 border border-zinc-850 focus:border-emerald-500/50 rounded-xl px-2.5 py-2 text-white placeholder-zinc-550 focus:outline-none disabled:opacity-50"
+                              />
+                              <button
+                                type="button"
+                                disabled={selectedPlan.isHappened || !newSportsChatMessage.trim()}
+                                onClick={() => {
+                                  if (!newSportsChatMessage.trim() || selectedPlan.isHappened) return;
+                                  const msg = {
+                                    sender: userProfile.name,
+                                    avatar: userProfile.avatar || getInitialsAvatar(userProfile.name),
+                                    text: newSportsChatMessage,
+                                    time: "Just Now"
+                                  };
+                                  setPlanMessages(prev => ({
+                                    ...prev,
+                                    [selectedPlan.id]: [...(prev[selectedPlan.id] || []), msg]
+                                  }));
+                                  setNewSportsChatMessage("");
+                                  triggerToast("Coordinated chat message posted!");
+                                }}
+                                className="bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-650 hover:bg-emerald-400 text-black p-2 rounded-xl flex items-center justify-center cursor-pointer transition-colors"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+
+                        {activeSportsSubTab === "polls" && (
+                          <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 text-left space-y-4">
+                            <h5 className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider">📊 Quick Matchday Polls</h5>
+
+                            <div className="space-y-3">
+                              {sportsPolls.map((poll) => {
+                                const totalVotes = poll.options.reduce((acc, o) => acc + o.votes, 0);
+                                return (
+                                  <div key={poll.id} className="bg-zinc-900 border border-zinc-850 p-3 rounded-xl space-y-2.5">
+                                    <span className="text-[10.5px] font-sans font-bold text-zinc-200 block">{poll.question}</span>
+                                    <div className="space-y-1.5">
+                                      {poll.options.map((opt, oIdx) => {
+                                        const percentage = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
+                                        const isSelected = poll.votedOptionIdx === oIdx;
+                                        return (
+                                          <button
+                                            key={oIdx}
+                                            type="button"
+                                            onClick={() => {
+                                              if (poll.votedOptionIdx !== -1) {
+                                                triggerToast("You have already voted on this poll!");
+                                                return;
+                                              }
+                                              const updatedPolls = sportsPolls.map(sp => {
+                                                if (sp.id === poll.id) {
+                                                  const newOpts = sp.options.map((option, idx) =>
+                                                    idx === oIdx ? { ...option, votes: option.votes + 1 } : option
+                                                  );
+                                                  return { ...sp, options: newOpts, votedOptionIdx: oIdx };
+                                                }
+                                                return sp;
+                                              });
+                                              setSportsPolls(updatedPolls);
+                                              triggerToast(`Registered vote for: "${opt.text}"`);
+                                            }}
+                                            className={`w-full text-left relative overflow-hidden rounded-lg border text-[11px] font-sans p-2 transition-all flex items-center justify-between ${isSelected
+                                              ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-300"
+                                              : "bg-[#09090b] border-zinc-850 text-zinc-400 hover:border-zinc-700"
+                                              }`}
+                                          >
+                                            {/* Progress Fill Background bar */}
+                                            <div
+                                              className="absolute top-0 bottom-0 left-0 bg-emerald-500/5 transition-all duration-500"
+                                              style={{ width: `${percentage}%` }}
+                                            />
+                                            <span className="relative z-10 font-medium">{opt.text}</span>
+                                            <span className="relative z-10 font-mono text-[9.5px] font-black">{percentage}% ({opt.votes})</span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {activeSportsSubTab === "lineup" && (
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-center px-1">
+                              <h5 className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider text-left">📋 Active Match Lineups</h5>
+                              <span className="text-[8px] font-mono text-zinc-500 uppercase">Interactive Formations</span>
+                            </div>
+
+                            {(() => {
+                              // Distribute confirmed players dynamically into Team A and Team B based on parity
+                              const teamAPlayers = selectedPlan.joinedUsers.filter((_, idx) => idx % 2 === 0);
+                              const teamBPlayers = selectedPlan.joinedUsers.filter((_, idx) => idx % 2 !== 0);
+
+                              return (
+                                <div className="space-y-3 text-left">
+                                  {/* Football Field Visual Roster Widget */}
+                                  <div className="bg-zinc-950 border border-zinc-900 rounded-3xl p-3 text-center">
+                                    <div className="relative w-full h-80 rounded-2xl overflow-hidden border border-emerald-800/25 bg-gradient-to-b from-emerald-950/45 to-emerald-900/10 p-2 shadow-inner">
+
+                                      {/* Field White Markings */}
+                                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-5">
+                                        <div className="w-24 h-24 rounded-full border border-white" />
+                                        <div className="w-full border-t border-white absolute" />
+                                        <div className="w-2 h-2 rounded-full bg-white" />
+                                      </div>
+                                      <div className="absolute inset-2 border border-white/5 pointer-events-none rounded-lg" />
+
+                                      {/* Squad Grid Container */}
+                                      <div className="absolute inset-0 flex flex-col justify-between p-3.5 z-10">
+
+                                        {/* Team A - Top Area */}
+                                        <div className="space-y-3">
+                                          <div className="text-[8px] font-mono text-emerald-450 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full inline-block uppercase tracking-wider font-extrabold leading-none">
+                                            Team A (Green Bibs)
+                                          </div>
+                                          <div className="flex justify-around gap-1">
+                                            {teamAPlayers.slice(0, 3).map((u, i) => (
+                                              <div key={i} className="flex flex-col items-center gap-1">
+                                                <div className="w-8 h-8 rounded-full border-2 border-emerald-450 bg-zinc-950 overflow-hidden relative shadow">
+                                                  <img src={u.avatar} className="w-full h-full object-cover" alt="team user" referrerPolicy="no-referrer" />
+                                                  <span className="absolute bottom-0 right-0 bg-emerald-500 w-2.5 h-2.5 rounded-full border border-zinc-950 flex items-center justify-center text-[5.5px] text-white font-bold font-mono">A</span>
+                                                </div>
+                                                <span className="text-[8px] text-zinc-300 font-sans truncate w-14 text-center font-bold">{u.name.split(" ")[0]}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                          {teamAPlayers.length > 3 && (
+                                            <div className="flex justify-center gap-6">
+                                              {teamAPlayers.slice(3, 5).map((u, i) => (
+                                                <div key={i} className="flex flex-col items-center gap-1">
+                                                  <div className="w-8 h-8 rounded-full border-2 border-emerald-450 bg-zinc-950 overflow-hidden relative shadow">
+                                                    <img src={u.avatar} className="w-full h-full object-cover" alt="team user" referrerPolicy="no-referrer" />
+                                                  </div>
+                                                  <span className="text-[8px] text-zinc-300 font-sans truncate w-14 text-center font-bold">{u.name.split(" ")[0]}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* Team B - Bottom Area */}
+                                        <div className="space-y-3">
+                                          {teamBPlayers.length > 3 && (
+                                            <div className="flex justify-center gap-6">
+                                              {teamBPlayers.slice(3, 5).map((u, i) => (
+                                                <div key={i} className="flex flex-col items-center gap-1">
+                                                  <div className="w-8 h-8 rounded-full border-2 border-[#ff8b66] bg-zinc-950 overflow-hidden relative shadow">
+                                                    <img src={u.avatar} className="w-full h-full object-cover" alt="team user" referrerPolicy="no-referrer" />
+                                                  </div>
+                                                  <span className="text-[8px] text-zinc-300 font-sans truncate w-14 text-center font-bold">{u.name.split(" ")[0]}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                          <div className="flex justify-around gap-1">
+                                            {teamBPlayers.slice(0, 3).map((u, i) => (
+                                              <div key={i} className="flex flex-col items-center gap-1">
+                                                <div className="w-8 h-8 rounded-full border-2 border-[#ff8b66] bg-zinc-950 overflow-hidden relative shadow">
+                                                  <img src={u.avatar} className="w-full h-full object-cover" alt="team user" referrerPolicy="no-referrer" />
+                                                  <span className="absolute bottom-0 right-0 bg-[#ff8b66] w-2.5 h-2.5 rounded-full border border-zinc-950 flex items-center justify-center text-[5.5px] text-zinc-950 font-bold font-mono">B</span>
+                                                </div>
+                                                <span className="text-[8px] text-zinc-300 font-sans truncate w-14 text-center font-bold">{u.name.split(" ")[0]}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                          <div className="text-[8px] font-mono text-[#ff8b66] bg-red-950/20 border border-[#ff8b66]/20 px-2 py-0.5 rounded-full inline-block uppercase tracking-wider font-extrabold leading-none">
+                                            Team B (Orange Bibs)
+                                          </div>
+                                        </div>
+
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Roster split checklist list */}
+                                  <div className="bg-zinc-900/40 p-3 rounded-2xl border border-zinc-900 space-y-1.5 text-left">
+                                    <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest block">ROSTER BALANCE RATIO</span>
+                                    <p className="text-[10px] text-zinc-400">
+                                      Teams split evenly using sequence parity. Team A has <span className="text-emerald-400 font-bold">{teamAPlayers.length} players</span> and Team B has <span className="text-brand-peach font-bold">{teamBPlayers.length} players</span> based on current joined queue. Matches are balanced perfectly.
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+
+                        {activeSportsSubTab === "announcements" && (
+                          <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 text-left space-y-3">
+                            <h5 className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider">📢 Core Bulletions</h5>
+                            <ul className="text-[10px] text-zinc-350 space-y-2 list-disc pl-3">
+                              <li>The pitch is booked from 8:00 PM to 9:00 PM sharp. Bring your boots (moulded studs or turf shoes suitable for artificial grass).</li>
+                              <li>Split fees of ₹{selectedPlan.cost} are settled securely with wallet debit upon join. 0 transaction issues during match kickoff.</li>
+                              <li>Shower, washroom, and parking facilities are completely free to use on-site inside complex.</li>
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* HOST SIMULATOR CONTROL */}
+                        <div className="bg-zinc-900/40 border border-zinc-850 rounded-2xl p-3 text-center space-y-2">
+                          <span className="text-[8px] font-mono text-emerald-400 uppercase tracking-widest block font-extrabold">ADMIN ACTION SIMULATOR</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const targetPlan = plans.find(p => p.id === selectedPlan.id) || selectedPlan;
+                              const updatedPlan = { ...targetPlan, isHappened: true };
+                              const updatedPls = plans.map(p => p.id === selectedPlan.id ? updatedPlan : p);
+                              setPlans(updatedPls);
+                              setSelectedPlan(updatedPlan);
+                              setShowAddMemoriesPrompt(updatedPlan);
+                              setMemoryUploadPreview(null);
+                              setMemoryUploadCaption("");
+                              triggerToast("⚽ Match Completed! Post-Match scores unlocked. Let's record core squad snaps.");
+                            }}
+                            className="text-[9.5px] font-sans font-black uppercase tracking-wider bg-zinc-950 border border-zinc-850 hover:border-emerald-500/40 text-zinc-300 hover:text-white py-2 rounded-xl transition-all w-full cursor-pointer"
+                          >
+                            ⏱️ Simulate Match Finished (Enter Scores & MVP)
+                          </button>
+                        </div>
+
+                      </div>
+                    ) : (
+                      /* ========================================================= */
+                      /* POST-MATCH ACTIONS (SCOREBOARDS, MVP, ATTACHMENT GALLERY)   */
+                      /* ========================================================= */
+                      <div className="space-y-4 text-left">
+                        <div className="bg-zinc-900 border border-emerald-500/30 p-4 rounded-3xl text-center space-y-4 relative overflow-hidden">
+                          <div className="absolute top-0 right-0 bg-emerald-500/10 px-2.5 py-1 text-[7.5px] font-mono text-emerald-400 uppercase rounded-bl font-black">
+                            MATCH ARCHIVED TO HISTORY
+                          </div>
+
+                          <div className="space-y-1">
+                            <h4 className="text-[10.5px] font-bold text-emerald-400 uppercase tracking-wider">How was the Matchday Run?</h4>
+                            <p className="text-[9.5px] text-zinc-505 leading-tight">
+                              Post scores, log attendance, and vote for the match MVP.
+                            </p>
+                          </div>
+
+                          {/* Interactive Scoreboard Form Widget */}
+                          <div className="space-y-2.5 border-t border-b border-zinc-850 py-3.5 text-center">
+                            <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest block">MATCH SCORE RECORD</span>
+
+                            {selectedPlan.enteredScore ? (
+                              <div className="bg-zinc-950 p-3.5 border border-zinc-900 rounded-2xl">
+                                <span className="text-[10px] font-mono text-emerald-400 block tracking-widest uppercase mb-1">FINAL SCORE REPORT</span>
+                                <h3 className="text-3xl font-black text-white tracking-widest">{selectedPlan.enteredScore}</h3>
+                                <p className="text-[9px] text-zinc-500 italic mt-1">Confirmed and signed off by Team Captains ⚽</p>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center gap-3">
+                                <div className="space-y-1">
+                                  <span className="text-[7.5px] font-mono text-zinc-500 uppercase block">TEAM A</span>
+                                  <input
+                                    type="number"
+                                    placeholder="0"
+                                    id="score_team_a_input"
+                                    className="w-12 h-10 text-center bg-zinc-950 border border-zinc-850 focus:border-emerald-500 focus:outline-none text-white font-bold rounded-xl text-lg font-mono"
+                                  />
+                                </div>
+                                <span className="text-zinc-550 font-black text-lg select-none shrink-0 mt-3">:</span>
+                                <div className="space-y-1">
+                                  <span className="text-[7.5px] font-mono text-zinc-500 uppercase block">TEAM B</span>
+                                  <input
+                                    type="number"
+                                    placeholder="0"
+                                    id="score_team_b_input"
+                                    className="w-12 h-10 text-center bg-zinc-950 border border-zinc-850 focus:border-emerald-500 focus:outline-none text-white font-bold rounded-xl text-lg font-mono"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const scoreAInput = document.getElementById("score_team_a_input") as HTMLInputElement;
+                                    const scoreBInput = document.getElementById("score_team_b_input") as HTMLInputElement;
+                                    const scoreA = scoreAInput?.value || "0";
+                                    const scoreB = scoreBInput?.value || "0";
+                                    const finalScoreStyleStr = `${scoreA} - ${scoreB}`;
+
+                                    const updatedPls = plans.map(p => p.id === selectedPlan.id ? { ...p, enteredScore: finalScoreStyleStr } : p);
+                                    setPlans(updatedPls);
+                                    setSelectedPlan(prev => prev ? { ...prev, enteredScore: finalScoreStyleStr } : null);
+                                    triggerToast(`Match Score locked at: ${finalScoreStyleStr}`);
+                                  }}
+                                  className="h-10 px-4 bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold uppercase text-[9px] tracking-wide rounded-xl mt-3 transition-colors shrink-0 cursor-pointer"
+                                >
+                                  Save Score
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Dynamic MVP Voting list and leaderboard */}
+                          <div className="space-y-3.5 border-b border-zinc-850 pb-3 text-left">
+                            <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest block px-1">MVP PLAYER POLL VOTE</span>
+
+                            {selectedPlan.votedMvp ? (
+                              <div className="bg-amber-400/5 border border-amber-400/20 rounded-2xl p-3 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-lg">👑</span>
+                                  <div>
+                                    <span className="text-[7.5px] font-mono text-amber-300 block uppercase font-bold tracking-wide">YOUR VOTED RUN MVP</span>
+                                    <span className="text-xs text-zinc-200 font-semibold">{selectedPlan.votedMvp}</span>
+                                  </div>
+                                </div>
+                                <span className="text-[7.5px] font-mono text-amber-300 uppercase tracking-widest bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded">
+                                  VOTE RECORDED
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="space-y-1.5 max-h-36 overflow-y-auto no-scrollbar">
+                                {sportsMvpLeaderboard.map((mvp, mIdx) => (
+                                  <div key={mIdx} className="flex items-center justify-between p-2 bg-[#09090b] border border-zinc-850/60 rounded-xl animate-fade-in">
+                                    <div className="flex items-center gap-2">
+                                      <img src={mvp.avatar} className="w-5.5 h-5.5 rounded-full object-cover shrink-0" alt="mvp player" referrerPolicy="no-referrer" />
+                                      <span className="text-[11px] font-medium text-zinc-300">{mvp.name} {mvp.name === userProfile.name && "(You)"}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        // Vote MVP
+                                        const updatedLeaderboard = sportsMvpLeaderboard.map(u => u.name === mvp.name ? { ...u, votes: u.votes + 1 } : u);
+                                        updatedLeaderboard.sort((a, b) => b.votes - a.votes);
+                                        setSportsMvpLeaderboard(updatedLeaderboard);
+
+                                        const updatedPls = plans.map(p => p.id === selectedPlan.id ? { ...p, votedMvp: mvp.name } : p);
+                                        setPlans(updatedPls);
+                                        setSelectedPlan(prev => prev ? { ...prev, votedMvp: mvp.name } : null);
+                                        triggerToast(`Crowned "${mvp.name}" as Matchday MVP! 👑`);
+                                      }}
+                                      className="bg-zinc-900 border border-zinc-800 hover:border-amber-400/40 text-amber-400 text-[8.5px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg cursor-pointer"
+                                    >
+                                      Vote MVP 🏆
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* MVP Leaderboard graph chart */}
+                            <div className="bg-zinc-950 p-3 rounded-2xl border border-zinc-900 space-y-2 mt-2">
+                              <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest block">MVP CHAMPION LEADERBOARD</span>
+                              <div className="space-y-1.5">
+                                {sportsMvpLeaderboard.slice(0, 3).map((mvp, idx) => {
+                                  const maxVotesVal = Math.max(...sportsMvpLeaderboard.map(m => m.votes), 1);
+                                  const voteWidthPercent = (mvp.votes / maxVotesVal) * 100;
+                                  return (
+                                    <div key={idx} className="flex items-center gap-2 text-[10px]">
+                                      <span className="w-4 text-zinc-550 font-mono font-bold">#{idx + 1}</span>
+                                      <span className="w-14 truncate text-zinc-350">{mvp.name.split(" ")[0]}</span>
+                                      <div className="flex-1 h-2 bg-zinc-900 rounded-full overflow-hidden relative">
+                                        <div
+                                          className="h-full rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-all duration-500"
+                                          style={{ width: `${voteWidthPercent}%` }}
+                                        />
+                                      </div>
+                                      <span className="w-8 text-right text-amber-300 font-mono text-[9px] font-bold">{mvp.votes} votes</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Upload Pictures Selector */}
+                          <div className="space-y-2 text-left border-t border-zinc-850 pt-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest">UPLOAD CO-ORDINATED MATCH MEMORIES</span>
+                              <label className="text-[9px] text-[#ff8b66] font-mono cursor-pointer hover:underline">
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onload = () => {
+                                        if (typeof reader.result === "string") {
+                                          const cap = prompt("Enter caption:", "Coordinated squad sunset match memories! ⚽ 🌅");
+                                          if (cap !== null) {
+                                            const newMem: DbMemory = {
+                                              memory_id: `M_Sport_${Date.now()}`,
+                                              plan_id: selectedPlan.id,
+                                              uploaded_by: activeUserId,
+                                              media_url: reader.result,
+                                              caption: cap || "Turf soccer coordinate memories!",
+                                              timestamp: new Date().toISOString()
+                                            };
+                                            setDbMemories(prev => [newMem, ...prev]);
+                                            triggerToast("Matchday moments uploaded!");
+                                          }
+                                        }
+                                      };
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }}
+                                />
+                                + Upload Picture
+                              </label>
+                            </div>
+                          </div>
+
+                          {/* Verified Attendance Block with Checkout banner */}
+                          <div className="bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5 rounded-xl flex items-center justify-between mt-1 select-none">
+                            <div className="flex items-center gap-1.5 text-left font-sans">
+                              <span className="text-base text-emerald-400">🥅</span>
+                              <div>
+                                <span className="text-[8px] font-mono text-emerald-400 uppercase tracking-wide block font-black">ATTENDANCE CHECKED IN & LOGGED</span>
+                                <span className="text-[9px] text-zinc-400">Verified at Turf Arena Desk Checkout via Keval (Host)</span>
+                              </div>
+                            </div>
+                            <span className="text-[8.5px] font-mono bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded uppercase font-black tracking-wide border border-emerald-500/15">
+                              VERIFIED ✔
+                            </span>
+                          </div>
+
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                )}
+
+              </div>
+            ) : selectedPlan.category === "restaurants" ? (
+              // Specialized Figma Restaurant Details Screen 
+              <div className="space-y-5 text-left">
+                {/* Simulated Meetup State Switcher for perfect interactive testing of physical timeline */}
+                <div className="flex justify-between items-center bg-zinc-950 border border-zinc-900 rounded-2xl p-3 select-none">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    <span className="text-[10px] font-mono font-bold text-zinc-300">
+                      {selectedPlan.isHappened ? "🍷 ARCHIVED HISTORY VIEW" : "🕒 ACTIVE PRE-MEET COORDINATION"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const updatedPlan = { ...selectedPlan, isHappened: !selectedPlan.isHappened };
+                      setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updatedPlan : p));
+                      setSelectedPlan(updatedPlan);
+                      triggerToast(updatedPlan.isHappened ? "Meetup complete! Saved to Dining History. 🍷" : "Meetup active! Pre-Meet space open. 🕒");
+                    }}
+                    className="px-3 py-1.5 text-[8.5px] font-mono font-black text-[#ff8b66] bg-[#ff8b66]/10 border border-[#ff8b66]/15 rounded-xl hover:bg-[#ff8b66]/15 transition cursor-pointer"
+                  >
+                    {selectedPlan.isHappened ? "◀ Switch to Active Coordination" : "Complete Meetup & Archive ▶"}
+                  </button>
+                </div>
+
+                {/* Immersive Cinematic Culinary Backdrop */}
+                <div className={`relative w-full rounded-[2.5rem] overflow-hidden border border-zinc-900/60 bg-zinc-950 shadow-[0_30px_80px_rgba(0,0,0,0.95)] group select-none flex flex-col justify-end transition-all duration-500 ease-out ${isProgressPopupOpen ? "min-h-[580px] py-4" : "min-h-[530px] h-auto pb-6 pt-12"
+                  }`}>
+                  {/* Backdrop artwork */}
+                  <img src={selectedPlan.coverImage} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-103" alt={selectedPlan.title} referrerPolicy="no-referrer" />
+                  {/* Layered cinematic gradients under text for ultimate readability */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/85 to-transparent z-1" />
+                  <div className="absolute inset-x-0 bottom-0 h-4/5 bg-gradient-to-t from-black via-black/45 to-transparent z-1" />
+
+                  {/* Floating Content: Plan title and Participant progress bar with vertical metadata spacing */}
+                  <div className="relative z-10 p-8 space-y-6">
+                    {/* 1. Plan Title & Category */}
+                    <div className="space-y-1.5 text-left">
+                      <span className="text-[9px] font-mono text-[#ff8b66] font-extrabold uppercase tracking-[0.22em] drop-shadow">
+                        {selectedPlan.category.toUpperCase()} RESERVATION
+                      </span>
+                      <h1 className="text-4xl font-extrabold text-white leading-tight tracking-tight drop-shadow-[0_4px_16px_rgba(0,0,0,0.95)] uppercase">
+                        {selectedPlan.title.toUpperCase()}
+                      </h1>
+                    </div>
+
+                    {/* Sequential Metadata Layout (Vertically integrated, lightweight typography hierarchy) */}
+                    <div className="space-y-3 pt-1 text-left">
+                      {/* 2. Date & Time */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-sm">🕒</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">DATE TIME</span>
+                          <span className="font-sans text-[12px] font-medium text-zinc-200">
+                            {selectedPlan.date} • {selectedPlan.time}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 3. Location */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-xs">📍</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">RESTAURANT / VENUE</span>
+                          <span className="font-sans text-[12px] font-medium text-zinc-200">
+                            {selectedPlan.location}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 4. Split Amount */}
+                      <div className="flex items-center gap-3 text-zinc-300">
+                        <span className="text-xs">🪙</span>
+                        <div className="leading-tight">
+                          <span className="text-[10px] font-mono text-zinc-550 block font-bold tracking-wider uppercase">EST. BILL SPLIT</span>
+                          <span className="font-sans text-[12.1px] font-bold text-[#ff8b66]">
+                            ₹{selectedPlan.cost} / HEAD
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 5. Notes */}
+                      {selectedPlan.notes && (
+                        <div className="mt-3.5 pt-3 border-t border-white/5">
+                          <span className="text-[8px] font-mono text-[#ff8b66] uppercase tracking-[0.2em] font-black block mb-1">
+                            HOST MEMO / NOTE
+                          </span>
+                          <p className="text-[11px] font-sans italic text-zinc-300 leading-normal">
+                            "{selectedPlan.notes}"
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 6. Participation Progress Bar */}
+                    <CinematicProgressBar
+                      plan={selectedPlan}
+                      isPopupOpen={isProgressPopupOpen}
+                      onTogglePopup={() => setIsProgressPopupOpen(!isProgressPopupOpen)}
+                      titleText="RESERVATION MOMENTUM"
+                      colorTheme="orange"
+                      userProfile={userProfile}
+                      planMessages={planMessages}
+                      setPlanMessages={setPlanMessages}
+                    />
+                  </div>
+                </div>
+
+                {/* DYNAMIC SPACES: PRE-MEET COORDINATION vs POST-MEET ARCHIVE */}
+                {!selectedPlan.isHappened ? (
+                  /* 11. Pre-Meet Interaction Space (Temporary interaction space available during the active plan) */
+                  <div className="bg-zinc-950/80 border border-zinc-900 rounded-[2.2rem] p-4.5 space-y-4 shadow-xl">
+                    <div className="flex flex-col space-y-1 text-left px-0.5 select-none">
+                      <span className="text-[9px] font-mono bg-[#ff8b66]/10 text-[#ff8b66] px-2 py-0.5 rounded-lg w-max font-bold uppercase tracking-wider">
+                        TEMPORARY PRE-MEET SPACE
+                      </span>
+                      <h4 className="text-sm font-sans font-black text-white uppercase tracking-tight">🍕 Live Coordination Workspace</h4>
+                      <p className="text-[10px] text-zinc-500 leading-snug">
+                        Available exclusively prior to table check-in. Coordinates seat placement, delay updates, and shared splits live.
+                      </p>
+                    </div>
+
+                    {/* Pre-Meet Tabs Navigation */}
+                    <div className="flex bg-zinc-900 p-1.5 rounded-2xl border border-zinc-850 select-none">
+                      {[
+                        { id: "chat", label: "💬 CHAT", desc: "Friends Talk" },
+                        { id: "timing", label: "🕒 TIMING", desc: "Update time" },
+                        { id: "coordination", label: "🪑 TABLE", desc: "Seating selection" },
+                        { id: "changes", label: "🔔 LOGS", desc: "Alert bulletin" }
+                      ].map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setActiveRestaurantSubTab(tab.id as any)}
+                          className={`flex-1 flex flex-col items-center py-2 rounded-xl transition-all cursor-pointer ${activeRestaurantSubTab === tab.id
+                            ? "bg-gradient-to-r from-[#ff8b66] to-[#ff5d41] text-white font-extrabold shadow-md"
+                            : "text-zinc-550 hover:text-zinc-350"
+                            }`}
+                        >
+                          <span className="text-[9px] font-bold leading-none">{tab.label}</span>
+                          <span className="text-[7px] opacity-75 mt-0.5 block scale-[0.9] font-medium leading-none tracking-tight">
+                            {tab.desc}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Inner Tabs Render Panels */}
+
+                    {/* INTERACTIVE SUB-TAB A: CHAT */}
+                    {activeRestaurantSubTab === "chat" && (
+                      <div className="bg-zinc-900/40 border border-zinc-905 rounded-2xl p-4 space-y-3.5">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-[10px] font-mono text-[#ff8b66] uppercase tracking-wider font-extrabold">💬 Dinner Discussion</h5>
+                          {selectedPlan.isHappened ? (
+                            <span className="text-[8px] font-mono text-zinc-550 uppercase">ARCHIVED RECON</span>
+                          ) : (
+                            <span className="text-[8px] font-mono text-zinc-500 uppercase">ACTIVE CONVERSATION</span>
+                          )}
+                        </div>
+
+                        <div className="space-y-3 max-h-44 overflow-y-auto no-scrollbar pt-1 pr-1 border-b border-zinc-950 pb-3">
+                          {(planMessages[selectedPlan.id] || []).map((rc, idx) => (
+                            <div key={idx} className="flex gap-2.5 text-left">
+                              <img src={rc.avatar} className="w-6 h-6 rounded-full object-cover mt-0.5 shrink-0" referrerPolicy="no-referrer" alt="avatar" />
+                              <div className="flex-1">
+                                <div className="flex justify-between items-baseline">
+                                  <span className="text-[10px] font-bold text-zinc-300 font-sans">{rc.sender}</span>
+                                  <span className="text-[7.5px] font-mono text-zinc-550">{rc.time}</span>
+                                </div>
+                                <p className="text-[11px] text-zinc-400 mt-0.5 font-sans leading-snug">
+                                  {rc.text}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Interactive Message Send */}
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder={selectedPlan.isHappened ? "This plan has ended. Chat is read-only." : "Type spontaneous coordination msg..."}
+                            value={newRestaurantChatMessage}
+                            disabled={selectedPlan.isHappened}
+                            onChange={(e) => setNewRestaurantChatMessage(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && newRestaurantChatMessage.trim() && !selectedPlan.isHappened) {
+                                const newMsg = {
+                                  sender: userProfile.name,
+                                  avatar: userProfile.avatar,
+                                  text: newRestaurantChatMessage,
+                                  time: "Just Now"
+                                };
+                                setPlanMessages(prev => ({
+                                  ...prev,
+                                  [selectedPlan.id]: [...(prev[selectedPlan.id] || []), newMsg]
+                                }));
+                                setNewRestaurantChatMessage("");
+                              }
+                            }}
+                            className="flex-1 bg-zinc-950 border border-zinc-900 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-805 disabled:opacity-50"
+                          />
+                          <button
+                            type="button"
+                            disabled={selectedPlan.isHappened || !newRestaurantChatMessage.trim()}
+                            onClick={() => {
+                              if (!newRestaurantChatMessage.trim() || selectedPlan.isHappened) return;
+                              const newMsg = {
+                                sender: userProfile.name,
+                                avatar: userProfile.avatar,
+                                text: newRestaurantChatMessage,
+                                time: "Just Now"
+                              };
+                              setPlanMessages(prev => ({
+                                ...prev,
+                                [selectedPlan.id]: [...(prev[selectedPlan.id] || []), newMsg]
+                              }));
+                              setNewRestaurantChatMessage("");
+                            }}
+                            className="px-4 py-2 bg-zinc-900 disabled:bg-zinc-950 text-white disabled:text-zinc-650 rounded-xl text-xs hover:bg-zinc-800 font-bold uppercase cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            Send
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* INTERACTIVE SUB-TAB B: TIMING UPDATES */}
+                    {activeRestaurantSubTab === "timing" && (
+                      <div className="bg-zinc-900/40 border border-zinc-905 rounded-2xl p-4 space-y-3.5">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-[10px] font-mono text-[#ff8b66] uppercase tracking-wider font-extrabold">🕒 Settle Meetup Timing</h5>
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase">Vote for delay buffers</span>
+                        </div>
+
+                        <p className="text-[10.5px] text-zinc-400 leading-snug">
+                          Current reservation is fixed at <span className="text-white font-semibold font-mono bg-zinc-950 px-1.5 py-0.5 rounded border border-zinc-900">{selectedPlan.time}</span>. Suggestions help coordinating traffic-related delays.
+                        </p>
+
+                        <div className="space-y-2">
+                          {timingSuggestions.map((sug, id) => {
+                            const isChosen = selectedTimingUpdate === sug;
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTimingUpdate(sug);
+                                  triggerToast(`You suggested/voted to dine at: ${sug} ⏱️`);
+                                }}
+                                className={`w-full p-2.5 rounded-xl text-left text-xs font-semibold flex justify-between items-center transition cursor-pointer select-none ${isChosen
+                                  ? "bg-orange-500/10 border border-orange-500/25 text-[#ff8b66]"
+                                  : "bg-zinc-950/40 border border-zinc-900 text-zinc-350 hover:bg-zinc-950"
+                                  }`}
+                              >
+                                <span className="font-sans">⏱️ {sug}</span>
+                                <span className="text-[8.5px] font-mono uppercase bg-zinc-900 px-2 py-0.5 rounded text-zinc-400">
+                                  {isChosen ? "✓ Voted" : "Vote time"}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* INTERACTIVE SUB-TAB C: TABLE SEATING COORDINATION */}
+                    {activeRestaurantSubTab === "coordination" && (
+                      <div className="bg-zinc-900/40 border border-zinc-905 rounded-2xl p-4 space-y-3.5">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-[10px] font-mono text-[#ff8b66] uppercase tracking-wider font-extrabold">🪑 Seating Preference Poll</h5>
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase">Coordinate Table Zone</span>
+                        </div>
+
+                        <p className="text-[10.5px] text-zinc-400 leading-snug">
+                          Dining space selections are mapped live to inform host reservation updates. Select preferred dining zone.
+                        </p>
+
+                        <div className="space-y-2.5">
+                          {tablePreferences.map((pref, idx) => (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                const updated = tablePreferences.map((p, i) => {
+                                  if (i === idx) {
+                                    return {
+                                      ...p,
+                                      votes: p.voted ? p.votes - 1 : p.votes + 1,
+                                      voted: !p.voted
+                                    };
+                                  }
+                                  return p;
+                                });
+                                setTablePreferences(updated);
+                                triggerToast(pref.voted ? `Removed vote from ${pref.option}` : `Voted for seating zone: ${pref.option}! 🪑`);
+                              }}
+                              className={`p-3 rounded-xl border text-xs cursor-pointer select-none transition-all flex justify-between items-center ${pref.voted
+                                ? "bg-orange-500/10 border-orange-500/30 text-[#ff8b66]"
+                                : "bg-zinc-950/40 border-zinc-900 text-zinc-300 hover:bg-zinc-950"
+                                }`}
+                            >
+                              <span className="font-sans font-semibold">{pref.option}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[8.5px] font-mono text-zinc-500 font-bold">{pref.votes} VOTE{pref.votes !== 1 ? 'S' : ''}</span>
+                                <span className="text-[8.5px] font-mono bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-400 font-bold uppercase border-0">
+                                  {pref.voted ? "✓ Chosen" : "SUPPORT"}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* INTERACTIVE SUB-TAB D: LAST-MINUTE BULLETINS */}
+                    {activeRestaurantSubTab === "changes" && (
+                      <div className="bg-zinc-900/40 border border-zinc-905 rounded-2xl p-4 text-left space-y-3">
+                        <h5 className="text-[10px] font-mono text-[#ff8b66] uppercase tracking-wider">🔔 Active Coordination Logs</h5>
+                        <ul className="text-[10px] text-zinc-400 space-y-2 list-none pl-1">
+                          <li className="flex gap-2 items-start text-left">
+                            <span className="text-orange-400 mt-0.5 shrink-0">●</span>
+                            <div className="flex-1">
+                              <span className="text-zinc-200 block font-semibold leading-normal">Table status settled</span>
+                              <span className="text-zinc-550 scale-95 font-mono text-[8px] block mt-0.5">7:15 PM • BY HOST</span>
+                            </div>
+                          </li>
+                          <li className="flex gap-2 items-start text-left">
+                            <span className="text-orange-400 mt-0.5 shrink-0">●</span>
+                            <div className="flex-1">
+                              <span className="text-zinc-200 block font-semibold leading-normal">Split payment threshold authorized</span>
+                              <span className="text-zinc-550 scale-95 font-mono text-[8px] block mt-0.5">5:00 PM • BY PLATFORM RECTIFIER</span>
+                            </div>
+                          </li>
+                          <li className="flex gap-2 items-start text-left">
+                            <span className="text-zinc-500 mt-0.5 shrink-0">●</span>
+                            <div className="flex-1">
+                              <span className="text-zinc-400 block font-normal leading-normal">Table coordination space opened</span>
+                              <span className="text-zinc-550 scale-95 font-mono text-[8px] block mt-0.5">TODAY • AUTOMATION SYSTEM</span>
+                            </div>
+                          </li>
+                        </ul>
+                      </div>
+                    )}
+
+                  </div>
+                ) : (
+                  /* 12. Post-Meet Actions Become Available & archived to Dining History */
+                  <div className="bg-zinc-950/80 border border-zinc-900 rounded-[2.2rem] p-4.5 space-y-5 shadow-inner">
+                    <div className="flex flex-col space-y-1 text-left px-0.5 select-none">
+                      <span className="text-[9px] font-mono bg-amber-500/10 text-amber-300 px-2 py-0.5 rounded-lg w-max font-bold uppercase tracking-wider">
+                        🍷 MEMORIES & POST-MEET ACTIVITY
+                      </span>
+                      <h4 className="text-sm font-sans font-black text-white uppercase tracking-tight">Preserve Dining Experiences</h4>
+                      <p className="text-[10px] text-zinc-500 leading-snug">
+                        Dinner complete. Upload memory snapshots, rate the dining service, log checked attendance, and review reactions here.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Action column A: Upload Memories & reactions */}
+                      <div className="space-y-3 bg-zinc-900/40 border border-zinc-905 p-4 rounded-[1.8rem]">
+                        <h5 className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider border-b border-zinc-950 pb-1.5 font-bold">📸 Upload Memory / Food Reaction</h5>
+
+                        {/* Memory file uploader */}
+                        <div className="space-y-2">
+                          <label className="flex flex-col items-center justify-center p-3 rounded-xl border border-dashed border-zinc-800 hover:border-[#ff8b66]/40 cursor-pointer text-center bg-zinc-950/50 transition">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = () => {
+                                    if (typeof reader.result === "string") {
+                                      const cap = prompt("Enter food photo caption:", "Best dinner ambiance and amazing platters! 🍲 🎉");
+                                      if (cap !== null) {
+                                        const newMem: DbMemory = {
+                                          memory_id: `M_Rest_${Date.now()}`,
+                                          plan_id: selectedPlan.id,
+                                          uploaded_by: activeUserId,
+                                          media_url: reader.result,
+                                          caption: cap || "Gourmet food memories!",
+                                          timestamp: new Date().toISOString()
+                                        };
+                                        setDbMemories(prev => [newMem, ...prev]);
+                                        triggerToast("Uploaded foodie memory!");
+                                      }
+                                    }
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                            <span className="text-lg">📷</span>
+                            <span className="text-[10px] text-[#ff8b66] font-mono font-bold mt-1 uppercase">UPLOAD DINNER SNAPSHOT</span>
+                            <span className="text-[8px] text-zinc-500 mt-0.5 uppercase">Photos instantly save to memory wall</span>
+                          </label>
+                        </div>
+
+                        {/* Reaction Emojis Selection */}
+                        <div className="space-y-1.5 pt-1 text-left">
+                          <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest block font-bold">CHOOSE FOOD FEELING</span>
+                          <div className="flex gap-2">
+                            {[
+                              { label: "🌶️ SPICY", reaction: "Loved the spicy dishes! 🌶️" },
+                              { label: "🍕 PIZZA", reaction: "Italian craving resolved! 🍕" },
+                              { label: "🥂 CELEBRATE", reaction: "Amazing ambiance & prosecco! 🥂" },
+                              { label: "🍨 SWEET", reaction: "Perfect desserts and waffles! 🍨" },
+                              { label: "😋 ULTIMATE", reaction: "Delicious butter chicken feast! 😋" }
+                            ].map((emo, eIdx) => {
+                              const isActive = selectedPlan.userReaction === emo.reaction;
+                              return (
+                                <button
+                                  key={eIdx}
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = { ...selectedPlan, userReaction: emo.reaction };
+                                    setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updated : p));
+                                    setSelectedPlan(updated);
+                                    triggerToast(`Food Reaction Shared: ${emo.label}!`);
+                                  }}
+                                  className={`flex-1 py-1 px-1.5 rounded-lg text-[9px] font-extrabold uppercase transition cursor-pointer ${isActive
+                                    ? "bg-amber-500 text-black border border-amber-400"
+                                    : "bg-zinc-950 text-zinc-400 border border-zinc-900 hover:text-white"
+                                    }`}
+                                  title={emo.reaction}
+                                >
+                                  {emo.label.split(" ")[0]}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Column B: Restaurant Rating & Attendance tracker */}
+                      <div className="space-y-3.5 bg-zinc-900/40 border border-zinc-905 p-4 rounded-[1.8rem]">
+                        <h5 className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider border-b border-zinc-950 pb-1.5 font-bold">⭐ Dining Feedback & Logs</h5>
+
+                        {/* Rating stars */}
+                        <div className="space-y-1">
+                          <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest block font-bold">RATE RESTAURANT</span>
+                          <div className="flex gap-2">
+                            {[1, 2, 3, 4, 5].map((starVal) => {
+                              const isLit = (selectedPlan.userRating || 0) >= starVal;
+                              return (
+                                <button
+                                  key={starVal}
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = { ...selectedPlan, userRating: starVal };
+                                    setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updated : p));
+                                    setSelectedPlan(updated);
+                                    triggerToast(`Rated ${starVal} Stars! 🍽️`);
+                                  }}
+                                  className={`text-lg cursor-pointer transition ${isLit ? "text-amber-400 scale-105" : "text-zinc-700 hover:text-[#ff8b66]"
+                                    }`}
+                                >
+                                  {isLit ? "★" : "☆"}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Verified Attendance marker checkbox button */}
+                        <div className="pt-2 select-none">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = { ...selectedPlan, attendanceLogged: !selectedPlan.attendanceLogged };
+                              setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updated : p));
+                              setSelectedPlan(updated);
+                              triggerToast(updated.attendanceLogged ? "Your attendance is verified & logged! ✔" : "Attendance log cancelled.");
+                            }}
+                            className={`w-full p-2.5 rounded-xl border text-xs font-bold font-sans uppercase tracking-wide cursor-pointer transition flex items-center justify-between ${selectedPlan.attendanceLogged
+                              ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400"
+                              : "bg-zinc-950 border-zinc-900 text-zinc-400 hover:text-white"
+                              }`}
+                          >
+                            <span>🎫 LOG ATTENDANCE</span>
+                            <span className="text-[10px]">
+                              {selectedPlan.attendanceLogged ? "✓ VERIFIED AT TABLE" : "TAP TO RECORD"}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Shared Memory Gallery for this specific restaurant plan */}
+                    {(() => {
+                      const restaurantMemories = dbMemories.filter(m => m.plan_id === selectedPlan.id);
+                      return (
+                        <div className="bg-zinc-900/30 border border-zinc-905 rounded-[1.8rem] p-4 text-left space-y-3">
+                          <h5 className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider font-extrabold pb-1 border-b border-zinc-950">
+                            🖼️ Spontaneous Dinner Moments ({restaurantMemories.length})
+                          </h5>
+
+                          {restaurantMemories.length === 0 ? (
+                            <div className="py-5 text-center p-3">
+                              <p className="text-[10.5px] text-zinc-500 italic leading-snug">
+                                "Preserve food snapshots and dining experiences!" Snap a picture to populate your social database and history cards.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                              {restaurantMemories.map((m) => {
+                                const uploader = dbUsers.find(u => u.user_id === m.uploaded_by) || {
+                                  full_name: "Thilaka (You)",
+                                  profile_photo: userProfile.avatar
+                                };
+                                return (
+                                  <div key={m.memory_id} className="bg-zinc-950 border border-zinc-900 rounded-2xl p-2.5 space-y-2 text-left">
+                                    <div className="flex items-center gap-1.5 select-none text-left">
+                                      <img src={uploader.profile_photo} className="w-4 h-4 rounded-full object-cover shrink-0 animate-fade" referrerPolicy="no-referrer" />
+                                      <span className="text-[8.5px] font-sans font-medium text-zinc-400 truncate max-w-[90px]">{uploader.full_name}</span>
+                                    </div>
+                                    {m.media_url && (
+                                      <div className="h-24 rounded-xl overflow-hidden border border-zinc-900 bg-zinc-900">
+                                        <img src={m.media_url} className="w-full h-full object-cover" alt="Memory" referrerPolicy="no-referrer" />
+                                      </div>
+                                    )}
+                                    <p className="text-[9.5px] text-zinc-300 font-sans italic leading-snug">
+                                      "{m.caption}"
+                                    </p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                  </div>
+                )}
+
+              </div>
+            ) : (
+              // Legacy normal plan layout
+              <div className="space-y-6">
+
+                {/* Hero Cover Header */}
+                <label className="relative h-44 rounded-2xl overflow-hidden border border-zinc-900 cursor-pointer block group">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          if (typeof reader.result === "string") {
+                            const updatedCover = reader.result;
+                            setPlans(prevPlans => prevPlans.map(p => p.id === selectedPlan.id ? { ...p, coverImage: updatedCover } : p));
+                            setSelectedPlan(prev => prev ? { ...prev, coverImage: updatedCover } : null);
+                            triggerToast("Event banner photo updated!");
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                  <img src={selectedPlan.coverImage} className="w-full h-full object-cover group-hover:scale-101 transition-transform" alt="plan background" referrerPolicy="no-referrer" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/40 to-transparent" />
+                  <div className="absolute bottom-4 left-4">
+                    <span className="bg-zinc-950/80 backdrop-blur-sm text-[#ff8b66] border border-[#ff8b66]/20 text-[8px] font-mono uppercase px-2 py-0.5 rounded">
+                      {selectedPlan.category} • Tap Image to Custom Upload 📷
+                    </span>
+                    <h2 className="text-3xl font-display font-black text-white mt-1.5 uppercase leading-none">{selectedPlan.title}</h2>
+                  </div>
+                </label>
+
+                {/* Coordination coordinates widgets */}
+                <div className="grid grid-cols-1 gap-2.5">
+                  <div className="bg-zinc-900 border border-zinc-850 p-3 rounded-xl flex items-center gap-3">
+                    <Clock className="w-5 h-5 text-brand-orange shrink-0" />
+                    <div>
+                      <span className="text-[9px] text-zinc-500 font-mono block">DATE & TIME</span>
+                      <span className="text-xs text-zinc-200">{selectedPlan.date} at {selectedPlan.time}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900 border border-zinc-850 p-3 rounded-xl flex items-center gap-3">
+                    <MapPin className="w-5 h-5 text-brand-orange shrink-0" />
+                    <div className="flex-1">
+                      <span className="text-[9px] text-zinc-500 font-mono block">VENUE LOCATION</span>
+                      <span className="text-xs text-zinc-200">{selectedPlan.location}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900 border border-zinc-850 p-3 rounded-xl flex items-center gap-3">
+                    <DollarSign className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <div>
+                      <span className="text-[9px] text-zinc-500 font-mono block">OBILGATION SHARE</span>
+                      <span className="text-xs text-zinc-200">{selectedPlan.cost > 0 ? `₹${selectedPlan.cost} per head` : "Free spontaneous"}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Spawn creator badge details */}
+                <div className="flex items-center justify-between p-3.5 bg-zinc-950 border border-zinc-900 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <img src={selectedPlan.creatorAvatar} className="w-9 h-9 rounded-full object-cover" alt="creator" referrerPolicy="no-referrer" />
+                    <div>
+                      <span className="text-[8px] text-zinc-500 font-mono tracking-widest block font-bold uppercase">PLAN ORGANIZER</span>
+                      <span className="text-xs text-zinc-300 font-medium">{selectedPlan.creatorName}</span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-zinc-500 bg-zinc-900 px-2 py-1 rounded">Confirmed Host</span>
+                </div>
+
+                {/* List Joined users */}
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-display uppercase tracking-widest text-[#ff8b66]">
+                    Confirmed Attendees ({selectedPlan.confirmedCount}/{selectedPlan.maxSpots})
+                  </h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {selectedPlan.joinedUsers.map((user, i) => (
+                      <div key={i} className="flex items-center gap-2.5 p-2 bg-zinc-900/60 border border-zinc-900 rounded-xl">
+                        <img src={user.avatar} className="w-6 h-6 rounded-full object-cover" alt={user.name} referrerPolicy="no-referrer" />
+                        <span className="text-xs p-1 select-all truncate text-zinc-300">{user.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 💬 COORDINATION CHAT FOR FALLBACK PLANS */}
+                <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 space-y-3">
+                  <div className="flex justify-between items-center border-b border-zinc-900 pb-2">
+                    <h5 className="text-[10.5px] font-mono text-[#ff8b66] uppercase tracking-wider font-extrabold flex items-center gap-1">
+                      <span>💬</span> Coordination Chat
+                    </h5>
+                    {selectedPlan.isHappened ? (
+                      <span className="text-[7.5px] font-mono text-zinc-550 bg-zinc-900 border border-zinc-900 px-1.5 py-0.5 rounded">ARCHIVED RECON</span>
+                    ) : (
+                      <span className="text-[7.5px] font-mono text-[#ff8b66] bg-[#ff8b66]/10 px-1.5 py-0.5 rounded animate-pulse">ACTIVE CO-PAY HUB</span>
+                    )}
+                  </div>
+
+                  <div className="space-y-3.5 max-h-44 overflow-y-auto no-scrollbar pt-1 pr-1 text-left">
+                    {(planMessages[selectedPlan.id] || []).length === 0 ? (
+                      <p className="text-[10px] text-zinc-500 italic text-center py-4">No coordination messages yet. Say hello!</p>
+                    ) : (
+                      (planMessages[selectedPlan.id] || []).map((msg, idx) => (
+                        <div key={idx} className="flex gap-2.5 text-left items-start">
+                          <img src={msg.avatar} className="w-5.5 h-5.5 rounded-full object-cover shrink-0 mt-0.5" alt="avatar" referrerPolicy="no-referrer" />
+                          <div className="flex-1">
+                            <div className="flex justify-between items-baseline">
+                              <span className="text-[10px] font-bold text-zinc-300 font-sans">{msg.sender}</span>
+                              <span className="text-[7.5px] font-mono text-zinc-550">{msg.time}</span>
+                            </div>
+                            <p className="text-[11px] text-zinc-400 mt-0.5 font-sans leading-snug">
+                              {msg.text}
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Message Input Trigger */}
+                  <div className="flex gap-2 pt-2 border-t border-zinc-900">
+                    <input
+                      type="text"
+                      placeholder={selectedPlan.isHappened ? "This plan has ended. Chat is read-only." : "Type spontaneous message..."}
+                      value={newCustomChatMessage}
+                      disabled={selectedPlan.isHappened}
+                      onChange={(e) => setNewCustomChatMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && newCustomChatMessage.trim() && !selectedPlan.isHappened) {
+                          const msg = {
+                            sender: userProfile.name,
+                            avatar: userProfile.avatar,
+                            text: newCustomChatMessage,
+                            time: "Just Now"
+                          };
+                          setPlanMessages(prev => ({
+                            ...prev,
+                            [selectedPlan.id]: [...(prev[selectedPlan.id] || []), msg]
+                          }));
+                          setNewCustomChatMessage("");
+                        }
+                      }}
+                      className="flex-1 text-[11px] bg-zinc-950 border border-zinc-905 rounded-xl px-2.5 py-2 text-white placeholder-zinc-550 focus:outline-none focus:border-[#ff8b66]/30 disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      disabled={selectedPlan.isHappened || !newCustomChatMessage.trim()}
+                      onClick={() => {
+                        if (!newCustomChatMessage.trim() || selectedPlan.isHappened) return;
+                        const msg = {
+                          sender: userProfile.name,
+                          avatar: userProfile.avatar,
+                          text: newCustomChatMessage,
+                          time: "Just Now"
+                        };
+                        setPlanMessages(prev => ({
+                          ...prev,
+                          [selectedPlan.id]: [...(prev[selectedPlan.id] || []), msg]
+                        }));
+                        setNewCustomChatMessage("");
+                      }}
+                      className="bg-[#ff8b66] disabled:bg-zinc-850 text-black hover:opacity-95 font-bold text-[11px] px-3.5 py-1.5 rounded-xl transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Send
+                    </button>
+                  </div>
+                </div>
+
+                {/* List Plan Memories */}
+                {(() => {
+                  const planMemories = dbMemories.filter(m => m.plan_id === selectedPlan.id);
+                  return (
+                    <div className="space-y-3 pt-4 border-t border-zinc-900/45">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-[10px] font-display uppercase tracking-widest text-[#ff8b66]">
+                          📸 Plan Memories ({planMemories.length})
+                        </h4>
+                        <label className="text-[9px] text-[#ff8b66] font-mono cursor-pointer hover:underline flex items-center gap-1">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                  if (typeof reader.result === "string") {
+                                    const captionText = prompt("Enter a lovely caption for this memory:", "Captured spontaneous matchday energy! ✨");
+                                    if (captionText !== null) {
+                                      const newMemory: DbMemory = {
+                                        memory_id: `M_${Date.now()}`,
+                                        plan_id: selectedPlan.id,
+                                        uploaded_by: activeUserId,
+                                        media_url: reader.result,
+                                        caption: captionText || "Shared experience captured! ⭐",
+                                        timestamp: new Date().toISOString()
+                                      };
+                                      setDbMemories([newMemory, ...dbMemories]);
+                                      triggerToast("📸 Core post-plan memory photo saved successfully!");
+                                    }
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          + Add Photo
+                        </label>
+                      </div>
+
+                      {planMemories.length === 0 ? (
+                        <div className="text-[11px] text-zinc-500 italic p-3 text-center bg-zinc-950 rounded-xl border border-zinc-900">
+                          No memories shared yet. Upload a photo to preserve this hangout!
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5 max-h-56 overflow-y-auto no-scrollbar">
+                          {planMemories.map((m, idx) => {
+                            const uploader = dbUsers.find(u => u.user_id === m.uploaded_by) || dbUsers[0];
+                            return (
+                              <div key={idx} className="bg-zinc-950 border border-zinc-900 rounded-xl p-2.5 space-y-2">
+                                <div className="flex items-center gap-1.5">
+                                  <img src={uploader.profile_photo} className="w-4 h-4 rounded-full object-cover shrink-0" alt="uploader" referrerPolicy="no-referrer" />
+                                  <span className="text-[9px] font-sans font-medium text-zinc-300">{uploader.full_name}</span>
+                                </div>
+                                {m.media_url && (
+                                  <div className="h-28 rounded-lg overflow-hidden border border-zinc-900 bg-zinc-900">
+                                    <img src={m.media_url} className="w-full h-full object-cover" alt="Memory" referrerPolicy="no-referrer" />
+                                  </div>
+                                )}
+                                <p className="text-[10px] text-zinc-400 font-sans italic leading-tight">
+                                  "{m.caption}"
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+              </div>
+            )}
+
+          </div>
+
+          {/* Refined Plan Action Button Bar supporting Join / Reject / Interested flow */}
+          {(() => {
+            const isJoined = selectedPlan.joinedUsers.some(u => u.name === userProfile.name);
+            const isMovie = selectedPlan.category === "movies";
+
+            // If they are not joined on a movie plan, we don't render any decorative action bar container at all!
+            if (isMovie && !isJoined) return null;
+
+            return (
+              <div className="p-4 border-t border-zinc-900 bg-zinc-950 space-y-3">
+                {(() => {
+                  const isInterested = interestedPlanIds.includes(selectedPlan.id);
+                  const isRecurring = selectedPlan.category === "sports" || selectedPlan.id === "P001" || selectedPlan.title.toLowerCase().includes("matchday") || selectedPlan.title.toLowerCase().includes("football");
+
+                  const isWaitlisted = selectedPlan.category === "sports" && selectedPlan.waitlistUsers?.some(u => u.name === userProfile.name);
+                  const isFull = selectedPlan.confirmedCount >= selectedPlan.maxSpots;
+
+                  // Movie details screen custom interaction layout override
+                  if (isMovie) {
+                    return (
+                      <div className="w-full py-3.5 px-6 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 backdrop-blur-md flex items-center justify-center gap-2 select-none">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 font-bold">
+                          ✓ SECURED SPOT IN GROUP • CHAT LIVE ABOVE
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-3">
+                      {/* Join / Attending primary CTA button and Not Going/Reject button */}
+                      <div className="flex gap-2.5">
+                        {selectedPlan.category === "sports" && isFull && !isJoined ? (
+                          /* Special Waitlist Join action for Sports matchday */
+                          <button
+                            id="detail_join_button"
+                            onClick={() => {
+                              if (isWaitlisted) {
+                                // Leave waitlist
+                                const updatedWaitlist = selectedPlan.waitlistUsers?.filter(u => u.name !== userProfile.name) || [];
+                                const updatedPlan = { ...selectedPlan, waitlistUsers: updatedWaitlist };
+                                setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updatedPlan : p));
+                                setSelectedPlan(updatedPlan);
+                                triggerToast("You left the match waitlist.");
+                              } else {
+                                // Join waitlist
+                                const updatedWaitlist = [
+                                  ...(selectedPlan.waitlistUsers || []),
+                                  { name: userProfile.name, avatar: userProfile.avatar, checkedIn: false }
+                                ];
+                                const updatedPlan = { ...selectedPlan, waitlistUsers: updatedWaitlist };
+                                setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updatedPlan : p));
+                                setSelectedPlan(updatedPlan);
+                                triggerToast("Added to Team Bench / Waitlist! Host is notified.");
+                              }
+                            }}
+                            className={`flex-1 py-4 rounded-2xl font-black text-xs uppercase tracking-wider text-center transition-all ${isWaitlisted
+                              ? "bg-amber-500/20 text-amber-300 border border-amber-500/35"
+                              : "bg-gradient-to-r from-amber-500 to-yellow-600 text-black hover:opacity-95 active:scale-[0.98] cursor-pointer"
+                              }`}
+                          >
+                            {isWaitlisted ? "On Bench" : "Join Bench"}
+                          </button>
+                        ) : (
+                          <button
+                            id="detail_join_button"
+                            onClick={() => {
+                              if (isJoined) {
+                                // Toggle leaves the plan
+                                handleToggleJoin(selectedPlan);
+                                setSelectedPlan(null);
+                              } else {
+                                // Try joining or ask for split payment
+                                setPaymentConfirmationPlan(selectedPlan);
+                              }
+                            }}
+                            className={`flex-1 py-4 rounded-2xl font-black text-xs uppercase tracking-wider text-center transition-all ${isJoined
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/35 cursor-pointer"
+                              : "bg-gradient-to-r from-[#ff8b66] to-[#ff5d41] text-white hover:opacity-90 active:scale-[0.98] cursor-pointer"
+                              }`}
+                          >
+                            {isJoined ? "Joined" : "Join"}
+                          </button>
+                        )}
+
+                        {/* Reject / Dismiss button */}
+                        <button
+                          id="detail_reject_button"
+                          onClick={() => {
+                            if (isJoined) {
+                              // Leaves the plan directly acting as Reject
+                              handleToggleJoin(selectedPlan);
+                              setSelectedPlan(null);
+                              triggerToast("Left plan successfully. Host notified.");
+                            } else if (isWaitlisted) {
+                              // Leave waitlist
+                              const updatedWaitlist = selectedPlan.waitlistUsers?.filter(u => u.name !== userProfile.name) || [];
+                              const updatedPlan = { ...selectedPlan, waitlistUsers: updatedWaitlist };
+                              setPlans(prev => prev.map(p => p.id === selectedPlan.id ? updatedPlan : p));
+                              setSelectedPlan(updatedPlan);
+                              triggerToast("Waitlist request cancelled.");
+                            } else {
+                              // Dismiss and close modal
+                              setSelectedPlan(null);
+                              triggerToast("Plan dismissed.");
+                            }
+                          }}
+                          className="px-5 py-4 rounded-2xl bg-zinc-900 border border-zinc-850 text-zinc-400 hover:text-white font-semibold text-xs uppercase tracking-wider transition-all cursor-pointer"
+                        >
+                          Reject
+                        </button>
+                      </div>
+
+                      {/* Interested Pin Option (Only shown for non-recurring/casual plans) */}
+                      {!isRecurring && (
+                        <button
+                          id="detail_interested_button"
+                          onClick={() => {
+                            if (isJoined) {
+                              triggerToast("Already confirmed to attend this hangout!");
+                              return;
+                            }
+                            const isCurrentlyInterested = interestedPlanIds.includes(selectedPlan.id);
+                            const updated = isCurrentlyInterested
+                              ? interestedPlanIds.filter(id => id !== selectedPlan.id)
+                              : [...interestedPlanIds, selectedPlan.id];
+                            setInterestedPlanIds(updated);
+
+                            triggerToast(
+                              isCurrentlyInterested
+                                ? "Removed interest bookmark"
+                                : "Star-pinned as Interested! Host is notified. ⭐"
+                            );
+                          }}
+                          className={`w-full py-3 rounded-2xl border font-bold text-xs uppercase tracking-wider text-center transition-all ${isInterested
+                            ? "bg-amber-400/20 text-amber-300 border-amber-400/35"
+                            : "bg-zinc-950 border-zinc-900 text-zinc-300 hover:text-white"
+                            }`}
+                        >
+                          {isInterested ? "★ Starred (Interested)" : "Interested"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            );
+          })()}
+
+          {/* CINEMATIC HOLD PROGRESS OVERLAY */}
+          {detailHoldProgress > 0 && (
+            <div
+              className="absolute inset-0 z-40 flex flex-col items-center justify-center transition-all pointer-events-none select-none overflow-hidden"
+              style={{
+                backgroundColor: `rgba(0, 0, 0, ${Math.min(0.9, (detailHoldProgress / 100) * 0.95)})`,
+                backdropFilter: `blur(${(detailHoldProgress / 100) * 16}px)`,
+                WebkitBackdropFilter: `blur(${(detailHoldProgress / 100) * 16}px)`
+              }}
+            >
+              {/* Radial glow background pulse */}
+              <div
+                className="absolute w-[350px] h-[350px] rounded-full blur-[100px] transition-all duration-75 text-[#ff8b66]/10"
+                style={{
+                  background: `radial-gradient(circle, rgba(255,139,102,${(detailHoldProgress / 100) * 0.35}) 0%, transparent 70%)`
+                }}
+              />
+
+              {/* Glowing Interactive Progress Circle */}
+              <div
+                className="relative w-48 h-48 rounded-full flex flex-col items-center justify-center border transition-all"
+                style={{
+                  borderColor: `rgba(255, 139, 102, ${0.1 + (detailHoldProgress / 100) * 0.4})`,
+                  transform: `scale(${0.9 + (detailHoldProgress / 100) * 0.15})`
+                }}
+              >
+                {/* SVG circular progress mask */}
+                <svg className="absolute inset-0 w-full h-full -rotate-90">
+                  <circle
+                    cx="96"
+                    cy="96"
+                    r="88"
+                    className="stroke-zinc-900"
+                    strokeWidth="4"
+                    fill="transparent"
+                  />
+                  <circle
+                    cx="96"
+                    cy="96"
+                    r="88"
+                    className="stroke-[#ff5d41]"
+                    strokeWidth="6"
+                    fill="transparent"
+                    strokeDasharray={`${2 * Math.PI * 88}`}
+                    strokeDashoffset={`${2 * Math.PI * 88 * (1 - detailHoldProgress / 100)}`}
+                    strokeLinecap="round"
+                    style={{ transition: 'stroke-dashoffset 0.05s linear' }}
+                  />
+                </svg>
+
+                {/* Tactile detail label inside */}
+                <div className="z-10 text-center space-y-1">
+                  <span className="text-[9px] font-mono text-[#ff8b66] uppercase tracking-[0.2em] font-medium block animate-pulse">
+                    {detailIsSuccess ? "SECURED" : "HOLDING"}
+                  </span>
+                  <div className="text-3xl font-display font-black text-white tracking-widest leading-none">
+                    {Math.round(detailHoldProgress)}%
+                  </div>
+                  <span className="text-[8px] text-zinc-500 font-sans block max-w-[120px] mx-auto mt-1 leading-normal uppercase">
+                    {detailIsSuccess ? "Transferring split..." : "Maintain hold to join Screen"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ELEGANT HAPTIC SUCCESS CONFIRMATION OVERLAY */}
+          {detailIsSuccess && (
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/95 animate-fade-in pointer-events-none">
+              <div className="text-center space-y-4">
+                <div className="w-20 h-20 rounded-full bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center mx-auto shadow-[0_0_40px_rgba(16,185,129,0.2)]">
+                  <Check className="w-10 h-10 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-display font-black tracking-wider text-emerald-400 uppercase">JOINED!</h3>
+                  <p className="text-xs text-zinc-400 mt-1 uppercase tracking-widest font-mono">Spot Secured Sub-route</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ---------------- 📝 EDIT MEMORY PREVIEW & CUSTOMIZE MODAL ---------------- */}
+      <AnimatePresence>
+        {editingMemory && (
+          <div className="fixed inset-0 bg-black/98 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="bg-zinc-950 border border-zinc-900 rounded-[2.2rem] w-full max-w-sm p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-display font-black text-zinc-100 uppercase tracking-widest">
+                  🎨 PREVIEW & CUSTOMIZE
+                </h3>
+                <span className="text-[8px] bg-[#ff8b66]/10 text-[#ff8b66] border border-[#ff8b66]/20 px-1.5 py-0.5 rounded font-mono">
+                  MEMORIES TWEAKER
+                </span>
+              </div>
+
+              <div className="w-full h-44 rounded-2xl bg-zinc-900 overflow-hidden border border-zinc-805 relative">
+                <img src={editingMemory.media_url} className="w-full h-full object-cover" alt="editing" />
+              </div>
+
+              <div className="space-y-1.5 text-left">
+                <label className="text-[9px] font-mono text-zinc-500 uppercase">Memory Caption</label>
+                <textarea
+                  value={editedCaption}
+                  onChange={(e) => setEditedCaption(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-200 focus:outline-none focus:border-[#ff8b66]/50 min-h-[60px]"
+                  placeholder="Adjust caption..."
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm("Are you sure you want to remove this memory snapshot?")) {
+                      setDbMemories(dbMemories.filter(m => m.memory_id !== editingMemory.memory_id));
+                      setEditingMemory(null);
+                      triggerToast("🗑️ Memory deleted successfully!");
+                    }
+                  }}
+                  className="flex-1 py-3 rounded-xl text-[10px] uppercase font-mono border border-red-950/40 bg-red-950/20 text-red-400 hover:bg-red-900/20 cursor-pointer"
+                >
+                  Delete Snap
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingMemory(null);
+                  }}
+                  className="py-3 px-4 rounded-xl text-[10px] uppercase font-mono border border-zinc-805 text-zinc-400 hover:bg-zinc-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDbMemories(dbMemories.map(m => m.memory_id === editingMemory.memory_id ? { ...m, caption: editedCaption } : m));
+                    setEditingMemory(null);
+                    triggerToast("✓ Memory caption tweaked successfully!");
+                  }}
+                  className="flex-1 py-3 rounded-xl text-[10px] uppercase font-mono bg-[#ff8b66] text-black font-black hover:bg-[#ff9f7d] cursor-pointer"
+                >
+                  Save Tweaks
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ---------------- 🌸 EMOTIONAL POST-MEETUP "ADD MEMORIES" PROMPT (Memories Rule 7, 9, 12, 30) ---------------- */}
+      <AnimatePresence>
+        {showAddMemoriesPrompt && (() => {
+          const plan = showAddMemoriesPrompt;
+          // Determine caption presets depending on classification
+          const category = plan.category?.toLowerCase() || (plan.title?.toLowerCase().includes("movie") ? "movie" : plan.title?.toLowerCase().includes("turf") || plan.title?.toLowerCase().includes("soccer") ? "sports" : "default");
+
+          const captionPresets: Record<string, string[]> = {
+            movie: [
+              "Cried, laughed, and had the absolute best time with the squad! 🍿",
+              "Pure cinema! Outstanding rows squad. 🎬",
+              "An absolute masterpiece of a night. ✨",
+              "Popcorn vanished in matches. Spontaneous seat steals. 🎥"
+            ],
+            sports: [
+              "Absolute turf masterclass tonight! ⚽",
+              "Buzzer goal winner! Let's go! 🔥",
+              "A gorgeous match with a legendary crew. 🏆",
+              "Muddy boots, tired legs, smiling faces. Pure joy! 🙌"
+            ],
+            restaurant: [
+              "Delicious food, continuous laughter. 🍽️",
+              "Spontaneous late-night food run was perfect! 🍰",
+              "Warm food and even warmer friends. 🍻",
+              "Diet paused for absolute culinary gold. Worth it! 🌮"
+            ],
+            default: [
+              "Best spontaneous meetup ever! 🥂",
+              "Core bittersweet memories locked and key'd. ✨",
+              "Remember when we did this together? ♥",
+              "No screens, just genuine laughs. ⭐"
+            ]
+          };
+
+          const presets = captionPresets[category] || captionPresets.default;
+
+          return (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/95 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 20 }}
+                className="bg-zinc-950 border border-zinc-900 rounded-[2.2rem] w-full max-w-sm overflow-hidden p-6 space-y-5 text-left"
+              >
+                {/* Header */}
+                <div className="text-center space-y-1">
+                  <span className="text-[9px] font-mono tracking-widest text-[#ff8b66] uppercase font-bold bg-[#ff8b66]/10 px-2 py-0.5 rounded border border-[#ff8b66]/20 inline-block">
+                    Remember When we did this? ♥
+                  </span>
+                  <h3 className="text-sm font-display font-medium text-zinc-100 tracking-tight">
+                    Preserve today's joyful moments
+                  </h3>
+                  <p className="text-[10px] text-zinc-405">
+                    "{plan.title}"
+                  </p>
+                </div>
+
+                {/* Main Capture Frame */}
+                <div className="space-y-4">
+                  {memoryUploadPreview ? (
+                    /* Polaroid Preview (Rule 30) */
+                    <div className="bg-zinc-900 p-3 pb-8 rounded-3xl border border-zinc-800 rotate-1 shadow-2xl relative">
+                      <div className="w-full h-44 rounded-2xl overflow-hidden bg-black relative">
+                        <img
+                          src={memoryUploadPreview}
+                          className="w-full h-full object-cover"
+                          alt="Today's memory preview"
+                          referrerPolicy="no-referrer"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setMemoryUploadPreview(null)}
+                          className="absolute top-2.5 right-2.5 bg-black/70 hover:bg-black text-white p-1.5 rounded-full text-[10px] uppercase font-mono cursor-pointer"
+                        >
+                          ✕ Reset
+                        </button>
+                      </div>
+                      <div className="mt-4 text-center">
+                        <p className="font-mono text-[9px] text-zinc-500 tracking-wide uppercase italic">
+                          ⚡ Spontaneous Polaroid Memory
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Area trigger to select file (Memories Rule 9) */
+                    <div className="w-full">
+                      <label id="memory_file_upload_label" className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-850 hover:border-[#ff8b66]/40 bg-zinc-900/20 hover:bg-zinc-900/40 rounded-3xl p-6 text-center cursor-pointer transition-all space-y-2.5 min-h-[140px]">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                if (typeof reader.result === "string") {
+                                  setMemoryUploadPreview(reader.result);
+                                  triggerToast("📸 Core post-plan memory snapshot loaded successfully!");
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                        <div className="bg-zinc-900 p-3 rounded-full border border-zinc-800">
+                          <Camera className="w-5 h-5 text-[#ff8b66]" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <p className="text-[11px] font-medium text-zinc-200 text-center">Upload a lovely snap card</p>
+                          <p className="text-[9px] text-zinc-500 max-w-[200px] text-center">Captured faces, laughing tables, scores, or tickets</p>
+                        </div>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Stamp reaction fallback list (Rule 9 of Memories) */}
+                  {!memoryUploadPreview && (
+                    <div className="space-y-2 bg-zinc-900/30 border border-zinc-900 rounded-2xl p-3">
+                      <span className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider block text-left">No snap? Cast a quick stamp:</span>
+                      <div className="flex justify-between gap-1.5">
+                        {[
+                          { emoji: "❤️", label: "Lovely" },
+                          { emoji: "🔥", label: "Hype" },
+                          { emoji: "🥂", label: "Cheers" },
+                          { emoji: "🏆", label: "Victory" },
+                          { emoji: "🍿", label: "Cinema" },
+                          { emoji: "✨", label: "Sparkle" }
+                        ].map((stamp) => (
+                          <button
+                            key={stamp.emoji}
+                            type="button"
+                            onClick={() => {
+                              // Cast quick stamp as a text memory with lovely card background
+                              const randomCaptions = [
+                                `Voted ${stamp.emoji} stamp for ${plan.title}! We did this!`,
+                                `Felt so good to meetup! Cast ${stamp.emoji} reaction.`,
+                                `Lovely vibes together! Starred ${stamp.emoji} stamp.`,
+                              ];
+                              const newMemory: DbMemory = {
+                                memory_id: `M_${Date.now()}`,
+                                plan_id: plan.id,
+                                uploaded_by: activeUserId,
+                                media_url: "https://images.unsplash.com/photo-1543007630-9710e4a00a20?w=600&auto=format&fit=crop&q=60", // dynamic default warmth banner
+                                caption: `${stamp.emoji} ${randomCaptions[Math.floor(Math.random() * randomCaptions.length)]}`,
+                                timestamp: new Date().toISOString()
+                              };
+                              setDbMemories([newMemory, ...dbMemories]);
+                              setShowAddMemoriesPrompt(null);
+                              setMemoryUploadPreview(null);
+                              setMemoryUploadCaption("");
+                              triggerToast(`✨ Voted stamp reaction saved successfully on our shared memory wall!`);
+                            }}
+                            className="bg-zinc-950 border border-zinc-850 hover:border-zinc-700 p-2 rounded-xl hover:scale-105 active:scale-95 transition-all text-xs cursor-pointer flex flex-col items-center flex-1 text-center"
+                            title={stamp.label}
+                          >
+                            <span className="text-sm select-none">{stamp.emoji}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Custom caption entry */}
+                  <div className="space-y-1.5 text-left">
+                    <label className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wide block">Lovely Caption</label>
+                    <textarea
+                      value={memoryUploadCaption}
+                      onChange={(e) => setMemoryUploadCaption(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-805 rounded-xl p-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#ff8b66]/40 min-h-[50px] resize-none"
+                      placeholder="Add an emotional memory note..."
+                    />
+                  </div>
+
+                  {/* Caption Presets Selection Chips (UX Rule 24) */}
+                  <div className="space-y-1.5">
+                    <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-wide block text-left">Tap to quick-fill (effortless):</span>
+                    <div className="flex flex-wrap gap-1.5 max-h-[75px] overflow-y-auto">
+                      {presets.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setMemoryUploadCaption(preset)}
+                          className={`text-[9px] px-2.5 py-1 rounded-full border transition cursor-pointer text-left ${memoryUploadCaption === preset
+                            ? "bg-[#ff8b66]/10 border-[#ff8b66] text-[#ff8b66]"
+                            : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white"
+                            }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* External share template suggestions */}
+                <div className="bg-[#ff8b66]/5 border border-[#ff8b66]/10 p-3 rounded-2xl space-y-1 text-left">
+                  <span className="text-[8px] font-mono text-[#ff8b66] uppercase font-bold tracking-widest block">📲 EXTERNAL SHARING INTEGRATION</span>
+                  <p className="text-[9px] text-zinc-400 leading-relaxed">
+                    Instantly package today's memories into story-style recap templates suited perfectly for Instagram and WhatsApp circles!
+                  </p>
+                  <div className="flex gap-2 pt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerToast("📸 Story Recap copied! Instagram story template opened in simulation.");
+                      }}
+                      className="flex-1 bg-zinc-900 hover:bg-zinc-850 text-zinc-300 text-[8.5px] font-mono py-1.5 px-2 rounded-lg border border-zinc-800 transition cursor-pointer"
+                    >
+                      Instagram Story
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerToast("💬 Share link copied! Ready to push directly into WhatsApp Chat.");
+                      }}
+                      className="flex-1 bg-zinc-900 hover:bg-zinc-850 text-zinc-350 text-[8.5px] font-mono py-1.5 px-2 rounded-lg border border-zinc-800 transition cursor-pointer"
+                    >
+                      WhatsApp Group
+                    </button>
+                  </div>
+                </div>
+
+                {/* Modal actions */}
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddMemoriesPrompt(null);
+                      setMemoryUploadPreview(null);
+                      setMemoryUploadCaption("");
+                    }}
+                    className="flex-1 py-3 bg-zinc-950 hover:bg-zinc-900 border border-zinc-850 rounded-xl text-[10px] font-mono uppercase text-zinc-400 hover:text-white transition cursor-pointer"
+                  >
+                    Skip & Quiet
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newMemory: DbMemory = {
+                        memory_id: `M_${Date.now()}`,
+                        plan_id: plan.id,
+                        uploaded_by: activeUserId,
+                        media_url: memoryUploadPreview || "https://images.unsplash.com/photo-1543007630-9710e4a00a20?w=600&auto=format&fit=crop&q=60",
+                        caption: memoryUploadCaption.trim() || presets[0] || "Remember when we did this? ♥",
+                        timestamp: new Date().toISOString()
+                      };
+                      setDbMemories([newMemory, ...dbMemories]);
+                      setShowAddMemoriesPrompt(null);
+                      setMemoryUploadPreview(null);
+                      setMemoryUploadCaption("");
+                      triggerToast("✨ Spontaneous memory card saved! Captured for our circles' history.");
+                    }}
+                    className="flex-1 py-3 bg-gradient-to-r from-[#ff8b66] to-[#ff5d41] hover:opacity-95 text-white font-black rounded-xl text-[10px] font-mono uppercase tracking-wider shadow-md transition cursor-pointer"
+                  >
+                    Publish Memory
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* ---------------- 🎬 IMMERSIVE FIGMA FULLSCREEN STORY RECAP MODAL ---------------- */}
+      <AnimatePresence>
+        {activeStoryRecap && (() => {
+          const storyMemories = dbMemories.filter(m => m.plan_id === activeStoryRecap.id);
+
+          const activeSlides = storyMemories.length ? storyMemories.map(m => ({
+            image: m.media_url,
+            caption: m.caption,
+            footerText: m.uploaded_by === activeUserId ? "Shared by You (Attendee)" : `Shared by ${dbUsers.find(u => u.user_id === m.uploaded_by)?.full_name || "Participant"}`,
+            isMyMem: m.uploaded_by === activeUserId,
+            originalMemory: m
+          })) : [
+            {
+              image: activeStoryRecap.coverImage,
+              caption: `⚡ Spontaneous "${activeStoryRecap.title}" launched successfully!`,
+              footerText: "Frictionless Planless Spark • Real-Life Meetup Complete",
+              isMyMem: false
+            },
+            {
+              image: "https://images.unsplash.com/photo-1543007630-9710e4a00a20?auto=format&fit=crop&q=80&w=400",
+              caption: `👥 Coordinated and spent real-time with ${activeStoryRecap.joinedUsers.slice(0, 3).map(u => u.name.split(" ")[0]).join(", ")} & more.`,
+              footerText: "Circle Experience History • Saved to profiles contextual",
+              isMyMem: false
+            },
+            {
+              image: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80&w=400",
+              caption: `🎉 Visual memories preserved. Experience rated and archived into the visual history ledger!`,
+              footerText: `Nostalgic Moments Tracked • ${activeStoryRecap.location}`,
+              isMyMem: false
+            }
+          ];
+
+          const currentSlideIndex = Math.min(storyIndex, activeSlides.length - 1);
+          const currentSlide = activeSlides[currentSlideIndex] || activeSlides[0];
+
+          return (
+            <div className="fixed inset-0 bg-black z-50 flex flex-col justify-between p-4 overflow-hidden animate-fade-in font-sans">
+
+              {/* Top Slider indicators (Progress ticks representing auto transition) */}
+              <div className="w-full flex items-center gap-1 mt-2 z-20 select-none">
+                {activeSlides.map((slide, sIdx) => (
+                  <div key={sIdx} className="h-1 flex-1 bg-zinc-800 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full bg-gradient-to-r from-[#ff8b66] to-[#ff5d41] transition-all duration-[4500ms] ease-linear ${sIdx < currentSlideIndex
+                        ? "w-full"
+                        : sIdx === currentSlideIndex && storyPlaying
+                          ? "w-full"
+                          : "w-0"
+                        }`}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Top Row: User details & Controls */}
+              <div className="flex items-center justify-between mt-3 px-1 z-20">
+                <div className="flex items-center gap-2.5 text-left">
+                  <div className="w-9 h-9 rounded-full overflow-hidden border border-[#ff8b66]/30 bg-zinc-900">
+                    <img src={activeStoryRecap.coverImage} className="w-full h-full object-cover" alt="plan" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-sans font-bold text-zinc-100 uppercase tracking-wide leading-tight flex items-center gap-1.5">
+                      <span>{activeStoryRecap.title}</span>
+                      <span className="text-[8px] font-mono text-emerald-400 bg-emerald-950/60 px-1 py-0.5 rounded border border-emerald-950">RECAP</span>
+                    </h4>
+                    <span className="text-[10px] text-zinc-400 font-sans block leading-none mt-0.5">
+                      {activeStoryRecap.date} • {activeStoryRecap.location}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Pause/Play and Close */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setStoryPlaying(!storyPlaying)}
+                    className="w-8 h-8 rounded-full bg-black/60 border border-zinc-850 flex items-center justify-center text-xs text-zinc-350 hover:text-white"
+                  >
+                    {storyPlaying ? "⏸" : "▶"}
+                  </button>
+                  <button
+                    onClick={() => setActiveStoryRecap(null)}
+                    className="px-3.5 py-1.5 rounded-full bg-black/60 border border-zinc-850 text-[10.5px] uppercase font-mono text-zinc-300 hover:text-white"
+                  >
+                    ✓ Done
+                  </button>
+                </div>
+              </div>
+
+              {/* Center Core: Visual Player Stage */}
+              <div className="flex-1 my-4 flex items-center justify-center relative select-none">
+
+                {/* Background blurred halo corresponding to aesthetic Instagram layouts */}
+                <div className="absolute inset-0 w-full h-full bg-zinc-950/90 filter blur-2xl z-0 scale-95 opacity-50">
+                  <img src={currentSlide.image} className="w-full h-full object-cover" alt="blur halo" />
+                </div>
+
+                {/* Left/Right manual click zones to navigate instantly */}
+                <div
+                  onClick={() => {
+                    if (currentSlideIndex > 0) {
+                      setStoryIndex(currentSlideIndex - 1);
+                    } else {
+                      setStoryIndex(activeSlides.length - 1);
+                    }
+                  }}
+                  className="absolute left-0 top-0 bottom-0 w-1/4 z-10 cursor-pointer"
+                />
+                <div
+                  onClick={() => {
+                    if (currentSlideIndex < activeSlides.length - 1) {
+                      setStoryIndex(currentSlideIndex + 1);
+                    } else {
+                      setStoryIndex(0);
+                    }
+                  }}
+                  className="absolute right-0 top-0 bottom-0 w-1/4 z-10 cursor-pointer"
+                />
+
+                {/* Styled round card conforming to "Opal-inspired minimal layouts" */}
+                <div className="w-full max-w-sm h-full max-h-[62vh] rounded-[2.2rem] overflow-hidden border border-zinc-900 bg-zinc-950 relative flex flex-col justify-end p-5 shadow-2xl z-5">
+                  <img
+                    src={currentSlide.image}
+                    className="absolute inset-0 w-full h-full object-cover z-0 transition-all duration-700"
+                    alt="active story"
+                  />
+
+                  {/* Vertical bottom gradient overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/100 via-black/45 to-zinc-950/20 z-0" />
+
+                  {/* Top Attendees initials overlay inside layout */}
+                  <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full border border-zinc-850 flex items-center gap-1 text-[9.1px] font-mono text-zinc-300 z-10 select-none">
+                    <span className="flex -space-x-1 pr-1">
+                      {activeStoryRecap.joinedUsers.map((u, ui) => (
+                        <div key={ui} className="w-4 h-4 rounded-full bg-zinc-850 border border-black flex items-center justify-center text-[7px] font-sans font-black">
+                          {getInitialsAvatar(u.name)}
+                        </div>
+                      ))}
+                    </span>
+                    <span>{activeStoryRecap.joinedUsers.length} in meetup</span>
+                  </div>
+
+                  {/* Audio Speaker Icon and Wave label */}
+                  <div className="absolute top-4 right-4 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full border border-zinc-850 flex items-center gap-1.5 text-[8.5px] font-mono text-emerald-400 z-10 select-none animate-pulse">
+                    <span>🔊 ♫ ambient.mix</span>
+                  </div>
+
+                  {/* Core details Column */}
+                  <div className="relative z-10 text-left space-y-2">
+                    <span className="text-[9.5px] text-[#ff8b66] font-mono uppercase tracking-widest font-black block">
+                      {currentSlide.footerText}
+                    </span>
+
+                    <p className="text-sm font-sans font-extrabold text-zinc-100 tracking-wide leading-snug uppercase">
+                      "{currentSlide.caption}"
+                    </p>
+
+                    {/* Step 7: Live Customize inline trigger inside Story */}
+                    {currentSlide.isMyMem && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStoryPlaying(false);
+                          setEditingMemory(currentSlide.originalMemory);
+                          setEditedCaption(currentSlide.originalMemory.caption || "");
+                        }}
+                        className="text-[9px] font-mono bg-black/60 border border-[#ff8b66]/30 text-[#ff8b66] hover:bg-[#ff8b66] hover:text-black px-2.5 py-1.5 rounded-lg font-black transition cursor-pointer"
+                      >
+                        ✏️ LIVE PREVIEW & CUSTOMIZE
+                      </button>
+                    )}
+
+                    <div className="flex items-center justify-between text-[10px] text-zinc-400 pt-1.5 border-t border-zinc-900/60 font-mono">
+                      <span>{activeStoryRecap.title} • {activeStoryRecap.category?.toUpperCase()}</span>
+                      <span className="bg-zinc-900 px-2 py-0.5 rounded text-zinc-500 uppercase">Step 6/11 Done</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tap Emojis to Cast (Simulated Emotional Lightweight reactions) */}
+              <div className="bg-zinc-950/80 border border-zinc-900 p-4 rounded-3xl space-y-3 mx-auto w-full max-w-sm z-20">
+                <span className="text-[8.5px] text-zinc-500 uppercase font-mono tracking-widest block text-center font-bold">
+                  ⚡ QUICK TAP REACTIONS (NOUGHT ADDICTIVE FEEDS)
+                </span>
+                <div className="flex justify-around">
+                  {[
+                    { icon: "❤️", label: "love", toastMsg: "Shared heart reaction on story! ❤️" },
+                    { icon: "🔥", label: "fire", toastMsg: "Casted fire reaction! It's active. 🔥" },
+                    { icon: "🍺", label: "cheers", toastMsg: "Cheers reactive stamp casted! 🍻" },
+                    { icon: "👑", label: "mvp", toastMsg: "MVP Crown shared! 👑" },
+                    { icon: "🙌", label: "salute", toastMsg: "High five shared! 🙌" }
+                  ].map((emoji) => (
+                    <button
+                      key={emoji.label}
+                      type="button"
+                      onClick={() => {
+                        triggerToast(emoji.toastMsg);
+                      }}
+                      className="text-lg p-2.5 bg-zinc-900/40 border border-zinc-900/50 hover:bg-zinc-800 rounded-2xl hover:scale-125 transition-all cursor-pointer"
+                    >
+                      {emoji.icon}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Step 8: INSTANT SHARE YOUR STORY TO POPULAR PLATFORMS */}
+              <div className="pt-3 pb-2 z-20 text-center space-y-2 max-w-sm mx-auto w-full">
+                <span className="text-[9px] text-zinc-500 uppercase font-mono tracking-wider block font-bold">
+                  🚀 SHARE YOUR IMMERSIVE STORY RECAP
+                </span>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerToast("✨ story recap copied! Launched Instagram Stories 📸");
+                    }}
+                    className="flex flex-col items-center justify-center p-2 rounded-xl bg-zinc-950 border border-zinc-900 hover:border-[#f77737]/45 hover:bg-zinc-900/40 select-none cursor-pointer"
+                  >
+                    <span className="text-xs">📸</span>
+                    <span className="text-[8px] font-mono text-zinc-300 mt-1">instagram</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerToast("✨ story recap link prepared! Launched WhatsApp 💬");
+                    }}
+                    className="flex flex-col items-center justify-center p-2 rounded-xl bg-zinc-950 border border-zinc-900 hover:border-emerald-500/45 hover:bg-zinc-900/40 select-none cursor-pointer"
+                  >
+                    <span className="text-xs">💬</span>
+                    <span className="text-[8px] font-mono text-zinc-300 mt-1">whatsapp</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerToast("✨ story snap generated! Launched Snapchat 👻");
+                    }}
+                    className="flex flex-col items-center justify-center p-2 rounded-xl bg-zinc-950 border border-zinc-900 hover:border-yellow-500/45 hover:bg-zinc-900/40 select-none cursor-pointer"
+                  >
+                    <span className="text-xs">👻</span>
+                    <span className="text-[8px] font-mono text-zinc-300 mt-1">snapchat</span>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* ---------------- 💾 RELATIONAL DATABASE EXPLORER & SCHEMA DRAWER ---------------- */}
+      {showDbExplorer && (
+        <div id="db_explorer_slide_panel" className="absolute inset-0 bg-[#0C0C0E]/99 z-45 flex flex-col animate-fade-in text-zinc-100 font-sans">
+          {/* Header */}
+          <div className="p-4 flex items-center justify-between border-b border-zinc-900 bg-zinc-950 shrink-0">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-brand-orange" />
+              <div>
+                <h3 className="text-xs font-mono font-bold text-zinc-200">PLANLESS_SYSTEM_DB</h3>
+                <span className="text-[8px] font-mono text-zinc-500 uppercase">Live Relational State Machine (V1.0)</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowDbExplorer(false)}
+              className="text-xs text-zinc-400 hover:text-white px-2 py-1 rounded bg-zinc-900 border border-zinc-850"
+            >
+              Exit Terminal
+            </button>
+          </div>
+
+          {/* Sub-tab navigation */}
+          <div className="flex border-b border-zinc-900/60 bg-zinc-950 shrink-0 overflow-x-auto no-scrollbar">
+            <button
+              onClick={() => setSelectedDbTable("users")}
+              className={`flex-1 min-w-[70px] py-3 text-center text-[9px] font-mono tracking-tighter uppercase relative ${selectedDbTable === "users" ? "text-brand-orange bg-zinc-900/40" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+            >
+              USERS ({dbUsers.length})
+              {selectedDbTable === "users" && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand-orange" />}
+            </button>
+            <button
+              onClick={() => setSelectedDbTable("circles")}
+              className={`flex-1 min-w-[70px] py-3 text-center text-[9px] font-mono tracking-tighter uppercase relative ${selectedDbTable === "circles" ? "text-brand-orange bg-zinc-900/40" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+            >
+              CIRCLES ({dbCircles.length})
+              {selectedDbTable === "circles" && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand-orange" />}
+            </button>
+            <button
+              onClick={() => setSelectedDbTable("circle_members")}
+              className={`flex-1 min-w-[80px] py-3 text-center text-[9px] font-mono tracking-tighter uppercase relative ${selectedDbTable === "circle_members" ? "text-brand-orange bg-zinc-900/40" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+            >
+              MEMBERS ({dbCircleMembers.length})
+              {selectedDbTable === "circle_members" && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand-orange" />}
+            </button>
+            <button
+              onClick={() => setSelectedDbTable("plans")}
+              className={`flex-1 min-w-[70px] py-3 text-center text-[9px] font-mono tracking-tighter uppercase relative ${selectedDbTable === "plans" ? "text-brand-orange bg-zinc-900/40" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+            >
+              PLANS ({dbPlans.length})
+              {selectedDbTable === "plans" && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand-orange" />}
+            </button>
+            <button
+              onClick={() => setSelectedDbTable("plan_participants")}
+              className={`flex-1 min-w-[80px] py-3 text-center text-[9px] font-mono tracking-tighter uppercase relative ${selectedDbTable === "plan_participants" ? "text-brand-orange bg-zinc-900/40" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+            >
+              ATTEND ({dbPlanParticipants.length})
+              {selectedDbTable === "plan_participants" && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand-orange" />}
+            </button>
+            <button
+              onClick={() => setSelectedDbTable("transactions")}
+              className={`flex-1 min-w-[70px] py-3 text-center text-[9px] font-mono tracking-tighter uppercase relative ${selectedDbTable === "transactions" ? "text-brand-orange bg-zinc-900/40" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+            >
+              TXS ({dbTransactions.length})
+              {selectedDbTable === "transactions" && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand-orange" />}
+            </button>
+            <button
+              onClick={() => setSelectedDbTable("memories")}
+              className={`flex-1 min-w-[70px] py-3 text-center text-[9px] font-mono tracking-tighter uppercase relative ${selectedDbTable === "memories" ? "text-brand-orange bg-zinc-900/40" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+            >
+              MEMS ({dbMemories.length})
+              {selectedDbTable === "memories" && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand-orange" />}
+            </button>
+          </div>
+
+          {/* Interactive SQL Console & Layout */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-[11px] no-scrollbar">
+
+            {/* Supabase Core Integration Status Widget */}
+            <div className={`p-4 rounded-2xl border ${supabaseSyncStatus === "connected"
+              ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-300"
+              : supabaseSyncStatus === "schema_missing"
+                ? "bg-amber-500/5 border-amber-500/20 text-amber-300"
+                : supabaseSyncStatus === "unconfigured"
+                  ? "bg-zinc-900 border-zinc-850 text-zinc-300"
+                  : "bg-[#ff8b66]/5 border-[#ff8b66]/20 text-[#ff8b66]"
+              } space-y-3`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Database className={`w-3.5 h-3.5 ${supabaseSyncStatus === "connected"
+                    ? "text-emerald-400 animate-pulse"
+                    : supabaseSyncStatus === "schema_missing"
+                      ? "text-amber-400 animate-pulse"
+                      : "text-zinc-500"
+                    }`} />
+                  <span className="font-bold tracking-tight uppercase text-xs font-sans">
+                    {supabaseSyncStatus === "connected" && "Supabase Node Sync Complete"}
+                    {supabaseSyncStatus === "schema_missing" && "Supabase Synced (Tables Missing)"}
+                    {supabaseSyncStatus === "unconfigured" && "Supabase Proxy Server Inactive"}
+                    {supabaseSyncStatus === "loading" && "Resolving cloud state machine..."}
+                    {supabaseSyncStatus === "error" && "Supabase Gateway Standby State"}
+                  </span>
+                </div>
+                <span className={`text-[8px] font-mono font-bold uppercase px-2 py-0.5 rounded border ${supabaseSyncStatus === "connected"
+                  ? "bg-emerald-950/80 text-emerald-450 border-emerald-900/60"
+                  : supabaseSyncStatus === "schema_missing"
+                    ? "bg-amber-950/85 text-amber-450 border-amber-900/60"
+                    : "bg-zinc-950 text-zinc-500 border-zinc-900"
+                  }`}>
+                  {supabaseSyncStatus.toUpperCase()}
+                </span>
+              </div>
+
+              {supabaseSyncStatus === "connected" && (
+                <p className="text-[10.5px] leading-relaxed text-zinc-400 font-sans">
+                  The Planless state machine is running fully over your connected cloud database! All plan generations, circle memberships, co-pay split transactions, and check-ins are live-replicated onto your cloud host: <code className="text-zinc-200 select-all font-mono font-bold text-[9px] bg-zinc-950 px-1 py-0.5 rounded">{supabaseConfig.supabase_url}</code>.
+                </p>
+              )}
+
+              {supabaseSyncStatus === "schema_missing" && (
+                <div className="space-y-2.5 font-sans">
+                  <p className="text-[10.5px] leading-relaxed text-zinc-400">
+                    Your Supabase keys are recognized by the Express proxy, but the tables do not exist in your Supabase project yet. Copy this SQL script and execute it in your <a href="https://supabase.com/dashboard/project/yuuzenyjxxuqahosflob/sql" target="_blank" rel="noreferrer" className="text-brand-orange hover:underline font-bold">Supabase SQL Editor</a>. Once completed, re-open this dashboard to auto-populate all canonical datasets!
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(CANONICAL_SQL_SCHEMA);
+                        triggerToast("📋 SQL Schema copied to clipboard!");
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-black rounded-lg text-[9.5px] font-bold hover:bg-amber-400 transition"
+                    >
+                      <FileCode className="w-3 H-3" />
+                      Copy SQL Schema
+                    </button>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-lg text-[9.5px] font-bold hover:bg-zinc-850 transition"
+                    >
+                      Verify & Synchronize
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {supabaseSyncStatus === "unconfigured" && (
+                <p className="text-[10.5px] leading-relaxed text-zinc-500 font-sans">
+                  Please configure your Supabase variables keys securely in your workspace environment setup: <code className="text-zinc-300 bg-zinc-950 px-1 rounded font-mono">SUPABASE_URL</code> and <code className="text-zinc-300 bg-zinc-950 px-1 rounded font-mono">SUPABASE_KEY</code>.
+                </p>
+              )}
+
+              {supabaseSyncStatus === "error" && (
+                <p className="text-[10.5px] leading-relaxed text-zinc-500 font-sans">
+                  Unable to connect to Supabase backend API. Check internet connectivity or try again. Falling back to reliable offline browser database.
+                </p>
+              )}
+            </div>
+
+            {/* Schema Description Cards */}
+            <div className="bg-zinc-900/50 p-3.5 rounded-2xl border border-zinc-900 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <FileCode className="w-3.5 h-3.5 text-brand-peach" />
+                <span className="font-semibold text-zinc-300 uppercase select-none font-sans">Schema Definition Matrix</span>
+              </div>
+              {selectedDbTable === "users" && (
+                <div className="space-y-1 text-zinc-400">
+                  <p className="text-zinc-200 font-bold">TABLE: USERS</p>
+                  <p>• <b className="text-zinc-300">user_id:</b> String (PK) — Unique user handle identifier</p>
+                  <p>• <b className="text-zinc-300">full_name:</b> String — Full human name</p>
+                  <p>• <b className="text-zinc-300">phone_number:</b> String — Canonical mobile contact key</p>
+                  <p>• <b className="text-zinc-300">profile_photo:</b> String — Active profile picture / avatar url</p>
+                  <p>• <b className="text-zinc-300">wallet_balance:</b> Float — Persistent digital wallet cash (₹)</p>
+                </div>
+              )}
+              {selectedDbTable === "circles" && (
+                <div className="space-y-1 text-zinc-400">
+                  <p className="text-zinc-200 font-bold">TABLE: CIRCLES</p>
+                  <p>• <b className="text-zinc-300">circle_id:</b> String (PK) — Unique circle identification ID</p>
+                  <p>• <b className="text-zinc-300">name:</b> String — Group public name (e.g. Navkis Matchday)</p>
+                  <p>• <b className="text-zinc-300">description:</b> String — Focus focus statement</p>
+                  <p>• <b className="text-zinc-300">category:</b> String — Primary activity tag</p>
+                  <p>• <b className="text-zinc-300">created_by:</b> String (FK) — Owner reference handles</p>
+                  <p>• <b className="text-zinc-300">cover_image:</b> String — Active cover imagery logo hook</p>
+                </div>
+              )}
+              {selectedDbTable === "circle_members" && (
+                <div className="space-y-1 text-zinc-400">
+                  <p className="text-zinc-200 font-bold">TABLE: CIRCLE_MEMBERS</p>
+                  <p>• <b className="text-zinc-300">circle_member_id:</b> String (PK) — Row unique ID</p>
+                  <p>• <b className="text-zinc-300">circle_id:</b> String (FK) — Reference to CIRCLES</p>
+                  <p>• <b className="text-zinc-300">user_id:</b> String (FK) — Reference contexts to USERS</p>
+                  <p>• <b className="text-zinc-300">role:</b> "admin" | "member" — Operational role authority</p>
+                </div>
+              )}
+              {selectedDbTable === "plans" && (
+                <div className="space-y-1 text-zinc-400">
+                  <p className="text-zinc-200 font-bold">TABLE: PLANS (Central Object Schema)</p>
+                  <p>• <b className="text-zinc-300">plan_id:</b> String (PK) — Unique spontaneous plan key</p>
+                  <p>• <b className="text-zinc-300">title:</b> String — Connection title (always capitalized uppercase)</p>
+                  <p>• <b className="text-zinc-300">created_by:</b> String (FK) — Creator user references handles</p>
+                  <p>• <b className="text-zinc-300">location:</b> String — Host field/cafe coordinates physical text</p>
+                  <p>• <b className="text-zinc-300">activity_type:</b> "movies" | "sports" | "restaurants" | "custom"</p>
+                  <p>• <b className="text-zinc-300">split_amount:</b> Float — Pre-allocated expenses amount (₹)</p>
+                </div>
+              )}
+              {selectedDbTable === "plan_participants" && (
+                <div className="space-y-1 text-zinc-400">
+                  <p className="text-zinc-200 font-bold">TABLE: PLAN_PARTICIPANTS</p>
+                  <p>• <b className="text-zinc-300">participant_id:</b> String (PK) — Row unique ID</p>
+                  <p>• <b className="text-zinc-300">plan_id:</b> String (FK) — Joined PLANS reference key</p>
+                  <p>• <b className="text-zinc-300">user_id:</b> String (FK) — Attending USERS reference key</p>
+                  <p>• <b className="text-zinc-300">status:</b> "new" | "going" | "waitlist" | "passed"</p>
+                  <p>• <b className="text-zinc-300">payment_status:</b> "paid" | "unpaid"</p>
+                </div>
+              )}
+              {selectedDbTable === "transactions" && (
+                <div className="space-y-1 text-zinc-400">
+                  <p className="text-zinc-200 font-bold">TABLE: TRANSACTIONS (Wallet & Expense Ledger)</p>
+                  <p>• <b className="text-zinc-300">transaction_id:</b> String (PK) — Audit security signature</p>
+                  <p>• <b className="text-zinc-300">sender_id:</b> String — Originating player handle (or UPI)</p>
+                  <p>• <b className="text-zinc-300">receiver_id:</b> String — Recipient player handle (or UPI)</p>
+                  <p>• <b className="text-zinc-300">amount:</b> Float — Cash amount in Rupees</p>
+                  <p>• <b className="text-zinc-300">transaction_type:</b> "deposit" | "split_payment" | "settlement"</p>
+                </div>
+              )}
+              {selectedDbTable === "memories" && (
+                <div className="space-y-1 text-zinc-400">
+                  <p className="text-zinc-200 font-bold">TABLE: MEMORIES (Post-Coordination Hub)</p>
+                  <p>• <b className="text-zinc-300">memory_id:</b> String (PK) — Unique photograph key</p>
+                  <p>• <b className="text-zinc-300">plan_id:</b> String (FK) — Connection PLANS reference key</p>
+                  <p>• <b className="text-zinc-300">uploaded_by:</b> String (FK) — References contributing USERS</p>
+                  <p>• <b className="text-zinc-300">media_url:</b> String — Image Base64 / Unsplash visual link</p>
+                  <p>• <b className="text-zinc-300">caption:</b> String — Emotion statement / context</p>
+                </div>
+              )}
+            </div>
+
+            {/* Live Rows Monitor Console */}
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[10px] text-zinc-500 font-mono select-none">SELECT * FROM {selectedDbTable.toUpperCase()} IN_MEMORY_STORE:</span>
+              <div className="rounded-2xl border border-zinc-900 bg-zinc-950 p-4 max-h-[340px] overflow-y-auto no-scrollbar pre-wrap text-brand-peach/90 select-all font-mono text-[10px] leading-relaxed">
+                {selectedDbTable === "users" && JSON.stringify(dbUsers, null, 2)}
+                {selectedDbTable === "circles" && JSON.stringify(dbCircles, null, 2)}
+                {selectedDbTable === "circle_members" && JSON.stringify(dbCircleMembers, null, 2)}
+                {selectedDbTable === "plans" && JSON.stringify(dbPlans, null, 2)}
+                {selectedDbTable === "plan_participants" && JSON.stringify(dbPlanParticipants, null, 2)}
+                {selectedDbTable === "transactions" && JSON.stringify(dbTransactions, null, 2)}
+                {selectedDbTable === "memories" && JSON.stringify(dbMemories, null, 2)}
+              </div>
+            </div>
+
+            {/* Relationship Status Summary Widget */}
+            <div className="rounded-2xl bg-zinc-900 border border-zinc-900 p-4 space-y-2 select-all">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-300 font-bold uppercase select-none text-[9px] tracking-wide font-sans">Database Integrity Audit</span>
+                <span className="bg-emerald-950 text-emerald-450 border border-emerald-900/60 px-2 py-0.5 rounded text-[8px] font-sans">STABLE (OK)</span>
+              </div>
+              <p className="text-zinc-400 text-[10px] leading-relaxed font-sans">
+                Active context mapping connects {dbUsers.length} simulated users, {dbCircleMembers.length} multi-member relationships and {dbPlanParticipants.length} distinct check-in confirmations. All key bindings and constraints are automatically validated. Take spontaneous actions in the app and reopen this panel to watch rows append instantaneously.
+              </p>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ---------------- NOTIFICATIONS TRAY ---------------- */}
+      {showNotifications && (
+        <div id="notifications_tray_overlay" className="absolute inset-0 bg-[#0C0C0E]/98 z-40 flex flex-col animate-fade-in">
+          <div className="p-4 flex items-center justify-between border-b border-zinc-900 bg-zinc-950 shrink-0">
+            <h3 className="text-sm font-display font-semibold text-zinc-200">Notifications</h3>
+            <button
+              onClick={() => setShowNotifications(false)}
+              className="text-xs text-zinc-500 hover:text-white"
+            >
+              Close
+            </button>
+          </div>
+
+          {/* Filters for notifications */}
+          <div className="px-4 py-2 border-b border-zinc-900 flex gap-2 overflow-x-auto no-scrollbar bg-zinc-950">
+            {[
+              { id: "all", name: "All" },
+              { id: "plans", name: "Plans" },
+              { id: "payments", name: "Payments" },
+              { id: "activity", name: "Activity" }
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setNotificationFilter(f.id as any)}
+                className={`px-3 py-1 text-[11px] font-medium border rounded-full transition-all ${notificationFilter === f.id
+                  ? "bg-[#ff5e3b] text-white border-[#ff5e3b]"
+                  : "bg-zinc-900 border-zinc-850 text-zinc-400"
+                  }`}
+              >
+                {f.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-3">
+            {filteredNotifications.length === 0 ? (
+              <div className="py-16 text-center text-xs text-zinc-500">
+                You're all caught up! No recent social activities.
+              </div>
+            ) : (
+              filteredNotifications.map(notif => (
+                <div
+                  key={notif.id}
+                  onClick={() => {
+                    if (notif.planId) {
+                      const targetPlan = plans.find(p => p.id === notif.planId);
+                      if (targetPlan) {
+                        setSelectedPlan(targetPlan);
+                        setShowNotifications(false);
+                        triggerToast(`Loading Active Plan: "${targetPlan.title}" ⚡`);
+                      }
+                    }
+                  }}
+                  className={`p-3.5 border rounded-2xl space-y-2.5 transition-all ${notif.planId ? "cursor-pointer hover:border-zinc-750" : ""
+                    } ${notif.settled
+                      ? "bg-zinc-900/40 border-zinc-900 opacity-60"
+                      : notif.type === "payment"
+                        ? "bg-gradient-to-r from-zinc-900 to-[#ff5e3a]/5 border-zinc-850"
+                        : "bg-zinc-900 border-zinc-850"
+                    }`}
+                >
+                  <div className="flex items-start justify-between gap-3 text-xs">
+                    <div className="flex gap-2">
+                      <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${notif.settled
+                        ? "bg-zinc-650"
+                        : notif.type === "payment"
+                          ? "bg-[#ff5e3a]"
+                          : notif.type === "invitation"
+                            ? "bg-[#ff8b66]"
+                            : "bg-zinc-400"
+                        }`} />
+                      <p className="text-zinc-205 font-medium leading-normal">{notif.title}</p>
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-500 shrink-0">{notif.relativeTime}</span>
+                  </div>
+
+                  {/* Actions buttons inside notifications */}
+                  {!notif.settled && notif.actionText && (
+                    <div className="flex gap-2 pl-4">
+                      {notif.type === "payment" ? (
+                        <button
+                          onClick={() => handleSettleOverdue(notif)}
+                          className="bg-brand-orange text-white text-[10px] font-medium uppercase font-mono px-3 py-1.5 rounded"
+                        >
+                          Settle ₹{notif.cost} now
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleAcceptInviteFromNotif(notif)}
+                          className="bg-[#ff8b66] text-black text-[10px] font-semibold tracking-wider uppercase px-3 py-1.5 rounded"
+                        >
+                          Accept
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {notif.settled && (
+                    <div className="text-[10px] font-mono text-emerald-400 pl-4">
+                      ✓ Settled & Handled
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---------------- DEPOSIT CASH SHEET OVERLAY ---------------- */}
+      {showDepositModal && (
+        <div id="add_money_modal_backdrop" className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end justify-center animate-fade-in">
+          <form
+            onSubmit={handleDepositMoney}
+            className="w-full bg-[#121214] border-t border-zinc-850 rounded-t-[2.5rem] p-6 pb-8 space-y-4 animate-slide-up"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-display font-semibold text-zinc-400">ADD CASH (UPI SIMULATOR)</span>
+              <button
+                type="button"
+                onClick={() => setShowDepositModal(false)}
+                className="text-xs text-zinc-500 hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+
+            <div className="space-y-1 text-center py-2">
+              <span className="text-[10px] text-zinc-500 font-mono">DEPOSIT QUANTITY (INR)</span>
+              <div className="flex items-center justify-center gap-1">
+                <span className="text-2xl font-light text-zinc-450">₹</span>
+                <input
+                  id="deposit_amount_field"
+                  type="number"
+                  placeholder="500"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
+                  className="bg-transparent text-white border-b border-zinc-800 focus:border-brand-peach focus:outline-none text-2xl font-semibold font-mono w-40 text-center"
+                  autoFocus
+                  required
+                />
+              </div>
+            </div>
+
+            {/* Quick selectors prefill values */}
+            <div className="flex justify-center gap-2 pb-2">
+              {[200, 500, 1000, 2000].map((val) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setDepositAmount(val.toString())}
+                  className="bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-[11px] font-mono px-3 py-1 rounded-full text-zinc-300"
+                >
+                  +₹{val}
+                </button>
+              ))}
+            </div>
+
+            <button
+              id="deposit_confirm_btn"
+              type="submit"
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-brand-orange to-brand-peach text-white font-semibold text-xs uppercase tracking-wider cursor-pointer"
+            >
+              Deposit Funds
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* 💳 LIGHTWEIGHT PAYMENT CONFIRMATION SCREEN (SOCIAL-FIRST SPLITCheckout) */}
+      <AnimatePresence>
+        {paymentConfirmationPlan && (
+          <motion.div
+            id="payment_slide_sheet"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/92 backdrop-blur-md z-50 flex flex-col justify-end"
+          >
+            <motion.div
+              initial={{ y: 200 }}
+              animate={{ y: 0 }}
+              exit={{ y: 200 }}
+              transition={{ type: "spring", damping: 25, stiffness: 220 }}
+              className="bg-[#0e0e11] border-t border-zinc-850 w-full max-w-md mx-auto rounded-t-[2.5rem] p-6 space-y-5 shadow-2xl pb-8"
+            >
+              <div className="flex items-center justify-between border-b border-zinc-900 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-[#ff8b66]">Spontaneous Split Checkout</span>
+                </div>
+                <button
+                  onClick={() => setPaymentConfirmationPlan(null)}
+                  className="text-[11px] text-zinc-500 hover:text-white"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="text-center space-y-1">
+                  <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest block">PLAN RESERVATION CHECKOUT</span>
+                  <h3 className="text-4xl font-black text-white leading-none">₹{paymentConfirmationPlan.cost}</h3>
+                  <p className="text-xs text-zinc-400">for {paymentConfirmationPlan.title}</p>
+                </div>
+
+                <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 space-y-3">
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-zinc-550 font-sans">Plan Name</span>
+                    <span className="text-zinc-300 font-sans font-bold text-right max-w-[200px] truncate">{paymentConfirmationPlan.title}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-zinc-550 font-sans">Coordinated Venue</span>
+                    <span className="text-zinc-300 font-mono text-right max-w-[200px] truncate">{paymentConfirmationPlan.location}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-zinc-550 font-sans">Amount to Pay</span>
+                    <span className="text-zinc-300 font-mono font-bold">₹{paymentConfirmationPlan.cost.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] border-t border-zinc-850/60 pt-2.5">
+                    <span className="text-zinc-550 font-sans">Current Balance</span>
+                    <span className="text-zinc-300 font-mono font-bold">₹{walletBalance.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-zinc-550 font-sans">Remaining Balance</span>
+                    <span className={`font-mono font-bold ${(walletBalance - paymentConfirmationPlan.cost) < 0 ? "text-red-400 animate-pulse" : "text-[#ff8b66]"}`}>
+                      ₹{(walletBalance - paymentConfirmationPlan.cost).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                {walletBalance < paymentConfirmationPlan.cost && (
+                  <div className="bg-red-500/10 border border-red-500/20 text-red-400 rounded-2xl p-4 text-xs space-y-2">
+                    <p className="font-semibold font-sans">Insufficient Wallet Balance</p>
+                    <p className="text-zinc-400 leading-relaxed font-sans text-[11px]">
+                      You need <b className="text-zinc-150 font-mono">₹{(paymentConfirmationPlan.cost - walletBalance).toFixed(2)}</b> more to split this coordinate. Complete an instant simulator top-up to join.
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2.5 bg-zinc-900/40 border border-zinc-900 rounded-2xl p-3 text-[11px] text-zinc-400">
+                  <div className="flex -space-x-1 shrink-0">
+                    {paymentConfirmationPlan.joinedUsers.slice(0, 3).map((u, i) => (
+                      <img key={i} src={u.avatar} className="w-5 h-5 rounded-full border border-zinc-900 object-cover" alt="friend" />
+                    ))}
+                  </div>
+                  <p className="leading-tight">
+                    You're joining <span className="text-zinc-300 font-semibold">{paymentConfirmationPlan.confirmedCount} peers</span>. Split clears immediately with 0 transaction hassle.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 pt-1">
+                <button
+                  id="pay_and_join_submit"
+                  onClick={() => {
+                    const planToSucceed = paymentConfirmationPlan;
+                    const isInsufficient = walletBalance < planToSucceed.cost;
+
+                    if (isInsufficient) {
+                      const depositAmountVal = planToSucceed.cost - walletBalance;
+                      setWalletBalance(planToSucceed.cost);
+                      const depositTx: Transaction = {
+                        id: `t_instant_topup_${Date.now()}`,
+                        title: "Instant Top Up (Auto-Checkout)",
+                        amount: depositAmountVal,
+                        type: "credit",
+                        timestamp: "Today",
+                        settled: true
+                      };
+                      setTransactions(prev => [depositTx, ...prev]);
+                      setDbUsers(prevUsers => prevUsers.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: planToSucceed.cost } : u));
+
+                      const newDbTx: DbTransaction = {
+                        transaction_id: `T_${Date.now()}_up`,
+                        sender_id: "UPI",
+                        receiver_id: activeUserId,
+                        plan_id: null,
+                        amount: depositAmountVal,
+                        transaction_type: "deposit",
+                        status: "success",
+                        timestamp: "Today"
+                      };
+                      setDbTransactions(prev => [newDbTx, ...prev]);
+                      triggerToast(`Instant top-up of ₹${depositAmountVal.toFixed(0)} succeeded!`);
+                    }
+
+                    handleToggleJoin(planToSucceed);
+                    setPaymentConfirmationPlan(null);
+                    setSelectedPlan(null);
+
+                    // Add Payment Cleared Notification
+                    const newNotification = {
+                      id: `n_pay_${Date.now()}`,
+                      type: "payments" as const,
+                      title: "Split Coordinated Payment Cleared",
+                      message: `Transferred ₹${planToSucceed.cost} split fee for ${planToSucceed.title} turf.`,
+                      relativeTime: "Just Now",
+                      settled: true,
+                      planIdForAction: planToSucceed.id
+                    };
+
+                    // Add Host & Attendee status notification
+                    const joinedNotification = {
+                      id: `n_join_group_${Date.now()}`,
+                      type: "general" as const,
+                      title: `👋 You joined ${planToSucceed.creatorName || "host"}'s plan "${planToSucceed.title}"`,
+                      relativeTime: "Just Now",
+                      settled: true,
+                      planIdForAction: planToSucceed.id
+                    };
+
+                    setNotifications(prev => [newNotification, joinedNotification, ...prev]);
+                    setShowPaymentSuccess(planToSucceed);
+                  }}
+                  className="w-full py-4 rounded-2xl bg-[#ff8b66] hover:bg-[#ff9a7c] text-black font-extrabold text-xs uppercase tracking-widest text-center shadow-md transition-all cursor-pointer"
+                >
+                  {walletBalance < paymentConfirmationPlan.cost ? "Instant Top Up & Confirm Join" : "Pay to Join"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ---------------- 🕊️ Frictionless Spot Reservation Success Overlay Screen ---------------- */}
+      <AnimatePresence>
+        {showPaymentSuccess && (
+          <motion.div
+            id="payment_success_overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-neutral-950/98 backdrop-blur-xl z-50 flex flex-col items-center justify-between p-8 pb-12 text-zinc-100 selection:bg-[#ff8b66]/30 overflow-hidden"
+          >
+            {/* Elegant Top Header with Back Arrow Button */}
+            <div className="w-full flex items-center justify-between pt-4">
+              <button
+                type="button"
+                id="back_arrow_success"
+                onClick={() => {
+                  setShowPaymentSuccess(null);
+                  setActiveTab("home");
+                }}
+                className="p-2 -ml-2 text-zinc-400 hover:text-white hover:bg-zinc-900/40 rounded-full transition-all cursor-pointer flex items-center justify-center active:scale-95"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div className="w-9 h-9" />
+            </div>
+
+            {/* Core Immersive Confirmation (Center) */}
+            <div className="flex-1 flex flex-col items-center justify-center text-center space-y-8 my-auto max-w-sm">
+              <div className="relative">
+                {/* Visual pulse background glow layers */}
+                <motion.div
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: [1, 1.25, 1], opacity: [0.15, 0.4, 0.15] }}
+                  transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
+                  className="absolute -inset-6 rounded-full bg-emerald-500/20 blur-xl"
+                />
+
+                <motion.div
+                  initial={{ scale: 0.5, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ type: "spring", damping: 15, stiffness: 120 }}
+                  className="relative w-24 h-24 rounded-full bg-emerald-500/10 border-2 border-emerald-400/40 flex items-center justify-center shadow-[0_0_35px_rgba(16,185,129,0.25)]"
+                >
+                  <motion.svg
+                    className="w-12 h-12 text-emerald-400 filter drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    initial={{ strokeDashoffset: 35, strokeDasharray: 35 }}
+                    animate={{ strokeDashoffset: 0 }}
+                    transition={{ delay: 0.15, duration: 0.6, ease: "easeOut" }}
+                  >
+                    <motion.path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={3}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </motion.svg>
+                </motion.div>
+              </div>
+
+              <div className="space-y-5 px-2 animate-fade-in">
+                <motion.h3
+                  initial={{ y: 15, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.25, duration: 0.5 }}
+                  className="text-4xl font-display font-black tracking-tight text-white leading-tight drop-shadow-[0_4px_16px_rgba(255,255,255,0.05)]"
+                >
+                  Plan Confirmed
+                </motion.h3>
+
+                <motion.div
+                  initial={{ y: 10, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.35, duration: 0.5 }}
+                  className="text-sm tracking-wide leading-relaxed space-y-2 flex flex-col items-center"
+                >
+                  <span className="text-zinc-400 font-sans">You're officially in for</span>
+                  <span className="text-[#ff8b66] text-xl font-display font-black tracking-tight filter drop-shadow-[0_2px_10px_rgba(255,139,102,0.25)] sm:text-2xl">
+                    {showPaymentSuccess.title}
+                  </span>
+                </motion.div>
+              </div>
+            </div>
+
+            {/* Immersive CTA Area (Bottom) */}
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.45, duration: 0.5 }}
+              className="w-full max-w-xs space-y-4"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPaymentSuccess(null);
+                  setActiveTab("plans");
+                }}
+                className="w-full py-4.5 rounded-full bg-[#ff8b66] hover:bg-[#ff9a7c] text-black font-extrabold text-xs uppercase tracking-[0.2em] transition-all duration-300 cursor-pointer shadow-[0_4px_20px_rgba(255,139,102,0.3)] hover:shadow-[0_6px_25px_rgba(255,139,102,0.45)] hover:scale-[1.02] active:scale-[0.98]"
+              >
+                Go to Plans
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ---------------- ⏳ Frictionless Waitlist Reservation Success Overlay Screen ---------------- */}
+      <AnimatePresence>
+        {showWaitlistSuccess && (
+          <motion.div
+            id="waitlist_success_overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-neutral-950/98 backdrop-blur-xl z-50 flex flex-col items-center justify-between p-8 pb-12 text-zinc-100 selection:bg-amber-500/30 overflow-hidden"
+          >
+            {/* Elegant Top Header with Back Arrow Button */}
+            <div className="w-full flex items-center justify-between pt-4">
+              <button
+                type="button"
+                id="back_arrow_waitlist_success"
+                onClick={() => {
+                  setShowWaitlistSuccess(null);
+                  setActiveTab("home");
+                }}
+                className="p-2 -ml-2 text-zinc-400 hover:text-white hover:bg-zinc-900/40 rounded-full transition-all cursor-pointer flex items-center justify-center active:scale-95"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div className="w-9 h-9" />
+            </div>
+
+            {/* Core Immersive Confirmation (Center) */}
+            <div className="flex-1 flex flex-col items-center justify-center text-center space-y-8 my-auto max-w-sm">
+              <div className="relative">
+                {/* Visual pulse background glow layers (Yellow/Amber) */}
+                <motion.div
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: [1, 1.25, 1], opacity: [0.15, 0.4, 0.15] }}
+                  transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
+                  className="absolute -inset-6 rounded-full bg-amber-500/20 blur-xl"
+                />
+
+                <motion.div
+                  initial={{ scale: 0.5, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ type: "spring", damping: 15, stiffness: 120 }}
+                  className="relative w-24 h-24 rounded-full bg-amber-500/10 border-2 border-amber-400/40 flex items-center justify-center shadow-[0_0_35px_rgba(245,158,11,0.25)]"
+                >
+                  <motion.svg
+                    className="w-12 h-12 text-amber-400 filter drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    initial={{ strokeDashoffset: 35, strokeDasharray: 35 }}
+                    animate={{ strokeDashoffset: 0 }}
+                    transition={{ delay: 0.15, duration: 0.6, ease: "easeOut" }}
+                  >
+                    <motion.path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={3}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </motion.svg>
+                </motion.div>
+              </div>
+
+              <div className="space-y-5 px-2 animate-fade-in">
+                <motion.h3
+                  initial={{ y: 15, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.25, duration: 0.5 }}
+                  className="text-4xl font-display font-black tracking-tight text-white leading-tight drop-shadow-[0_4px_16px_rgba(255,255,255,0.05)]"
+                >
+                  Waitlist Confirmed
+                </motion.h3>
+
+                <motion.div
+                  initial={{ y: 10, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.35, duration: 0.5 }}
+                  className="text-sm tracking-wide leading-relaxed space-y-2 flex flex-col items-center"
+                >
+                  <span className="text-zinc-400 font-sans">You're officially on the waitlist for</span>
+                  <span className="text-amber-400 text-xl font-display font-black tracking-tight filter drop-shadow-[0_2px_10px_rgba(245,158,11,0.25)] sm:text-2xl">
+                    {showWaitlistSuccess.title}
+                  </span>
+                </motion.div>
+              </div>
+            </div>
+
+            {/* Immersive CTA Area (Bottom) */}
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.45, duration: 0.5 }}
+              className="w-full max-w-xs space-y-4"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setShowWaitlistSuccess(null);
+                  setActiveTab("plans");
+                  setPlansFilter("waitlist");
+                }}
+                className="w-full py-4.5 rounded-full bg-amber-500 hover:bg-amber-600 text-black font-extrabold text-xs uppercase tracking-[0.2em] transition-all duration-300 cursor-pointer shadow-[0_4px_20px_rgba(245,158,11,0.3)] hover:shadow-[0_6px_25px_rgba(245,158,11,0.45)] hover:scale-[1.02] active:scale-[0.98]"
+              >
+                Go to Plans
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ---------------- APP SYSTEM STICKY FOOTER TABS Navigation ---------------- */}
+      <footer id="main_app_footer_nav" className="h-18 shrink-0 border-t border-zinc-950 bg-[#09090b]/99 backdrop-blur-md flex justify-around items-center px-4 z-30 pb-2 shadow-2xl relative select-none">
+
+        <button
+          id="nav_item_home"
+          onClick={() => { setActiveTab("home"); setShowNotifications(false); }}
+          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer relative ${activeTab === "home" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+        >
+          {/* Badge with Home Notification Count matching figma */}
+          <div className="relative">
+            <Home className="w-4.5 h-4.5" />
+            {homeBadgeCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 bg-[#f43f5e] text-white text-[8px] font-sans font-black w-3.5 h-3.5 rounded-full flex items-center justify-center shadow">
+                {homeBadgeCount}
+              </span>
+            )}
+          </div>
+          <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Home</span>
+        </button>
+
+
+        <button
+          id="nav_item_plans"
+          onClick={() => { setActiveTab("plans"); setShowNotifications(false); setPlansFilter("going"); }}
+          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer relative ${activeTab === "plans" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+        >
+          <div className="relative">
+            <Calendar className="w-4.5 h-4.5" />
+            {(() => {
+              const goingCount = plans.filter(p =>
+                p.joinedUsers.some(u => {
+                  const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
+                  const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
+                  return (cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU)) && u.joinState !== "waitlist";
+                }) && !p.isHappened
+              ).length;
+              return goingCount > 0 ? (
+                <span className="absolute -top-1.5 -right-1.5 bg-[#ff8b66] text-black text-[8px] font-sans font-black w-3.5 h-3.5 rounded-full flex items-center justify-center shadow">
+                  {goingCount}
+                </span>
+              ) : null;
+            })()}
+          </div>
+          <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Plans</span>
+        </button>
+
+        <button
+          id="nav_item_create"
+          onClick={() => {
+            setActiveTab("create");
+            setShowNotifications(false);
+            setCreateFlowStep("BROWSE");
+            setSelectedExperience(null);
+            setSelectedCircleIds([]);
+            setSelectedFriendIds([]);
+            setAudienceType("circle");
+            setCustomPlanNotes("");
+            setNewPlanTitle("");
+            setNewPlanLocation("");
+            setNewPlanTime("");
+            setNewPlanCost("0");
+            setNewPlanSpots("6");
+          }}
+          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer group`}
+        >
+          <div className={`w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-805 flex items-center justify-center transition-colors ${activeTab === "create" ? "border-[#ff8b66]" : ""
+            }`}>
+            <Plus className="w-4 h-4 text-[#ff8b66]" />
+          </div>
+          <span className="text-[9px] font-sans tracking-wide mt-0.5 font-medium">Create</span>
+        </button>
+
+
+        <button
+          id="nav_item_circles"
+          onClick={() => { setActiveTab("circles"); setShowNotifications(false); }}
+          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "circles" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+        >
+          <Users className="w-4.5 h-4.5" />
+          <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Circle</span>
+        </button>
+
+        <button
+          id="nav_item_profile"
+          onClick={() => { setActiveTab("profile"); setShowNotifications(false); }}
+          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer relative ${activeTab === "profile" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+        >
+          <img
+            src={userProfile.avatar}
+            alt={userProfile.name}
+            className={`w-5 h-5 rounded-full object-cover transition-all ${activeTab === "profile" ? "ring-2 ring-[#ff8b66]" : "ring-0"
+              }`}
+            referrerPolicy="no-referrer"
+          />
+          <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Profile</span>
+        </button>
+
+      </footer>
+
+    </div>
+  );
+}
