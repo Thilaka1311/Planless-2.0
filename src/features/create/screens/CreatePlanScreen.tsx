@@ -25,7 +25,8 @@ export const CreatePlanScreen = ({
   setNotifications
 }: CreatePlanScreenProps) => {
   const { setPlans, setDbPlans, setDbPlanParticipants } = usePlansStore();
-  const { userProfile, activeUserId, dbUsers } = useProfileStore();
+  const { userProfile, dbUsers } = useProfileStore();
+  const activeUserId = userProfile?.user_id || "U001";
   const { circles, setCircles } = useCirclesStore();
 
   // Spontaneous Create Form State (Legacy state supported for sync)
@@ -205,9 +206,25 @@ export const CreatePlanScreen = ({
     }
   };
 
-  const handleHostPlanSubmit = () => {
-    if (!selectedExperience || !userProfile || !activeUserId) {
+  const handleHostPlanSubmit = async () => {
+    console.log("[CreatePlanFlow] handleHostPlanSubmit triggered!");
+    console.log("[CreatePlanFlow] selectedExperience:", selectedExperience);
+    console.log("[CreatePlanFlow] userProfile:", userProfile);
+    console.log("[CreatePlanFlow] activeUserId:", activeUserId);
+
+    if (!selectedExperience) {
+      console.warn("[CreatePlanFlow] Submission blocked: selectedExperience is missing");
       triggerToast("Please select an experience first.");
+      return;
+    }
+    if (!userProfile) {
+      console.warn("[CreatePlanFlow] Submission blocked: userProfile is missing");
+      triggerToast("User profile session is not active. Onboard first.");
+      return;
+    }
+    if (!activeUserId) {
+      console.warn("[CreatePlanFlow] Submission blocked: activeUserId is missing");
+      triggerToast("User identifier is missing. Onboard first.");
       return;
     }
 
@@ -237,7 +254,7 @@ export const CreatePlanScreen = ({
       confirmedCount: 1,
       maxSpots: spotsToUse,
       coverImage: coverUrl,
-      creatorId: "u_self",
+      creatorId: activeUserId,
       creatorName: userProfile.name,
       creatorAvatar: userProfile.avatar,
       members: [
@@ -265,7 +282,7 @@ export const CreatePlanScreen = ({
       timeline: "today",
       description: customPlanNotes.trim() || `Spontaneous coordination thread for ${titleToUse}`,
       circleId: audienceType === "circle" ? selectedCircleIds[0] || null : null,
-      hostId: "u_self",
+      hostId: activeUserId,
       groupId: audienceType === "circle" ? selectedCircleIds[0] || null : null,
       capacity: spotsToUse,
       paymentAmount: costToUse,
@@ -275,9 +292,6 @@ export const CreatePlanScreen = ({
       interestedUsers: [],
       seatsLeft: spotsToUse - 1
     };
-
-    // Update frontend UI feed
-    setPlans(prev => [created, ...prev]);
 
     // Build Canonical DB DbPlan model
     const newDbPlan: DbPlan = {
@@ -296,7 +310,6 @@ export const CreatePlanScreen = ({
       created_at: new Date().toISOString(),
       cover_image: created.coverImage
     };
-    setDbPlans(prev => [newDbPlan, ...prev]);
 
     // Build canonical DbPlanParticipant for owner
     const ownerParticipant: DbPlanParticipant = {
@@ -307,42 +320,73 @@ export const CreatePlanScreen = ({
       payment_status: "paid",
       joined_at: new Date().toISOString()
     };
-    setDbPlanParticipants(prev => [...prev, ownerParticipant]);
 
-    // Create new circle activity trigger
-    const matchedCircleId = audienceType === "circle" ? selectedCircleIds[0] : null;
-    if (matchedCircleId) {
-      setCircles(prev => prev.map(c => c.id === matchedCircleId ? {
-        ...c,
-        lastSpontaneousActivity: `Spawned ${titleToUse} just now`
-      } : c));
+    try {
+      console.log("[CreatePlanFlow] Persisting plan to backend...", newDbPlan);
+      const planRes = await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "plans", records: [newDbPlan] })
+      });
+      if (!planRes.ok) {
+        throw new Error("Failed to write plan to backend database");
+      }
+      
+      console.log("[CreatePlanFlow] Persisting participant to backend...", ownerParticipant);
+      const partRes = await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "plan_participants", records: [ownerParticipant] })
+      });
+      if (!partRes.ok) {
+        throw new Error("Failed to write participant to backend database");
+      }
+
+      console.log("[CreatePlanFlow] Successfully saved plan and participant in backend SQLite!");
+
+      // Update frontend local Context Stores (hydrating state)
+      setPlans(prev => [created, ...prev]);
+      setDbPlans(prev => [newDbPlan, ...prev]);
+      setDbPlanParticipants(prev => [...prev, ownerParticipant]);
+
+      // Create new circle activity trigger
+      const matchedCircleId = audienceType === "circle" ? selectedCircleIds[0] : null;
+      if (matchedCircleId) {
+        setCircles(prev => prev.map(c => c.id === matchedCircleId ? {
+          ...c,
+          lastSpontaneousActivity: `Spawned ${titleToUse} just now`
+        } : c));
+      }
+
+      // Trigger spontaneous app activity log details under Notifications
+      const newNotif: NotificationItem = {
+        id: `n_${Date.now()}`,
+        type: "general",
+        title: `You spawned spontaneous hanging "${titleToUse}" at ${locationToUse}`,
+        relativeTime: "1s"
+      };
+      setNotifications([newNotif, ...notifications]);
+
+      // Reset Form
+      setNewPlanTitle("");
+      setNewPlanLocation("");
+      setNewPlanTime("");
+      setNewPlanCost("0");
+      setNewPlanSpots("6");
+      setSelectedCircleIds([]);
+      setSelectedFriendIds([]);
+      setCustomPlanNotes("");
+      setNewPlanUploadedImage(null);
+      setSelectedExperience(null);
+      setCreateFlowStep("BROWSE");
+
+      // Route to Circles & Notify
+      setActiveTab("circles");
+      triggerToast("✨ Spontaneous Plan Spawned successfully!");
+    } catch (err: any) {
+      console.error("[CreatePlanFlow] Database persistence failure:", err);
+      triggerToast(`Database save failed: ${err.message || "Unknown error"}`);
     }
-
-    // Trigger spontaneous app activity log details under Notifications
-    const newNotif: NotificationItem = {
-      id: `n_${Date.now()}`,
-      type: "general",
-      title: `You spawned spontaneous hanging "${titleToUse}" at ${locationToUse}`,
-      relativeTime: "1s"
-    };
-    setNotifications([newNotif, ...notifications]);
-
-    // Reset Form
-    setNewPlanTitle("");
-    setNewPlanLocation("");
-    setNewPlanTime("");
-    setNewPlanCost("0");
-    setNewPlanSpots("6");
-    setSelectedCircleIds([]);
-    setSelectedFriendIds([]);
-    setCustomPlanNotes("");
-    setNewPlanUploadedImage(null);
-    setSelectedExperience(null);
-    setCreateFlowStep("BROWSE");
-
-    // Route to Circles & Notify
-    setActiveTab("circles");
-    triggerToast("✨ Spontaneous Plan Spawned successfully!");
   };
 
   return (
