@@ -388,12 +388,20 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const member = plan.members.find(
         m => m.userId === userId || (m as any).userUuid === userId
       );
-      if (!member) return false;
-      const state = member.joinState;
-      // Home reel shows pending/delivered invites only
-      if (state === "going" || state === "host" || state === "passed" || state === "skipped") return false;
-      return true;
+      const state = member?.joinState;
+
+      const isIncluded = state && ["delivered", "seen"].includes(state);
+
+      if (isIncluded) {
+        console.log(`[PlansContext getHomeFeedPlans INCLUDED] Current User ID: ${userId}, Plan: "${plan.title}", Status: ${state}`);
+      } else {
+        console.log(`[PlansContext getHomeFeedPlans EXCLUDED] Current User ID: ${userId}, Plan: "${plan.title}", Status: ${state || "none"}`);
+      }
+
+      return !!isIncluded;
     });
+
+    console.log(`[PlansContext getHomeFeedPlans] Current User: ${userId}, Visible Count: ${filtered.length}, Plans:`, filtered.map(p => p.title));
 
     const getTimelineSectionValue = (p: Plan) => {
       const dt = p.date.toUpperCase();

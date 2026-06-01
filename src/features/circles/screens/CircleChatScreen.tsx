@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, Settings, Users, Send, Image, Plus, Calendar, MapPin, Clock } from "lucide-react";
+import { mapPlansToLegacyPlans } from "../../../lib/mappers";
 
 export const CircleChatScreen = (props: any) => {
   const {
@@ -64,8 +65,39 @@ export const CircleChatScreen = (props: any) => {
     triggerToast("Message sent! (Mock active) 💬");
   };
 
-  // Filter plans belonging to this circle
-  const circlePlans = plans.filter((p: any) => p.circleId === circle.id);
+  // Fetch plans directly from DB (do not rely on cached local prop arrays)
+  const [circlePlans, setCirclePlans] = useState<any[]>([]);
+
+  useEffect(() => {
+    async function loadCirclePlans() {
+      try {
+        const res = await fetch("/api/db/fetch-all");
+        if (res.ok) {
+          const json = await res.json();
+          if (json.configured && !json.tables_missing) {
+            const allPlans = json.data?.plans || [];
+            const allParticipants = json.data?.plan_participants || [];
+            const allUsers = json.data?.users || [];
+            
+            // Map raw database plans to UI legacy plans
+            const mapped = mapPlansToLegacyPlans(allPlans, allParticipants, allUsers, activeUserId);
+            
+            const circleUuid = circle.dbUuid || circle.id;
+            const filtered = mapped.filter((p: any) => p.circleId === circleUuid || p.groupId === circleUuid);
+            
+            console.log(`[CircleChat] Current Circle: "${circle.name}" (${circleUuid})`);
+            console.log(`[CircleChat] Plans fetched from DB: ${allPlans.length}, filtered for circle: ${filtered.length}`);
+            console.log(`[CircleChat] Plans displayed:`, filtered.map((p: any) => p.title));
+            
+            setCirclePlans(filtered);
+          }
+        }
+      } catch (err) {
+        console.error("[CircleChatScreen] Failed to load plans:", err);
+      }
+    }
+    loadCirclePlans();
+  }, [circle.id, circle.dbUuid, activeUserId]);
 
   // Sort plans chronologically (oldest first for a timeline view)
   const sortedPlans = [...circlePlans].sort((a: any, b: any) => {

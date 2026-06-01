@@ -332,19 +332,52 @@ export const CreatePlanScreen = ({
 
       // Collect selected invitees UUIDs
       const inviteeUuids: string[] = [];
+      const participantRecords: any[] = [];
+      const hostJoinedAt = new Date().toISOString();
 
-      if (audienceType === "circle" && selectedCircleIds.length > 0) {
+      if ((audienceType === "circle" || audienceType === "multiple") && selectedCircleIds.length > 0) {
         const circleUuids = selectedCircleIds.map(cid => {
           const c = circles.find(x => x.id === cid);
           return c?.dbUuid || c?.id;
         });
-        dbCircleMembers.forEach(m => {
-          const matchesCircle = circleUuids.includes(m.circle_id);
-          const isNotSelf = m.user_id !== userProfile.dbUuid;
-          if (matchesCircle && isNotSelf && !inviteeUuids.includes(m.user_id)) {
+
+        // 1. Retrieve all members from circle_members
+        const targetMembers = dbCircleMembers.filter(m => circleUuids.includes(m.circle_id));
+        
+        // Log circle_id(s), member count, and member IDs
+        console.log(`[CreatePlan] Circle Selection IDs:`, selectedCircleIds);
+        console.log(`[CreatePlan] Resolved Circle UUIDs:`, circleUuids);
+        console.log(`[CreatePlan] Retrieved circle members count: ${targetMembers.length}`);
+        console.log(`[CreatePlan] Circle member IDs:`, targetMembers.map(m => m.user_id));
+
+        // Deduplicate circle members by user_id to prevent duplicates
+        const uniqueMembersMap = new Map();
+        targetMembers.forEach(m => {
+          uniqueMembersMap.set(m.user_id, m);
+        });
+
+        const uniqueMembers = Array.from(uniqueMembersMap.values());
+        console.log(`[CreatePlan] Unique circle members count: ${uniqueMembers.length}`);
+
+        // 2. Create plan_participants records for each unique circle member
+        uniqueMembers.forEach((m: any, idx) => {
+          const isHost = m.user_id === userProfile.dbUuid;
+          participantRecords.push({
+            participant_id: `PP_${Date.now()}_member_${idx}`,
+            plan_id: insertedPlanUuid,
+            user_id: m.user_id,
+            status: isHost ? ("host" as const) : ("delivered" as const),
+            payment_status: isHost ? ("paid" as const) : ("unpaid" as const),
+            joined_at: isHost ? hostJoinedAt : new Date().toISOString()
+          });
+
+          if (!isHost) {
             inviteeUuids.push(m.user_id);
           }
         });
+
+        // Verify: Number of participant records equals number of unique circle members
+        console.log(`[CreatePlan] Verification - uniqueMembers count: ${uniqueMembers.length}, participantRecords count: ${participantRecords.length}`);
       } else if (audienceType === "friends" && selectedFriendIds.length > 0) {
         selectedFriendIds.forEach(fid => {
           const friendUser = dbUsers.find(u => u.user_id === fid || u.id === fid);
@@ -353,47 +386,42 @@ export const CreatePlanScreen = ({
             inviteeUuids.push(friendUuid);
           }
         });
-      } else if (audienceType === "multiple" && selectedCircleIds.length > 0) {
-        const circleUuids = selectedCircleIds.map(cid => {
-          const c = circles.find(x => x.id === cid);
-          return c?.dbUuid || c?.id;
+
+        // Build participant payload for friends audience: 1 host + N invitees
+        const ownerParticipant = {
+          participant_id: `PP_${Date.now()}_self`,
+          plan_id: insertedPlanUuid,
+          user_id: userProfile.dbUuid,
+          status: "host" as const,
+          payment_status: "paid" as const,
+          joined_at: hostJoinedAt
+        };
+        participantRecords.push(ownerParticipant);
+
+        inviteeUuids.forEach((inviteeUuid, idx) => {
+          participantRecords.push({
+            participant_id: `PP_${Date.now()}_invitee_${idx}`,
+            plan_id: insertedPlanUuid,
+            user_id: inviteeUuid,
+            status: "delivered" as const,
+            payment_status: "unpaid" as const,
+            joined_at: new Date().toISOString()
+          });
         });
-        dbCircleMembers.forEach(m => {
-          const matchesCircle = circleUuids.includes(m.circle_id);
-          const isNotSelf = m.user_id !== userProfile.dbUuid;
-          if (matchesCircle && isNotSelf && !inviteeUuids.includes(m.user_id)) {
-            inviteeUuids.push(m.user_id);
-          }
-        });
+      } else {
+        // Fallback: just insert host
+        const ownerParticipant = {
+          participant_id: `PP_${Date.now()}_self`,
+          plan_id: insertedPlanUuid,
+          user_id: userProfile.dbUuid,
+          status: "host" as const,
+          payment_status: "paid" as const,
+          joined_at: hostJoinedAt
+        };
+        participantRecords.push(ownerParticipant);
       }
 
       console.log("[CreatePlanFlow] Selected invitees UUIDs:", inviteeUuids);
-
-      // Build participant payload: 1 host (status: host) + N selected invitees (status: delivered)
-      const participantRecords = [];
-      const hostJoinedAt = new Date().toISOString();
-
-      const ownerParticipant = {
-        participant_id: `PP_${Date.now()}_self`,
-        plan_id: insertedPlanUuid, // Reference plans.id UUID
-        user_id: userProfile.dbUuid, // Reference users.id UUID
-        status: "host" as const,
-        payment_status: "paid" as const,
-        joined_at: hostJoinedAt
-      };
-      participantRecords.push(ownerParticipant);
-
-      inviteeUuids.forEach((inviteeUuid, idx) => {
-        participantRecords.push({
-          participant_id: `PP_${Date.now()}_invitee_${idx}`,
-          plan_id: insertedPlanUuid, // Reference plans.id UUID
-          user_id: inviteeUuid, // Reference users.id UUID
-          status: "delivered" as const,
-          payment_status: "unpaid" as const,
-          joined_at: new Date().toISOString()
-        });
-      });
-
       console.log("[CreatePlanFlow] Participant insert payload:", JSON.stringify(participantRecords, null, 2));
       console.log("[CreatePlanFlow] Final participant count:", participantRecords.length);
 

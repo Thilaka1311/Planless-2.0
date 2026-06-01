@@ -5,6 +5,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, Plan, Circle, NotificationItem, Transaction, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory } from "../core/types";
 import { getInitialsAvatar, mapPlansToLegacyPlans, mapCirclesToLegacyCircles, mapTransactionsToLegacy, mapNotificationsToLegacy } from "../lib/mappers";
+import { insertCircle, insertCircleMembers, syncUserStats } from "../lib/db";
 import { usePlansStore } from "../features/plans/state/PlansContext";
 import { useProfileStore } from "../features/profile/state/ProfileContext";
 import { useWalletStore } from "../features/wallet/state/WalletContext";
@@ -118,10 +119,19 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
             setDbMemories(d.memories || []);
             setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], activeUserId));
             
-            // 3. Set circles context
-            setDbCircles(d.circles || []);
-            setDbCircleMembers(d.circle_members || []);
-            setCircles(mapCirclesToLegacyCircles(d.circles || [], d.circle_members || [], d.users || []));
+            // 3. Set circles context — only show circles where the current user is a member
+            const allCircles = d.circles || [];
+            const allCircleMembers = d.circle_members || [];
+            const allDbUsers = d.users || [];
+            const meUser = allDbUsers.find((u: any) => u.user_id === activeUserId);
+            const meUuid = meUser ? meUser.id : null;
+            const myCircleIds = meUuid
+              ? allCircleMembers.filter((cm: any) => cm.user_id === meUuid).map((cm: any) => cm.circle_id)
+              : [];
+            const myCircles = allCircles.filter((c: any) => myCircleIds.includes(c.id));
+            setDbCircles(allCircles);
+            setDbCircleMembers(allCircleMembers);
+            setCircles(mapCirclesToLegacyCircles(myCircles, allCircleMembers, allDbUsers));
             
             // 4. Set wallet context
             const me = (d.users || []).find((u: any) => u.user_id === activeUserId);
@@ -234,49 +244,113 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
     name: string,
     description: string,
     image: string | null,
-    memberIds: string[]
+    memberIds: string[]  // short user_id values e.g. "U002"
   ) => {
     if (!name.trim()) {
       triggerToast("Give your circle a name!");
       return;
     }
 
-    const circleId = `c_${Date.now()}`;
     const circleCover = image || getInitialsAvatar(name);
 
-    const adminUser = dbUsers.find(u => u.user_id === activeUserId) || {
-      user_id: activeUserId,
-      full_name: userProfile.name,
-      phone_number: userProfile.phone || "",
-      profile_photo: userProfile.avatar
+    // Resolve current user's UUID
+    const meUser = dbUsers.find(u => u.user_id === activeUserId);
+    const meUuid = meUser ? (meUser as any).id : activeUserId;
+
+    const adminMemberObj = {
+      userId: activeUserId,
+      name: meUser?.full_name || userProfile.name,
+      phone: meUser?.phone_number || "",
+      avatar: meUser?.profile_photo || getInitialsAvatar(meUser?.full_name || userProfile.name)
     };
 
-    const invitedMembers = memberIds.map(uid => {
-      const u = dbUsers.find(usr => usr.user_id === uid);
+    const invitedMembers = memberIds.map(shortId => {
+      const u = dbUsers.find(usr => usr.user_id === shortId);
       return {
-        userId: uid,
+        userId: shortId,
         name: u?.full_name || "Unknown Friend",
         phone: u?.phone_number || "",
         avatar: u?.profile_photo || getInitialsAvatar(u?.full_name || "Unknown Friend")
       };
     });
 
-    const adminMemberObj = {
-      userId: activeUserId,
-      name: adminUser.full_name,
-      phone: adminUser.phone_number,
-      avatar: adminUser.profile_photo || getInitialsAvatar(adminUser.full_name)
-    };
-
     const allMembersList = [adminMemberObj, ...invitedMembers];
 
-    const customAud: Circle = {
-      id: circleId,
-      name: name,
+    // Persist to Supabase (async, non-blocking)
+    const persistCircle = async () => {
+      try {
+        const now = new Date().toISOString();
+        const savedCircle = await insertCircle({
+          circle_id: `c_${Date.now()}`,
+          name,
+          description: description || "An active private circle for coordination.",
+          category: "custom",
+          created_by: meUuid,
+          cover_image: circleCover,
+          location_anchor: "Spontaneous",
+          privacy: "private",
+          created_at: now
+        });
+
+        if (!savedCircle || !(savedCircle as any).id) {
+          console.error("[Circles] insertCircle returned no UUID", savedCircle);
+          return;
+        }
+
+        const circleUuid = (savedCircle as any).id;
+        console.log("[Circles] Created circle UUID:", circleUuid);
+
+        // Build member rows using UUIDs
+        const membersToInsert = [
+          { circle_id: circleUuid, user_id: meUuid, role: "admin" as const, joined_at: now },
+          ...memberIds.map(shortId => {
+            const uObj = dbUsers.find(u => u.user_id === shortId);
+            const uUuid = uObj ? (uObj as any).id : shortId;
+            return { circle_id: circleUuid, user_id: uUuid, role: "member" as const, joined_at: now };
+          })
+        ];
+
+        const insertedMembers = await insertCircleMembers(membersToInsert);
+        console.log("[Circles] Inserted members:", insertedMembers?.length);
+
+        // Sync stats for all members
+        for (const m of membersToInsert) {
+          await syncUserStats(m.user_id, "join_circle");
+        }
+
+        // Optimistically update local state with real UUID for the circle
+        const newLegacyCircle: Circle = {
+          id: circleUuid,
+          dbUuid: circleUuid,
+          name,
+          membersCount: allMembersList.length,
+          avatars: allMembersList.slice(0, 5).map(m => m.avatar),
+          groupImage: circleCover,
+          lastSpontaneousActivity: "Newly created circle",
+          description: description || "An active private circle for coordination.",
+          type: "Custom Group",
+          location: "Spontaneous",
+          format: "Chill crew",
+          playersOnField: allMembersList.length,
+          timeWindow: "Anytime",
+          membersList: allMembersList
+        };
+        // Replace the temp circle with the real one (identified by UUID)
+        setCircles(prev => [newLegacyCircle, ...prev.filter(c => c.id !== "__temp__" + name)]);
+      } catch (err) {
+        console.error("[Circles] Failed to persist circle:", err);
+      }
+    };
+
+    // Show optimistic UI immediately with a temp entry
+    const tempCircle: Circle = {
+      id: "__temp__" + name,
+      dbUuid: undefined,
+      name,
       membersCount: allMembersList.length,
       avatars: allMembersList.slice(0, 5).map(m => m.avatar),
       groupImage: circleCover,
-      lastSpontaneousActivity: "Newly spawned circle",
+      lastSpontaneousActivity: "Newly created circle",
       description: description || "An active private circle for coordination.",
       type: "Custom Group",
       location: "Spontaneous",
@@ -285,40 +359,9 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
       timeWindow: "Anytime",
       membersList: allMembersList
     };
+    setCircles(prev => [tempCircle, ...prev]);
 
-    setCircles(prev => [...prev, customAud]);
-
-    const newDbCircle: DbCircle = {
-      circle_id: circleId,
-      name: name,
-      description: description || "An active private circle for spontaneous coordination.",
-      category: "custom",
-      created_by: activeUserId,
-      cover_image: circleCover,
-      location_anchor: "Spontaneous",
-      privacy: "private",
-      created_at: new Date().toISOString()
-    };
-    setDbCircles(prev => [...prev, newDbCircle]);
-
-    const adminRecord: DbCircleMember = {
-      circle_member_id: `CM_${Date.now()}_admin`,
-      circle_id: circleId,
-      user_id: activeUserId,
-      role: "admin",
-      joined_at: new Date().toISOString()
-    };
-
-    const memberRecords: DbCircleMember[] = memberIds.map((uid, index) => ({
-      circle_member_id: `CM_${Date.now()}_${index}`,
-      circle_id: circleId,
-      user_id: uid,
-      role: "member" as const,
-      joined_at: new Date().toISOString()
-    }));
-
-    const allDbMembers = [adminRecord, ...memberRecords];
-    setDbCircleMembers(prev => [...prev, ...allDbMembers]);
+    persistCircle();
 
     setNewCircleName("");
     setNewCircleUploadedImage(null);
@@ -396,39 +439,27 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   const upcomingCirclePlans = plans.filter(p => !p.isHappened);
 
   // Filter plans based on visibility rules:
-  // A plan is visible to the active user only if they have a participant record for it.
-  // member.userId is the short user_id (e.g. "U001") resolved from the users table.
-  // We also check against dbUuid as a fallback for any inconsistency.
+  // A plan is visible on Home strictly based on plan_participants record status.
   const discoverablePlans = plans.filter(p => {
-    if (p.isHappened) return false;
-    if (snoozedPlanIds.includes(p.id)) return false;
-
-    // Check: user must appear as a participant (host or invitee)
-    const isParticipant = p.members.some(
-      m => m.userId === userProfile.user_id || (userProfile.dbUuid && (m as any).userUuid === userProfile.dbUuid)
-    );
-
-    if (!isParticipant) return false;
-
-    // Exclude plans where user is already in a going/joined state (they go to Plans tab)
+    // Resolve current user's UUID and short ID
     const myEntry = p.members.find(
       m => m.userId === userProfile.user_id || (userProfile.dbUuid && (m as any).userUuid === userProfile.dbUuid)
     );
     const myStatus = myEntry?.joinState;
 
-    // Only show plans that are pending action (delivered/invited), NOT already joined/going ones
-    // Host plans ("host" status) should appear in Plans hub, not the home swipe reel
-    if (myStatus === "going" || myStatus === "host") return false;
+    const isIncluded = myStatus && ["delivered", "seen"].includes(myStatus);
 
-    return true;
+    if (isIncluded) {
+      console.log(`[HomeScreen Visibility INCLUDED] Current User ID: ${userProfile.user_id} (${userProfile.dbUuid}), Plan: "${p.title}", Status: ${myStatus}`);
+    } else {
+      console.log(`[HomeScreen Visibility EXCLUDED] Current User ID: ${userProfile.user_id} (${userProfile.dbUuid}), Plan: "${p.title}", Status: ${myStatus || "none"}`);
+    }
+
+    return !!isIncluded;
   });
 
-  // Debug log for visibility
-  if (process.env.NODE_ENV !== "production") {
-    console.log(`[HomeReel] Total plans: ${plans.length}, Discoverable: ${discoverablePlans.length}`, 
-      discoverablePlans.map(p => ({ id: p.id, title: p.title, memberCount: p.members.length }))
-    );
-  }
+  // Log visible plans
+  console.log(`[HomeScreen Visible Plans] Current User: ${userProfile.user_id}, Visible Count: ${discoverablePlans.length}, Plans:`, discoverablePlans.map(p => p.title));
 
   const homeBadgeCount = discoverablePlans.length;
 
@@ -443,44 +474,46 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
     <div className="w-full h-full max-w-md mx-auto bg-[#0C0C0E] flex flex-col justify-between relative shadow-2xl overflow-hidden border border-zinc-900 select-none">
       
       {/* ---------------- FIGMA ALIGNED HEADER ---------------- */}
-      <header id="figma_coordinate_header" className="h-14 shrink-0 border-b border-zinc-950 bg-[#09090b]/99 backdrop-blur-md flex items-center justify-between px-4 z-30 select-none relative">
-        <div className="flex items-center gap-1.5 z-10">
-          <button
-            onClick={() => {
-              setActiveTab("profile");
-              setShowNotifications(false);
-            }}
-            className="relative group shrink-0 block focus:outline-none cursor-pointer"
-            aria-label="View Profile Settings"
-          >
-            <img
-              src={userProfile.avatar}
-              alt={userProfile.name}
-              className="w-9 h-9 rounded-full border-2 border-zinc-800 object-cover hover:border-[#ff8b66] transition-colors"
-              referrerPolicy="no-referrer"
-            />
-          </button>
-        </div>
+      {activeTab === "home" && (
+        <header id="figma_coordinate_header" className="h-14 shrink-0 border-b border-zinc-950 bg-[#09090b]/99 backdrop-blur-md flex items-center justify-between px-4 z-30 select-none relative">
+          <div className="flex items-center gap-1.5 z-10">
+            <button
+              onClick={() => {
+                setActiveTab("profile");
+                setShowNotifications(false);
+              }}
+              className="relative group shrink-0 block focus:outline-none cursor-pointer"
+              aria-label="View Profile Settings"
+            >
+              <img
+                src={userProfile.avatar}
+                alt={userProfile.name}
+                className="w-9 h-9 rounded-full border-2 border-zinc-800 object-cover hover:border-[#ff8b66] transition-colors"
+                referrerPolicy="no-referrer"
+              />
+            </button>
+          </div>
 
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          <h1 className="text-stone-100 font-sans font-black text-xl tracking-[0.25em] leading-none text-center">
-            PLANLESS
-          </h1>
-        </div>
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+            <h1 className="text-stone-100 font-sans font-black text-xl tracking-[0.25em] leading-none text-center">
+              PLANLESS
+            </h1>
+          </div>
 
-        <div className="flex items-center gap-1.5 z-10">
-          <button
-            id="bell_notification_trigger"
-            onClick={() => setShowNotifications(!showNotifications)}
-            className={`w-9 h-9 rounded-full flex items-center justify-center relative cursor-pointer transition-all ${showNotifications ? "bg-zinc-900 text-white" : "text-zinc-400 hover:text-white"}`}
-          >
-            <Bell className="w-4.5 h-4.5" />
-            {notifications.some(n => !n.settled) && (
-              <span className="absolute top-2 right-2 w-2 h-2 bg-[#ff5d41] rounded-full ring-2 ring-zinc-950 shadow animate-pulse" />
-            )}
-          </button>
-        </div>
-      </header>
+          <div className="flex items-center gap-1.5 z-10">
+            <button
+              id="bell_notification_trigger"
+              onClick={() => setShowNotifications(!showNotifications)}
+              className={`w-9 h-9 rounded-full flex items-center justify-center relative cursor-pointer transition-all ${showNotifications ? "bg-zinc-900 text-white" : "text-zinc-400 hover:text-white"}`}
+            >
+              <Bell className="w-4.5 h-4.5" />
+              {notifications.some(n => !n.settled) && (
+                <span className="absolute top-2 right-2 w-2 h-2 bg-[#ff5d41] rounded-full ring-2 ring-zinc-950 shadow animate-pulse" />
+              )}
+            </button>
+          </div>
+        </header>
+      )}
 
       {/* --- TOAST ALERTS --- */}
       <AnimatePresence>

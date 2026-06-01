@@ -65,8 +65,8 @@ export const CirclesScreen = (props: any) => {
             className="space-y-6"
           >
             {/* Lightweight Page Header */}
-            <div className="flex items-center justify-between pb-1 relative">
-              <h2 className="text-lg font-display font-bold text-zinc-100 tracking-tight">Circles</h2>
+            <div className="flex items-center justify-between pb-1.5 pt-1.5 relative">
+              <h2 className="text-xl font-display font-black text-zinc-100 tracking-tight">Circles</h2>
               <div className="relative">
                 <button
                   id="circles_menu_btn"

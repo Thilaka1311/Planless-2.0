@@ -337,6 +337,10 @@ export const PlansScreen = ({
 
   return (
     <div id="plans_tab_pane" className="space-y-4 pb-4 text-left pt-2">
+      <div className="pb-1.5 pt-1.5 text-left">
+        <h2 className="text-xl font-display font-black text-zinc-100 tracking-tight">Plans</h2>
+      </div>
+
       {/* Search Bar - Main top element pushed upward with no large page header */}
       <div className="px-1 relative">
         <span className="absolute left-4.5 top-1/2 -translate-y-1/2 text-zinc-550 text-xs">🔍</span>

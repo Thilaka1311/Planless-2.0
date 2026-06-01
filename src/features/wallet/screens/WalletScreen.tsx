@@ -35,9 +35,9 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
   return (
     <div id="subview_payments_wallet" className="space-y-5 animate-fade-in text-left pb-0 px-1">
       {/* Premium Compact Header */}
-      <div className="flex items-center justify-between relative">
+      <div className="flex items-center justify-between pb-1.5 pt-1.5 relative">
         <div>
-          <h2 className="text-xl font-sans font-bold text-zinc-150 tracking-tight">Wallet</h2>
+          <h2 className="text-xl font-display font-black text-zinc-100 tracking-tight">Wallet</h2>
           <p className="text-[10px] text-zinc-500 font-sans mt-0.5">Manage your balance and transactions</p>
         </div>
 
