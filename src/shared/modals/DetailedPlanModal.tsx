@@ -30,6 +30,9 @@ export default function DetailedPlanModal({
   const planUuid = (selectedPlan as any).dbUuid || selectedPlan.id;
   const counts = getParticipantCounts(planUuid);
 
+  // Joined = host + going
+  const joinedCount = counts.host + counts.going;
+
   // Going = participants with status "going" (excludes the host record)
   const goingCount = counts.going;
 
@@ -39,9 +42,12 @@ export default function DetailedPlanModal({
   // Passed = participants who explicitly passed
   const passedCount = counts.passed + (passedByPlanId[selectedPlan.id] || []).length;
 
-  // Progress bar: going / (going + pending + waitlist)
-  const activeInvited = goingCount + pendingCount + counts.waitlist;
-  const goingPct = activeInvited > 0 ? Math.round((goingCount / activeInvited) * 100) : 0;
+  // Progress bar: joinedCount / capacity
+  const capacity = selectedPlan.capacity || selectedPlan.maxSpots || 10;
+  const goingPct = capacity > 0 ? Math.round((joinedCount / capacity) * 100) : 0;
+
+  console.log(`[DetailedPlanModal] Calculating progress bar for plan: ${selectedPlan.title}`);
+  console.log(`[DetailedPlanModal] joinedCount: ${joinedCount} (host: ${counts.host}, going: ${goingCount}), capacity: ${capacity}, percentage: ${goingPct}%`);
 
   return (
     <div
@@ -126,7 +132,7 @@ export default function DetailedPlanModal({
             </div>
 
             {/* Acceptance progress bar */}
-            {activeInvited > 0 && (
+            {capacity > 0 && (
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-[8px] font-mono text-zinc-600 uppercase tracking-widest">
                   <span>Acceptance Rate</span>

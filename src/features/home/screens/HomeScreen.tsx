@@ -91,19 +91,17 @@ const PlanReelCard = ({
   const pointerDownTimeRef = useRef<number>(0);
   const hasHoldStartedRef = useRef<boolean>(false);
 
-  const isJoined = plan.joinedUsers.some(u => {
-    if (u.joinState === "waitlist") return false;
-    const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
-    const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
-    return cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU);
-  });
+  const myMemberEntry = plan.members.find(m => 
+    m.userId === userProfile.user_id || 
+    (userProfile.dbUuid && m.userUuid === userProfile.dbUuid)
+  );
 
-  const isWaitlisted = plan.joinedUsers.some(u => {
-    if (u.joinState !== "waitlist") return false;
-    const cleanU = u.name.toLowerCase().replace(/[^a-z]/g, "");
-    const cleanProfile = userProfile.name.toLowerCase().replace(/[^a-z]/g, "");
-    return cleanU.includes(cleanProfile) || cleanProfile.includes(cleanU);
-  });
+  const isJoined = myMemberEntry ? (myMemberEntry.joinState === "going" || myMemberEntry.joinState === "host") : false;
+  const isWaitlisted = myMemberEntry ? (myMemberEntry.joinState === "waitlist") : false;
+
+  console.log(`[HomeScreen PlanReelCard] Checking status for Plan: ${plan.title}, User: ${userProfile.name}`);
+  console.log(`[HomeScreen PlanReelCard] My member record:`, myMemberEntry ? { status: myMemberEntry.joinState, joinedAt: myMemberEntry.joinedAt } : "none");
+  console.log(`[HomeScreen PlanReelCard] Calculated isJoined: ${isJoined}, isWaitlisted: ${isWaitlisted}`);
 
   const getFormattedDateAndTime = () => {
     const rawDate = (plan.date || "TODAY").trim().toUpperCase();
@@ -209,6 +207,9 @@ const PlanReelCard = ({
   const goingMembers = plan.members.filter(m => m.joinState === "going" || m.joinState === "host");
   const currentCount = goingMembers.length;
   const isFull = currentCount >= maxSpots;
+
+  console.log(`[HomeScreen PlanReelCard] Joined count calculation: ${currentCount} (host + going only) / ${maxSpots} capacity`);
+  console.log(`[HomeScreen PlanReelCard] Progress bar calculation percentage: ${maxSpots > 0 ? Math.round((currentCount / maxSpots) * 100) : 0}%`);
 
   let barGradient = "from-[#ff8b66] to-[#fc5c42]";
   let categoryColorDot = "bg-[#ff8b66]";

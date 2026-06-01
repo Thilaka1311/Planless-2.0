@@ -143,8 +143,8 @@ export const mapPlansToLegacyPlans = (
       timeVal = p.datetime ? String(p.datetime).split(" • ")[1] || String(p.datetime) : "";
     }
     
-    // Max spots: uses max_people from exact database schema
-    const maxSpotsVal = p.max_people || (p as any).max_spots || 10;
+    // Max spots: uses max_people, falls back to the number of members involved in the plan
+    const maxSpotsVal = p.max_people || (p as any).max_spots || (members.length > 0 ? members.length : 10);
     
     // Cost: uses split_amount from exact database schema
     const costVal = p.split_amount !== undefined ? Number(p.split_amount) : ((p as any).cost !== undefined ? Number((p as any).cost) : 0);
@@ -152,7 +152,14 @@ export const mapPlansToLegacyPlans = (
     // Cover image: new schema uses "cover_image", old code used "coverImage"
     const coverImageVal = p.cover_image || (p as any).coverImage || (p as any).coverimage || "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&q=80&w=600";
     
-    const seatsLeftVal = p.seatsLeft !== undefined ? p.seatsLeft : ((p as any).seatsleft !== undefined ? (p as any).seatsleft : ((p as any).seats_left !== undefined ? (p as any).seats_left : (maxSpotsVal - members.length)));
+    const goingCount = members.filter(m => m.joinState === "going" || m.joinState === "host").length;
+    const seatsLeftVal = p.seatsLeft !== undefined ? p.seatsLeft : ((p as any).seatsleft !== undefined ? (p as any).seatsleft : ((p as any).seats_left !== undefined ? (p as any).seats_left : (maxSpotsVal - goingCount)));
+
+    console.log(`[mappers mapPlansToLegacyPlans] Plan: "${p.title}"`);
+    console.log(`- Participant statuses:`, members.map(m => `${m.name}: ${m.joinState}`));
+    console.log(`- Joined count calculation (host + going): ${goingCount}`);
+    console.log(`- Displayed count / capacity: ${goingCount} / ${maxSpotsVal}`);
+
     const coordinatedSeatVal = p.coordinatedSeat || (p as any).coordinatedseat || (p as any).coordinated_seat;
     const userRatingVal = p.userRating !== undefined ? p.userRating : ((p as any).userrating !== undefined ? (p as any).userrating : (p as any).user_rating);
     const userReactionVal = p.userReaction || (p as any).userreaction || (p as any).user_reaction;
@@ -177,7 +184,7 @@ export const mapPlansToLegacyPlans = (
       // UI Legacy Properties
       category: (categoryVal === "football" ? "sports" : categoryVal === "brunch" ? "restaurants" : categoryVal) as any,
       cost: costVal,
-      confirmedCount: members.length,
+      confirmedCount: goingCount,
       maxSpots: maxSpotsVal,
       coverImage: coverImageVal,
       creatorId: isOwner ? "u_self" : p.created_by,

@@ -149,9 +149,19 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
     triggerToast("Snoozed: We'll show this plan again later");
   };
 
+  // Sync selectedPlan state automatically when plans state updates
+  React.useEffect(() => {
+    if (selectedPlan) {
+      const fresh = plans.find(p => p.id === selectedPlan.id);
+      if (fresh) {
+        setSelectedPlan(fresh);
+      }
+    }
+  }, [plans]);
+
   // Checkin join toggle
-  const handleToggleJoin = (plan: Plan) => {
-    joinPlan(plan.id, userProfile);
+  const handleToggleJoin = async (plan: Plan) => {
+    await joinPlan(plan.id, userProfile);
 
     // Sync Wallet & Ledger
     if (plan.cost > 0) {
@@ -179,20 +189,6 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
       setDbTransactions(prev => [newDbTx, ...prev]);
       setDbUsers(prev => prev.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: u.wallet_balance - plan.cost } : u));
     }
-
-    const updatedJoined = [
-      ...plan.joinedUsers.filter(u => u.name !== userProfile.name),
-      { name: userProfile.name, avatar: userProfile.avatar, checkedIn: true, joinState: "going", reminderState: "none", joinedAt: new Date().toISOString() }
-    ];
-    const updatedPlan = {
-      ...plan,
-      confirmedCount: plan.confirmedCount + 1,
-      joinedUsers: updatedJoined,
-      seatsLeft: plan.seatsLeft !== undefined ? Math.max(0, plan.seatsLeft - 1) : undefined
-    };
-
-    setPlans(prev => prev.map(p => p.id === plan.id ? updatedPlan : p));
-    if (selectedPlan?.id === plan.id) setSelectedPlan(updatedPlan);
   };
 
   // Cash deposits
@@ -378,11 +374,11 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
     triggerToast("✅ Settled & shared with circle!");
   };
 
-  const handleAcceptInviteFromNotif = (notif: NotificationItem) => {
+  const handleAcceptInviteFromNotif = async (notif: NotificationItem) => {
     if (!notif.planId) return;
     const targetPlan = plans.find(p => p.id === notif.planId);
     if (targetPlan) {
-      handleToggleJoin(targetPlan);
+      await handleToggleJoin(targetPlan);
       setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, settled: true } : n));
       // Persist read/settled status to Supabase database
       fetch("/api/db/upsert", {

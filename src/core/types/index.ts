@@ -120,6 +120,7 @@ export type PlanState = "going" | "passed" | "waitlist" | "unanswered" | "delive
 
 export interface PlanMember {
   userId: string;
+  userUuid?: string;
   name: string;
   avatar: string;
   joinState: PlanState;

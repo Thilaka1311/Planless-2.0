@@ -181,7 +181,7 @@ export const CircleDetailScreen = (props: any) => {
                     <div className="flex items-center justify-between pt-2 border-t border-zinc-950/60">
                       <div className="flex items-center gap-1.5">
                         <div className="flex -space-x-1.5">
-                          {plan.joinedUsers?.slice(0, 4).map((u: any, ui: number) => (
+                          {plan.joinedUsers?.filter((u: any) => u.joinState === "going" || u.joinState === "host").slice(0, 4).map((u: any, ui: number) => (
                             <img 
                               key={ui} 
                               src={u.avatar} 
@@ -192,7 +192,7 @@ export const CircleDetailScreen = (props: any) => {
                           ))}
                         </div>
                         <span className="text-[9px] text-zinc-500">
-                          {plan.confirmedCount || plan.joinedUsers?.length || 0} joined {plan.maxSpots ? `(${plan.maxSpots - (plan.confirmedCount || 0)} left)` : ""}
+                          {plan.confirmedCount} joined {plan.maxSpots ? `(${plan.maxSpots - plan.confirmedCount} left)` : ""}
                         </span>
                       </div>
 

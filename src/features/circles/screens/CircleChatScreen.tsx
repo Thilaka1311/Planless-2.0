@@ -242,7 +242,7 @@ export const CircleChatScreen = (props: any) => {
                   <div className="flex items-center justify-between pt-1.5 border-t border-zinc-950/60 text-[9px] text-zinc-505">
                     <div className="flex items-center gap-1">
                       <div className="flex -space-x-1.5">
-                        {plan.joinedUsers?.slice(0, 3).map((u: any, ui: number) => (
+                        {plan.joinedUsers?.filter((u: any) => u.joinState === "going" || u.joinState === "host").slice(0, 3).map((u: any, ui: number) => (
                           <img key={ui} src={u.avatar} className="w-4 h-4 rounded-full object-cover border border-zinc-950" alt="" referrerPolicy="no-referrer" />
                         ))}
                       </div>

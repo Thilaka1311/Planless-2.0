@@ -80,7 +80,7 @@ export const PlansScreen = ({
     if (plansFilter === "all") return true;
 
     const myParticipant = dbPlanParticipants.find(
-      (pp) => pp.plan_id === p.id && pp.user_id === activeUserId
+      (pp) => pp.plan_id === p.id && (pp.user_id === activeUserId || pp.user_id === userProfile.dbUuid)
     );
     const isGoing = myParticipant?.status === "going";
     const isWaitlisted =
@@ -90,14 +90,21 @@ export const PlansScreen = ({
     const isHosted = p.creatorId === "u_self" || p.creatorName === userProfile.name;
     const autoPassed = (passedByPlanId[p.id] || []).includes(userProfile.name);
 
-    if (plansFilter === "going") return isGoing && !p.isHappened && !autoPassed;
-    if (plansFilter === "waitlist") return isWaitlisted && !p.isHappened;
-    if (plansFilter === "passed") {
+    let match = false;
+    if (plansFilter === "going") match = isGoing && !p.isHappened && !autoPassed;
+    else if (plansFilter === "waitlist") match = isWaitlisted && !p.isHappened;
+    else if (plansFilter === "passed") {
       const historicallyJoined = p.isHappened && (isGoing || isWaitlisted);
-      return autoPassed || historicallyJoined;
+      match = autoPassed || historicallyJoined;
     }
-    if (plansFilter === "hosted") return isHosted;
-    return false;
+    else if (plansFilter === "hosted") match = isHosted;
+
+    console.log(`[PlansScreen Tab Classification] Plan: "${p.title}"`);
+    console.log(`- Participant status from DB: ${myParticipant?.status || "none"}`);
+    console.log(`- Flags: isGoing=${isGoing}, isWaitlisted=${isWaitlisted}, isHosted=${isHosted}, isHappened=${p.isHappened}`);
+    console.log(`- Tab Filter: "${plansFilter}" -> Classification Result: ${match}`);
+
+    return match;
   });
 
   const todayPlans = filteredPlans
@@ -343,7 +350,7 @@ export const PlansScreen = ({
               if (!matchesSearch) return false;
 
               const myParticipant = dbPlanParticipants.find(
-                (pp) => pp.plan_id === p.id && pp.user_id === activeUserId
+                (pp) => pp.plan_id === p.id && (pp.user_id === activeUserId || pp.user_id === userProfile.dbUuid)
               );
               const isGoing = myParticipant?.status === "going";
               const isWaitlisted =

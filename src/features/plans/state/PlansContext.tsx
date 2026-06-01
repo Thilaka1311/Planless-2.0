@@ -1,69 +1,96 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
 import { Plan, PlanMember, DbPlan, DbPlanParticipant, DbMemory, User } from "../../../core/types";
-import { mapPlansToLegacyPlans } from "../../../lib/mappers";
-import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats } from "../../../lib/db";
 import { useProfileStore } from "../../profile/state/ProfileContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
+import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats } from "../../../lib/db";
+import { mapPlansToLegacyPlans } from "../../../lib/mappers";
 
 interface ParticipantCounts {
+  host: number;
   going: number;
   waitlist: number;
   delivered: number;
   seen: number;
   passed: number;
   pending: number;  // delivered + seen (invited but not yet responded)
-  total: number;    // all non-host participants
+  total: number;
 }
 
-interface PlansState {
+interface PlansContextType {
   plans: Plan[];
   setPlans: React.Dispatch<React.SetStateAction<Plan[]>>;
   dbPlans: DbPlan[];
   setDbPlans: React.Dispatch<React.SetStateAction<DbPlan[]>>;
   dbPlanParticipants: DbPlanParticipant[];
   setDbPlanParticipants: React.Dispatch<React.SetStateAction<DbPlanParticipant[]>>;
-  dbMemories: DbMemory[];
-  setDbMemories: React.Dispatch<React.SetStateAction<DbMemory[]>>;
-  joinPlan: (planId: string, userProfile: any) => void;
-  leavePlan: (planId: string, userId: string) => void;
-  passPlan: (planId: string, userId: string) => void;
-  waitlistPlan: (planId: string, userProfile: any) => void;
+  dbMemories: any[];
+  setDbMemories: React.Dispatch<React.SetStateAction<any[]>>;
+  createPlan: (plan: DbPlan, invitees: string[]) => Promise<any>;
+  joinPlan: (planId: string, userProfile: any) => Promise<void>;
+  leavePlan: (planId: string, leaverId: string) => Promise<void>;
+  passPlan: (planId: string, passerId: string) => Promise<void>;
+  waitlistPlan: (planId: string, userProfile: any) => Promise<void>;
   sendReminder: (planId: string, userId: string) => void;
-  ignoreReminder: (planId: string, userId: string) => void;
+  ignoreReminder: (planId: string, ignoreUserId: string) => void;
   getHomeFeedPlans: (userId: string) => Plan[];
   getHubPlans: (userId: string) => Plan[];
-  getParticipantCounts: (planUuid: string) => ParticipantCounts;
+  getParticipantCounts: (planId: string) => ParticipantCounts;
 }
 
-const PlansContext = createContext<PlansState | undefined>(undefined);
+const PlansContext = createContext<PlansContextType | undefined>(undefined);
 
-export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren<{ userId?: string }>) => {
+export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [dbPlans, setDbPlans] = useState<DbPlan[]>([]);
   const [dbPlanParticipants, setDbPlanParticipants] = useState<DbPlanParticipant[]>([]);
-  const [dbMemories, setDbMemories] = useState<DbMemory[]>([]);
+  const [dbMemories, setDbMemories] = useState<any[]>([]);
 
-  const [plans, setPlans] = useState<Plan[]>([]);
-
-  const { dbUsers } = useProfileStore();
-  const { dbCircleMembers } = useCirclesStore();
+  const { activeUserId: userId, dbUsers } = useProfileStore();
 
   const resolveUserUuid = (uId: string) => {
     const userObj = dbUsers.find(u => u.user_id === uId || u.id === uId);
     return userObj ? userObj.id : uId;
   };
 
-  const joinPlan = (planId: string, userProfile: any) => {
+  const refreshPlans = async () => {
+    try {
+      const res = await fetch("/api/db/fetch-all");
+      if (res.ok) {
+        const json = await res.json();
+        if (json.configured && !json.tables_missing) {
+          const d = json.data || {};
+          setDbPlans(d.plans || []);
+          setDbPlanParticipants(d.plan_participants || []);
+          setDbMemories(d.memories || []);
+          setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], userId));
+          console.log(`[PlansContext refreshPlans] Successfully refreshed plans state. Count: ${d.plans?.length}, Participants: ${d.plan_participants?.length}`);
+        }
+      }
+    } catch (err) {
+      console.error("[PlansContext refreshPlans] Failed to fetch updated state:", err);
+    }
+  };
+
+  const joinPlan = async (planId: string, userProfile: any) => {
     const matchedPlan = plans.find(p => p.id === planId);
     const planUuid = matchedPlan?.dbUuid || planId;
     const userUuid = userProfile.dbUuid || resolveUserUuid(userProfile.user_id || userId);
 
-    // 1. Update UI plans state
+    // Logging: status before action
+    const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id));
+    console.log(`[PlansContext] JOIN ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userProfile.name}`);
+    console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none (not invited/joined)");
+
+    // 1. Update UI plans state locally for immediate response
     setPlans(prevPlans => prevPlans.map(plan => {
       if (plan.id === planId) {
-        const alreadyJoined = plan.members.some(u => u.userId === userProfile.user_id && u.joinState === "going");
-        if (alreadyJoined) return plan;
+        const alreadyJoined = plan.members.some(u => u.userId === userProfile.user_id && (u.joinState === "going" || u.joinState === "host"));
+        if (alreadyJoined) {
+          console.log(`[PlansContext] User already joined or host. Skipping local UI update.`);
+          return plan;
+        }
 
-        const activeMembersCount = plan.members.filter(u => u.joinState === "going").length;
+        const activeMembersCount = plan.members.filter(u => u.joinState === "going" || u.joinState === "host").length;
         if (activeMembersCount >= plan.capacity) {
           console.warn(`[Planless] Cannot join ${plan.title}, capacity reached (${plan.capacity}). Routing to waitlist.`);
           return plan;
@@ -75,44 +102,31 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
           avatar: userProfile.avatar,
           joinState: "going",
           reminderState: "none",
-          joinedAt: new Date().toISOString()
+          joinedAt: new Date().toISOString(),
+          checkedIn: matchedPlan && matchedPlan.cost > 0
         };
 
         const newMembersList = [...plan.members.filter(m => m.userId !== newMember.userId), newMember];
+        const newJoinedCount = newMembersList.filter(m => m.joinState === "going" || m.joinState === "host").length;
+        const progressPct = plan.capacity > 0 ? Math.round((newJoinedCount / plan.capacity) * 100) : 0;
+        console.log(`[PlansContext] Local UI state calculated - joined count: ${newJoinedCount}/${plan.capacity} (${progressPct}%)`);
 
         return {
           ...plan,
           members: newMembersList,
           joinedUsers: newMembersList,
-          confirmedCount: newMembersList.filter(m => m.joinState === "going").length
+          confirmedCount: newJoinedCount
         };
       }
       return plan;
     }));
 
-    // 2. Sync DB Participants
-    setDbPlanParticipants(prev => {
-      const exists = prev.some(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id));
-      if (exists) {
-        return prev.map(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id) ? { ...p, status: "going" as const } : p);
-      }
-      return [...prev, {
-        participant_id: `PP_${Date.now()}`,
-        plan_id: planUuid,
-        user_id: userUuid,
-        status: "going" as const,
-        payment_status: matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid",
-        joined_at: new Date().toISOString()
-      }];
-    });
-
-    // 3. Database Persistence
+    // 2. Database Persistence
     if (planUuid && userUuid) {
-      const existing = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id));
-      if (existing && existing.id) {
-        updateParticipantStatus(existing.id, "going", matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid");
+      if (existingBefore && existingBefore.id) {
+        await updateParticipantStatus(existingBefore.id, "going", matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid");
       } else {
-        insertParticipant({
+        await insertParticipant({
           plan_id: planUuid,
           user_id: userUuid,
           status: "going",
@@ -120,15 +134,28 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
           joined_at: new Date().toISOString()
         });
       }
-      syncUserStats(userUuid, "join_plan");
+      await syncUserStats(userUuid, "join_plan");
     }
+
+    // 3. Sync state from DB
+    await refreshPlans();
+
+    // Logging: status after action
+    const refSnapshot = await fetch("/api/db/fetch-all").then(r => r.json()).catch(() => null);
+    const existingAfter = refSnapshot?.data?.plan_participants?.find((p: any) => p.plan_id === planUuid && p.user_id === userUuid);
+    console.log(`[PlansContext] Participant status AFTER action & DB refresh:`, existingAfter ? existingAfter.status : "none");
   };
 
-  const waitlistPlan = (planId: string, userProfile: any) => {
+  const waitlistPlan = async (planId: string, userProfile: any) => {
     const matchedPlan = plans.find(p => p.id === planId);
     const planUuid = matchedPlan?.dbUuid || planId;
     const userUuid = userProfile.dbUuid || resolveUserUuid(userProfile.user_id || userId);
 
+    const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id));
+    console.log(`[PlansContext] WAITLIST ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userProfile.name}`);
+    console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none");
+
+    // 1. Update UI plans state locally
     setPlans(prevPlans => prevPlans.map(plan => {
       if (plan.id === planId) {
         const alreadyWaitlisted = plan.members.some(u => u.userId === userProfile.user_id && u.joinState === "waitlist");
@@ -155,28 +182,12 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
       return plan;
     }));
 
-    setDbPlanParticipants(prev => {
-      const exists = prev.some(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id));
-      if (exists) {
-        return prev.map(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id) ? { ...p, status: "waitlist" as const } : p);
-      }
-      return [...prev, {
-        participant_id: `PP_${Date.now()}`,
-        plan_id: planUuid,
-        user_id: userUuid,
-        status: "waitlist" as const,
-        payment_status: "unpaid" as const,
-        joined_at: new Date().toISOString()
-      }];
-    });
-
-    // Database Persistence
+    // 2. Database Persistence
     if (planUuid && userUuid) {
-      const existing = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id));
-      if (existing && existing.id) {
-        updateParticipantStatus(existing.id, "waitlist", "unpaid");
+      if (existingBefore && existingBefore.id) {
+        await updateParticipantStatus(existingBefore.id, "waitlist", "unpaid");
       } else {
-        insertParticipant({
+        await insertParticipant({
           plan_id: planUuid,
           user_id: userUuid,
           status: "waitlist",
@@ -185,13 +196,26 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
         });
       }
     }
+
+    // 3. Sync state from DB
+    await refreshPlans();
+
+    // Logging: status after action
+    const refSnapshot = await fetch("/api/db/fetch-all").then(r => r.json()).catch(() => null);
+    const existingAfter = refSnapshot?.data?.plan_participants?.find((p: any) => p.plan_id === planUuid && p.user_id === userUuid);
+    console.log(`[PlansContext] Participant status AFTER action & DB refresh:`, existingAfter ? existingAfter.status : "none");
   };
 
-  const leavePlan = (planId: string, leaverId: string) => {
+  const leavePlan = async (planId: string, leaverId: string) => {
     const matchedPlan = plans.find(p => p.id === planId);
     const planUuid = matchedPlan?.dbUuid || planId;
     const userUuid = resolveUserUuid(leaverId);
 
+    const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === leaverId));
+    console.log(`[PlansContext] LEAVE ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${leaverId}`);
+    console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none");
+
+    // 1. Update UI plans state locally
     setPlans(prevPlans => prevPlans.map(plan => {
       if (plan.id === planId) {
         const newMembersList = plan.members.filter(u => u.userId !== leaverId);
@@ -205,26 +229,34 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
       return plan;
     }));
 
-    setDbPlanParticipants(prev => prev.filter(p => !((p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === leaverId))));
-
-    // Database Persistence
-    if (planUuid && userUuid) {
-      const existing = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === leaverId));
-      if (existing && existing.id) {
-        fetch("/api/db/delete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ table: "plan_participants", match: { id: existing.id } })
-        }).catch(err => console.error("Failed to delete participant:", err));
-      }
+    // 2. Database Persistence
+    if (planUuid && userUuid && existingBefore && existingBefore.id) {
+      await fetch("/api/db/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "plan_participants", match: { id: existingBefore.id } })
+      }).catch(err => console.error("Failed to delete participant:", err));
     }
+
+    // 3. Sync state from DB
+    await refreshPlans();
+
+    // Logging: status after action
+    const refSnapshot = await fetch("/api/db/fetch-all").then(r => r.json()).catch(() => null);
+    const existingAfter = refSnapshot?.data?.plan_participants?.find((p: any) => p.plan_id === planUuid && p.user_id === userUuid);
+    console.log(`[PlansContext] Participant status AFTER action & DB refresh:`, existingAfter ? existingAfter.status : "none");
   };
 
-  const passPlan = (planId: string, passerId: string) => {
+  const passPlan = async (planId: string, passerId: string) => {
     const matchedPlan = plans.find(p => p.id === planId);
     const planUuid = matchedPlan?.dbUuid || planId;
     const userUuid = resolveUserUuid(passerId);
 
+    const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === passerId));
+    console.log(`[PlansContext] PASS ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${passerId}`);
+    console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none");
+
+    // 1. Update UI plans state locally
     setPlans(prevPlans => prevPlans.map(plan => {
       if (plan.id === planId) {
         const newMembersList = plan.members.map(u =>
@@ -240,28 +272,12 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
       return plan;
     }));
 
-    setDbPlanParticipants(prev => {
-      const exists = prev.some(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === passerId));
-      if (exists) {
-        return prev.map(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === passerId) ? { ...p, status: "skipped" as const } : p);
-      }
-      return [...prev, {
-        participant_id: `PP_${Date.now()}`,
-        plan_id: planUuid,
-        user_id: userUuid,
-        status: "skipped" as const,
-        payment_status: "unpaid" as const,
-        joined_at: new Date().toISOString()
-      }];
-    });
-
-    // Database Persistence
+    // 2. Database Persistence
     if (planUuid && userUuid) {
-      const existing = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === passerId));
-      if (existing && existing.id) {
-        updateParticipantStatus(existing.id, "passed", "unpaid");
+      if (existingBefore && existingBefore.id) {
+        await updateParticipantStatus(existingBefore.id, "passed", "unpaid");
       } else {
-        insertParticipant({
+        await insertParticipant({
           plan_id: planUuid,
           user_id: userUuid,
           status: "passed",
@@ -270,6 +286,14 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
         });
       }
     }
+
+    // 3. Sync state from DB
+    await refreshPlans();
+
+    // Logging: status after action
+    const refSnapshot = await fetch("/api/db/fetch-all").then(r => r.json()).catch(() => null);
+    const existingAfter = refSnapshot?.data?.plan_participants?.find((p: any) => p.plan_id === planUuid && p.user_id === userUuid);
+    console.log(`[PlansContext] Participant status AFTER action & DB refresh:`, existingAfter ? existingAfter.status : "none");
   };
 
   // Reminder System
@@ -315,16 +339,22 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
       pp => pp.plan_id === planUuid || (pp as any).id === planUuid
     );
 
+    const host      = rows.filter(r => r.status === "host").length;
     const going     = rows.filter(r => r.status === "going").length;
     const waitlist  = rows.filter(r => r.status === "waitlist").length;
     const delivered = rows.filter(r => r.status === "delivered").length;
-    // "seen" is not yet a DB enum value — keep as 0 unless schema adds it
-    const seen      = 0;
-    const passed    = rows.filter(r => r.status === "passed").length;
+    const seen      = rows.filter(r => r.status === "seen").length;
+    const passed    = rows.filter(r => r.status === "passed" || r.status === "skipped").length;
     const pending   = delivered + seen;
     const total     = rows.length;
 
-    return { going, waitlist, delivered, seen, passed, pending, total };
+    const joinedCountVal = host + going;
+    console.log(`[getParticipantCounts] PlanUuid: ${planUuid}`);
+    console.log(`[getParticipantCounts] DB raw participants count: ${rows.length}`);
+    console.log(`[getParticipantCounts] breakdown - host: ${host}, going: ${going}, waitlist: ${waitlist}, delivered: ${delivered}, seen: ${seen}, passed: ${passed}, pending: ${pending}`);
+    console.log(`[getParticipantCounts] Joined count calculation (host + going): ${joinedCountVal}`);
+
+    return { host, going, waitlist, delivered, seen, passed, pending, total };
   };
 
   const getHomeFeedPlans = (userId: string) => {
