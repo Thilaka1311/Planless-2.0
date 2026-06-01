@@ -67,8 +67,27 @@ export const PlansScreen = ({
     return 8;
   };
 
+  const userUuid = userProfile?.dbUuid || "";
+  console.log(`[PlansScreen Visibility Filter] Current user UUID: "${userUuid}"`);
+
+  const involvedPlans = plans.filter(p => {
+    // A user is involved if they are in the plan's members list matching by UUID
+    const isParticipant = p.members.some(
+      m => m.userUuid && m.userUuid === userUuid
+    );
+    if (!isParticipant) {
+      console.log(`[PlansScreen EXCLUDED] Plan: "${p.title}" (ID: ${p.id}) - Current user UUID "${userUuid}" is not a participant/host.`);
+    }
+    return isParticipant;
+  });
+
+  const visiblePlanIds = involvedPlans.map(p => p.id);
+  const matchingDbParticipants = dbPlanParticipants.filter(pp => pp.user_id === userUuid);
+  console.log(`[PlansScreen INVOLVED] Visible plan IDs:`, visiblePlanIds);
+  console.log(`[PlansScreen INVOLVED] Participant records used:`, matchingDbParticipants);
+
   // Filter plans based on searchQuery and plansFilter
-  const filteredPlans = plans.filter((p) => {
+  const filteredPlans = involvedPlans.filter((p) => {
     const planCircle = p.circleId ? circles.find((c) => c.id === p.circleId) : null;
     const circleName = planCircle?.name || "";
     const matchesSearch =
@@ -80,7 +99,7 @@ export const PlansScreen = ({
     if (plansFilter === "all") return true;
 
     const myParticipant = dbPlanParticipants.find(
-      (pp) => pp.plan_id === p.id && (pp.user_id === activeUserId || pp.user_id === userProfile.dbUuid)
+      (pp) => pp.plan_id === p.id && pp.user_id === userUuid
     );
     const isGoing = myParticipant?.status === "going";
     const isWaitlisted =
@@ -340,7 +359,7 @@ export const PlansScreen = ({
           {SEGMENTS.map((seg) => {
             const active = plansFilter === seg.key;
             // Dynamic count calculation matching segment filters perfectly
-            const count = plans.filter((p) => {
+            const count = involvedPlans.filter((p) => {
               const planCircle = p.circleId ? circles.find((c) => c.id === p.circleId) : null;
               const circleName = planCircle?.name || "";
               const matchesSearch =
@@ -350,7 +369,7 @@ export const PlansScreen = ({
               if (!matchesSearch) return false;
 
               const myParticipant = dbPlanParticipants.find(
-                (pp) => pp.plan_id === p.id && (pp.user_id === activeUserId || pp.user_id === userProfile.dbUuid)
+                (pp) => pp.plan_id === p.id && pp.user_id === userUuid
               );
               const isGoing = myParticipant?.status === "going";
               const isWaitlisted =
