@@ -122,89 +122,42 @@ const PlanReelCard = ({
   };
 
   const getParticipantStatusList = () => {
-    const host = {
-      name: plan.creatorName || "Raghavan",
-      avatar: plan.creatorAvatar || getInitialsAvatar(plan.creatorName || "Raghavan"),
-      status: "Going",
-      isHost: true
-    };
+    // Source of truth: plan.members is mapped from DB plan_participants rows
+    const hostEntry = plan.members.find(m => m.joinState === "host") || null;
+    const hostName = plan.creatorName || "Host";
+    const hostAvatar = plan.creatorAvatar || getInitialsAvatar(hostName);
 
-    const allGoing = [
-      host,
-      ...plan.joinedUsers
-        .filter(u => u.name !== host.name)
-        .map(u => ({
-          name: u.name,
-          avatar: u.avatar || getInitialsAvatar(u.name),
-          status: "Going",
-          isHost: false
-        }))
-    ];
+    const going: { name: string; avatar: string; status: string; isHost: boolean }[] = [];
+    const waitlist: { name: string; avatar: string; status: string }[] = [];
+    const delivered: { name: string; avatar: string; status: string }[] = [];
+    const seen: { name: string; avatar: string; status: string }[] = [];
+    const skipped: { name: string; avatar: string; status: string }[] = [];
 
-    if (allGoing.length === 1) {
-      allGoing.push(
-        { name: "Medhaj", avatar: getInitialsAvatar("Medhaj"), status: "Going", isHost: false },
-        { name: "Rahul", avatar: getInitialsAvatar("Rahul"), status: "Going", isHost: false }
-      );
-    }
+    // Always put host first in going
+    going.push({ name: hostName, avatar: hostAvatar, status: "Going", isHost: true });
 
-    const going = allGoing.slice(0, maxSpots);
-    const overflowToWaitlist = allGoing.slice(maxSpots).map(u => ({
-      name: u.name,
-      avatar: u.avatar,
-      status: "Waitlist"
-    }));
+    for (const m of plan.members) {
+      // Skip the host record itself (already added)
+      if (m.joinState === "host") continue;
 
-    const waitlist = [
-      ...overflowToWaitlist,
-      ...(plan.waitlistUsers || []),
-      ...(plan.interestedUsers || [])
-    ].map(u => ({
-      name: u.name,
-      avatar: u.avatar || getInitialsAvatar(u.name),
-      status: "Waitlist"
-    }));
+      const entry = {
+        name: m.name,
+        avatar: m.avatar || getInitialsAvatar(m.name),
+      };
 
-    if (waitlist.length === 0 && (plan.category === "sports" || plan.title.toLowerCase().includes("football"))) {
-      if (going.length >= maxSpots) {
-        waitlist.push({
-          name: "Raghavan",
-          avatar: getInitialsAvatar("Raghavan"),
-          status: "Waitlist"
-        });
+      if (m.joinState === "going") {
+        going.push({ ...entry, status: "Going", isHost: false });
+      } else if (m.joinState === "waitlist") {
+        waitlist.push({ ...entry, status: "Waitlist" });
+      } else if (m.joinState === "delivered") {
+        delivered.push({ ...entry, status: "Delivered" });
+      } else if (m.joinState === "passed" || m.joinState === "skipped" as any) {
+        skipped.push({ ...entry, status: "Skipped" });
+      } else {
+        // Any other status (e.g. unknown): treat as delivered/pending
+        delivered.push({ ...entry, status: "Delivered" });
       }
     }
-
-    const deliveredNames = ["Sudeshna", "Ravi"].filter(
-      n => n !== host.name && !going.some(g => g.name === n) && !waitlist.some(w => w.name === n)
-    );
-    const delivered = deliveredNames.map(name => ({
-      name,
-      avatar: getInitialsAvatar(name),
-      status: "Delivered"
-    }));
-
-    const seenNames = ["Guhan", "Neelesh"].filter(
-      n => n !== host.name && !going.some(g => g.name === n) && !waitlist.some(w => w.name === n)
-    );
-    const seen = seenNames.map(name => ({
-      name,
-      avatar: getInitialsAvatar(name),
-      status: "Seen"
-    }));
-
-    const skippedNames = ["Pratyush", "Renjith"].filter(
-      n => n !== host.name &&
-        !going.some(g => g.name === n) &&
-        !waitlist.some(w => w.name === n) &&
-        !deliveredNames.includes(n) &&
-        !seenNames.includes(n)
-    );
-    const skipped = skippedNames.map(name => ({
-      name,
-      avatar: getInitialsAvatar(name),
-      status: "Skipped"
-    }));
 
     return { going, waitlist, delivered, seen, skipped };
   };
@@ -251,8 +204,10 @@ const PlanReelCard = ({
     ? "/navkis_matchday.png"
     : plan.coverImage;
 
+  // DB-accurate counts from plan.members (joinState mapped from plan_participants.status)
   const maxSpots = plan.maxSpots || (plan.category === "movies" ? 10 : plan.category === "sports" ? 14 : 8);
-  const currentCount = plan.joinedUsers ? plan.joinedUsers.filter(u => u.joinState !== "waitlist").length : (plan.confirmedCount || 0);
+  const goingMembers = plan.members.filter(m => m.joinState === "going" || m.joinState === "host");
+  const currentCount = goingMembers.length;
   const isFull = currentCount >= maxSpots;
 
   let barGradient = "from-[#ff8b66] to-[#fc5c42]";

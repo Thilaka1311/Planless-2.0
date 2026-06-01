@@ -1,6 +1,7 @@
 import React from "react";
 import { ArrowLeft, Share2 } from "lucide-react";
 import { Plan, UserProfile } from "../../core/types";
+import { usePlansStore } from "../../features/plans/state/PlansContext";
 
 interface DetailedPlanModalProps {
   selectedPlan: Plan;
@@ -23,6 +24,25 @@ export default function DetailedPlanModal({
   setPassedByPlanId,
   triggerToast
 }: DetailedPlanModalProps) {
+  const { getParticipantCounts } = usePlansStore();
+
+  // Use the plan UUID (dbUuid) for DB lookups; fall back to plan.id
+  const planUuid = (selectedPlan as any).dbUuid || selectedPlan.id;
+  const counts = getParticipantCounts(planUuid);
+
+  // Going = participants with status "going" (excludes the host record)
+  const goingCount = counts.going;
+
+  // Pending = delivered + seen (invited but haven't responded yet)
+  const pendingCount = counts.pending;
+
+  // Passed = participants who explicitly passed
+  const passedCount = counts.passed + (passedByPlanId[selectedPlan.id] || []).length;
+
+  // Progress bar: going / (going + pending + waitlist)
+  const activeInvited = goingCount + pendingCount + counts.waitlist;
+  const goingPct = activeInvited > 0 ? Math.round((goingCount / activeInvited) * 100) : 0;
+
   return (
     <div
       id="detailed_plan_modal"
@@ -45,7 +65,7 @@ export default function DetailedPlanModal({
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-6">
-        {/* Host Control Center */}
+        {/* Host Control Center — shown only to the host */}
         {selectedPlan.creatorName === userProfile.name && (
           <div className="bg-zinc-950 border border-white/[0.04] rounded-[2.2rem] p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.8)] text-left animate-fade-in animate-slide-up">
             <div className="flex justify-between items-center">
@@ -62,7 +82,6 @@ export default function DetailedPlanModal({
                 onClick={(e) => {
                   e.stopPropagation();
                   if (reminderSentPlanIds.includes(selectedPlan.id)) return;
-
                   setReminderSentPlanIds(prev => [...prev, selectedPlan.id]);
                   triggerToast("Reminder sent to pending participants");
 
@@ -82,32 +101,54 @@ export default function DetailedPlanModal({
               </button>
             </div>
 
+            {/* DB-accurate participant stats */}
             <div className="grid grid-cols-3 gap-2.5 pt-1 text-center">
               <div className="bg-zinc-900/60 rounded-2xl p-3 border border-white/[0.02]">
                 <div className="text-[16px] font-display font-black text-emerald-400">
-                  {selectedPlan.joinedUsers.length}
+                  {goingCount}
                 </div>
                 <div className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider mt-0.5">Going</div>
               </div>
 
               <div className="bg-zinc-900/60 rounded-2xl p-3 border border-white/[0.02]">
                 <div className="text-[16px] font-display font-black text-amber-400">
-                  {reminderSentPlanIds.includes(selectedPlan.id) ? 0 : 2}
+                  {pendingCount}
                 </div>
                 <div className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider mt-0.5">Pending</div>
               </div>
 
               <div className="bg-zinc-900/60 rounded-2xl p-3 border border-white/[0.02]">
                 <div className="text-[16px] font-display font-black text-rose-400">
-                  {(passedByPlanId[selectedPlan.id] || []).length + (reminderSentPlanIds.includes(selectedPlan.id) ? 2 : 0)}
+                  {passedCount}
                 </div>
                 <div className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider mt-0.5">Passed</div>
               </div>
             </div>
+
+            {/* Acceptance progress bar */}
+            {activeInvited > 0 && (
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center text-[8px] font-mono text-zinc-600 uppercase tracking-widest">
+                  <span>Acceptance Rate</span>
+                  <span className="text-zinc-400">{goingPct}%</span>
+                </div>
+                <div className="h-[3px] w-full bg-zinc-900 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-700 ease-out"
+                    style={{ width: `${goingPct}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[7.5px] font-mono text-zinc-600">
+                  <span>{goingCount} going</span>
+                  {counts.waitlist > 0 && <span className="text-amber-500/70">{counts.waitlist} waitlisted</span>}
+                  {pendingCount > 0 && <span>{pendingCount} pending</span>}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Core details Quote layout readouts */}
+        {/* Core details */}
         <div className="bg-zinc-905 border border-zinc-900 rounded-3xl p-5 space-y-4 text-left select-none">
           <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-[#ff8b66] font-bold">COORDINATED SPECS</span>
           <h2 className="text-xl font-display font-black text-white leading-tight uppercase tracking-tight">{selectedPlan.title}</h2>
@@ -130,6 +171,18 @@ export default function DetailedPlanModal({
           {selectedPlan.description && (
             <div className="bg-zinc-950/60 border border-zinc-900 rounded-xl p-3 text-left">
               <p className="text-[11px] text-zinc-400 leading-relaxed italic">"{selectedPlan.description}"</p>
+            </div>
+          )}
+
+          {/* Participant breakdown for non-hosts */}
+          {selectedPlan.creatorName !== userProfile.name && counts.total > 0 && (
+            <div className="pt-1 space-y-2">
+              <span className="text-[8px] font-mono text-zinc-600 uppercase tracking-widest">Participant Summary</span>
+              <div className="flex gap-3">
+                <span className="text-[10px] font-mono text-emerald-400">✓ {goingCount} Going</span>
+                {counts.waitlist > 0 && <span className="text-[10px] font-mono text-amber-400">⏳ {counts.waitlist} Waitlisted</span>}
+                {pendingCount > 0 && <span className="text-[10px] font-mono text-zinc-500">⋯ {pendingCount} Pending</span>}
+              </div>
             </div>
           )}
         </div>

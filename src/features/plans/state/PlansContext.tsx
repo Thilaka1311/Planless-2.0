@@ -5,6 +5,16 @@ import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUse
 import { useProfileStore } from "../../profile/state/ProfileContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
 
+interface ParticipantCounts {
+  going: number;
+  waitlist: number;
+  delivered: number;
+  seen: number;
+  passed: number;
+  pending: number;  // delivered + seen (invited but not yet responded)
+  total: number;    // all non-host participants
+}
+
 interface PlansState {
   plans: Plan[];
   setPlans: React.Dispatch<React.SetStateAction<Plan[]>>;
@@ -22,6 +32,7 @@ interface PlansState {
   ignoreReminder: (planId: string, userId: string) => void;
   getHomeFeedPlans: (userId: string) => Plan[];
   getHubPlans: (userId: string) => Plan[];
+  getParticipantCounts: (planUuid: string) => ParticipantCounts;
 }
 
 const PlansContext = createContext<PlansState | undefined>(undefined);
@@ -248,12 +259,12 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
     if (planUuid && userUuid) {
       const existing = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === passerId));
       if (existing && existing.id) {
-        updateParticipantStatus(existing.id, "skipped", "unpaid");
+        updateParticipantStatus(existing.id, "passed", "unpaid");
       } else {
         insertParticipant({
           plan_id: planUuid,
           user_id: userUuid,
-          status: "skipped",
+          status: "passed",
           payment_status: "unpaid",
           joined_at: new Date().toISOString()
         });
@@ -294,10 +305,38 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
     passPlan(planId, ignoreUserId);
   };
 
+  /**
+   * Returns DB-accurate participant counts for a plan.
+   * planUuid can be either the UUID id or the short plan_id —
+   * we match against both to handle legacy data.
+   */
+  const getParticipantCounts = (planUuid: string): ParticipantCounts => {
+    const rows = dbPlanParticipants.filter(
+      pp => pp.plan_id === planUuid || (pp as any).id === planUuid
+    );
+
+    const going     = rows.filter(r => r.status === "going").length;
+    const waitlist  = rows.filter(r => r.status === "waitlist").length;
+    const delivered = rows.filter(r => r.status === "delivered").length;
+    // "seen" is not yet a DB enum value — keep as 0 unless schema adds it
+    const seen      = 0;
+    const passed    = rows.filter(r => r.status === "passed").length;
+    const pending   = delivered + seen;
+    const total     = rows.length;
+
+    return { going, waitlist, delivered, seen, passed, pending, total };
+  };
+
   const getHomeFeedPlans = (userId: string) => {
+    // userId may be either the short user_id ("U001") or UUID
     const filtered = plans.filter(plan => {
-      const member = plan.members.find(m => m.userId === userId);
-      if (member && (member.joinState === "passed" || member.joinState === "skipped" || member.joinState === "passed" as any)) return false;
+      const member = plan.members.find(
+        m => m.userId === userId || (m as any).userUuid === userId
+      );
+      if (!member) return false;
+      const state = member.joinState;
+      // Home reel shows pending/delivered invites only
+      if (state === "going" || state === "host" || state === "passed" || state === "skipped") return false;
       return true;
     });
 
@@ -346,10 +385,13 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
   };
 
   const getHubPlans = (userIdStr: string) => {
+    // Show all plans where user is a participant (host or going) — for the Plans hub tab
     return plans.filter(plan => {
-      if (plan.hostId === userIdStr || plan.creatorId === "u_self") return true;
-      const member = plan.members.find(m => m.userId === userIdStr);
-      return member?.joinState === "going";
+      if (plan.hostId === "u_self") return true; // hosted by logged-in user
+      const member = plan.members.find(
+        m => m.userId === userIdStr || (m as any).userUuid === userIdStr
+      );
+      return member?.joinState === "going" || member?.joinState === "host";
     });
   };
 
@@ -359,7 +401,7 @@ export const PlansProvider = ({ children, userId = "" }: React.PropsWithChildren
       dbPlans, setDbPlans, 
       dbPlanParticipants, setDbPlanParticipants,
       dbMemories, setDbMemories,
-      joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans 
+      joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans, getParticipantCounts 
     }}>
       {children}
     </PlansContext.Provider>

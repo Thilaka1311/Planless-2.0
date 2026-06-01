@@ -116,7 +116,7 @@ export interface DbMemory {
 // COMPATIBLE FRONTEND INTERACTIVES VIEW MODELS
 // ---------------------------------------------
 
-export type PlanState = "going" | "passed" | "waitlist" | "unanswered" | "delivered" | "seen" | "skipped";
+export type PlanState = "going" | "passed" | "waitlist" | "unanswered" | "delivered" | "seen" | "skipped" | "host";
 
 export interface PlanMember {
   userId: string;
@@ -139,7 +139,7 @@ export interface Plan {
   groupId: string | null;
   hostId: string;
   members: PlanMember[];
-  capacity: number;
+  capacity?: number;
   date: string;
   time: string;
   location: string;
@@ -151,7 +151,7 @@ export interface Plan {
   category: "movies" | "sports" | "restaurants" | "custom";
   cost: number;
   confirmedCount: number;
-  maxSpots: number;
+  maxSpots?: number;
   coverImage: string;
   creatorId: string;
   creatorName: string;

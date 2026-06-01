@@ -132,11 +132,20 @@ export async function fetchSnapshot(): Promise<DbSnapshot | null> {
     if (!res.ok) return null;
     const json = await res.json();
     if (!json.configured || json.tables_missing) return null;
+    const rawPlans = json.data?.plans || [];
+    const rawParticipants = json.data?.plan_participants || [];
+    const uuids = rawPlans.map((p: any) => p.id);
+    const uniqueUuids = [...new Set(uuids)];
+    const duplicates = uuids.filter((item: any, index: number) => uuids.indexOf(item) !== index);
+    console.log(`[DbSnapshot Audit] Raw plans count: ${rawPlans.length}, participants: ${rawParticipants.length}, unique UUIDs: ${uniqueUuids.length}`);
+    if (duplicates.length > 0) {
+      console.error(`[DbSnapshot Audit] Duplicate plan UUIDs:`, duplicates);
+    }
 
     return {
       users:         (json.data?.users             || []) as DbUser[],
-      plans:         (json.data?.plans             || []) as DbPlan[],
-      participants:  (json.data?.plan_participants  || []) as DbParticipant[],
+      plans:         rawPlans as DbPlan[],
+      participants:  rawParticipants as DbParticipant[],
       circles:       (json.data?.circles           || []) as DbCircle[],
       circleMembers: (json.data?.circle_members     || []) as DbCircleMember[],
       userStats:     (json.data?.user_stats        || []) as DbUserStats[],

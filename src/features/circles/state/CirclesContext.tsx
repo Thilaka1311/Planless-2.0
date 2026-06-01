@@ -77,7 +77,7 @@ export const CirclesProvider = ({
               joined_at: new Date().toISOString()
             },
             ...selectedFriendIds.map(fid => {
-              const uObj = dbUsers.find(u => u.user_id === fid || u.id === fid);
+              const uObj = dbUsers.find(u => u.user_id === fid || (u as any).id === fid);
               const uUuid = uObj ? (uObj as any).id : fid;
               return {
                 circle_id: circleUuid,

@@ -43,9 +43,23 @@ export const mapPlansToLegacyPlans = (
 ): Plan[] => {
   const activeUserObj = usersList.find(u => u.user_id === activeUserId || (u as any).id === activeUserId);
   const activeUuid = activeUserObj ? (activeUserObj as any).id : activeUserId;
+  const activeShortId = activeUserObj ? activeUserObj.user_id : activeUserId;
+
+  const rawPlansCount = plansList.length;
+  const rawParticipantsCount = participants.length;
+  const uuids = plansList.map(p => p.id || p.plan_id || "");
+  const uniqueUuids = [...new Set(uuids.filter(Boolean))];
+  const duplicates = uuids.filter((item, index) => item && uuids.indexOf(item) !== index);
+
+  console.log(`[mapPlansToLegacyPlans Audit] Raw plans count from database: ${rawPlansCount}`);
+  console.log(`[mapPlansToLegacyPlans Audit] Raw plan_participants count: ${rawParticipantsCount}`);
+  console.log(`[mapPlansToLegacyPlans Audit] Number of unique plan UUIDs: ${uniqueUuids.length}`);
+  if (duplicates.length > 0) {
+    console.error(`[mapPlansToLegacyPlans Audit] Duplicate plan UUIDs detected:`, duplicates);
+  }
 
   return plansList.map(p => {
-    const isOwner = p.created_by === activeUserId || p.created_by === activeUuid;
+    const isOwner = p.created_by === activeUserId || p.created_by === activeUuid || p.created_by === activeShortId;
     const creator = usersList.find(u => (u as any).id === p.created_by || u.user_id === p.created_by) || {
       user_id: p.created_by,
       username: "host",
@@ -76,16 +90,21 @@ export const mapPlansToLegacyPlans = (
 
     const members = uniqueParticipants.map(ip => {
       const u = usersList.find(user => (user as any).id === ip.user_id || user.user_id === ip.user_id);
-      if (!u) return null;
+      if (!u) {
+        // Participant exists in DB but user not found in snapshot — skip silently
+        console.warn(`[mappers] participant user_id ${ip.user_id} not found in users list`);
+        return null;
+      }
 
       return {
-        userId: u.user_id,
+        userId: u.user_id,       // short sequential ID e.g. "U001" — used for all UI comparisons
+        userUuid: (u as any).id, // UUID — stored for DB writes
         name: u.full_name,
         avatar: u.profile_photo,
         joinState: ip.status as any,
         reminderState: "none" as const,
         joinedAt: ip.joined_at,
-        checkedIn: ip.payment_status === "paid" // maps payment checkedIn flag representation
+        checkedIn: ip.payment_status === "paid"
       };
     }).filter(Boolean) as any[];
 
@@ -141,8 +160,8 @@ export const mapPlansToLegacyPlans = (
 
     return {
       // Strict Backend Contracts
-      id: p.plan_id,
-      dbUuid: (p as any).id,
+      id: p.id || p.plan_id || "",
+      dbUuid: p.id || p.plan_id || "",
       title: p.title,
       groupId: p.circle_id,
       hostId: isOwner ? "u_self" : p.created_by,

@@ -26,6 +26,7 @@ interface PlanPreviewStepProps {
   } | null;
   setCreateFlowStep: (step: "BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW") => void;
   handleHostPlanSubmit: () => void;
+  isSubmitting: boolean;
 }
 
 export const PlanPreviewStep = ({
@@ -42,7 +43,8 @@ export const PlanPreviewStep = ({
   setNewPlanUploadedImage,
   selectedExperience,
   setCreateFlowStep,
-  handleHostPlanSubmit
+  handleHostPlanSubmit,
+  isSubmitting
 }: PlanPreviewStepProps) => {
   const defaultCustomCover = "https://images.unsplash.com/photo-1511632765486-a01980e01a18?auto=format&fit=crop&q=80&w=600";
 
@@ -165,9 +167,12 @@ export const PlanPreviewStep = ({
         <button
           id="host_plan_submit_btn"
           type="submit"
-          className="w-full py-4 rounded-xl bg-[#ff5d41] text-white font-display font-black text-xs uppercase tracking-widest hover:bg-opacity-80 active:scale-[0.99] transition-all text-center cursor-pointer shadow-lg flex items-center justify-center gap-2 font-bold"
+          disabled={isSubmitting}
+          className={`w-full py-4 rounded-xl bg-[#ff5d41] text-white font-display font-black text-xs uppercase tracking-widest hover:bg-opacity-80 active:scale-[0.99] transition-all text-center shadow-lg flex items-center justify-center gap-2 font-bold ${
+            isSubmitting ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
+          }`}
         >
-          <span>Host Plan</span>
+          <span>{isSubmitting ? "Hosting..." : "Host Plan"}</span>
         </button>
       </form>
     </div>

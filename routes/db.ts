@@ -45,6 +45,20 @@ router.get("/fetch-all", async (req, res) => {
             }
           } else {
             results[table] = data || [];
+            if (table === "plans") {
+              const plansList = data || [];
+              const uuids = plansList.map(p => p.id);
+              const uniqueUuids = [...new Set(uuids)];
+              const duplicates = uuids.filter((item, index) => uuids.indexOf(item) !== index);
+              console.log(`[Supabase DB Audit] Raw plans count from database: ${plansList.length}`);
+              console.log(`[Supabase DB Audit] Number of unique plan UUIDs: ${uniqueUuids.length}`);
+              if (duplicates.length > 0) {
+                console.error(`[Supabase DB Audit] Duplicate plan UUIDs detected:`, duplicates);
+              }
+            }
+            if (table === "plan_participants") {
+              console.log(`[Supabase DB Audit] Raw plan_participants count: ${data?.length || 0}`);
+            }
           }
         } catch (tableErr: any) {
           console.warn(`[Supabase Fetch Sync] Table ${table} not queryable yet:`, tableErr.message || tableErr);

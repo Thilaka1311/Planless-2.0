@@ -23,7 +23,6 @@ interface BrowseExperiencesStepProps {
   setNewPlanLocation: (val: string) => void;
   setNewPlanTime: (val: string) => void;
   setNewPlanCost: (val: string) => void;
-  setNewPlanSpots: (val: string) => void;
   setCreateFlowStep: (step: "BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW") => void;
   newPlanCategory: string;
   setNewPlanCategory: (cat: string) => void;
@@ -40,7 +39,6 @@ export const BrowseExperiencesStep = ({
   setNewPlanLocation,
   setNewPlanTime,
   setNewPlanCost,
-  setNewPlanSpots,
   setCreateFlowStep,
   newPlanCategory,
   setNewPlanCategory,
@@ -152,7 +150,6 @@ export const BrowseExperiencesStep = ({
           setNewPlanLocation("");
           setNewPlanTime("TODAY • 8:30 PM");
           setNewPlanCost("0");
-          setNewPlanSpots("6");
           setCreateFlowStep("DETAILS");
         }}
         className="relative bg-gradient-to-br from-zinc-900 to-zinc-955 border border-brand-peach/20 hover:border-brand-peach/40 rounded-3xl p-5 cursor-pointer shadow-xl transition-all select-none overflow-hidden group"
@@ -231,7 +228,6 @@ export const BrowseExperiencesStep = ({
                   setNewPlanLocation(item.venue);
                   setNewPlanTime(item.time);
                   setNewPlanCost(item.price.toString());
-                  setNewPlanSpots("6");
                   setCreateFlowStep("DETAILS");
                 }}
                 className="w-[85%] sm:w-[88%] shrink-0 snap-center rounded-3xl aspect-[10/12] relative overflow-hidden bg-zinc-950 border border-zinc-900 shadow-xl flex flex-col justify-between p-5 cursor-pointer hover:border-zinc-850 transition-all group"

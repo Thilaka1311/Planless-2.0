@@ -73,7 +73,6 @@ export const CreatePlanScreen = ({
   const [newPlanLocation, setNewPlanLocation] = useState("");
   const [newPlanTime, setNewPlanTime] = useState("");
   const [newPlanCost, setNewPlanCost] = useState("0");
-  const [newPlanSpots, setNewPlanSpots] = useState("6");
 
   // MVP Create Plan Flow Multi-step Stepper parameters
   const [createFlowStep, setCreateFlowStep] = useState<"BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW">("BROWSE");
@@ -98,6 +97,7 @@ export const CreatePlanScreen = ({
   const [newPlanUploadedImage, setNewPlanUploadedImage] = useState<string | null>(null);
   const [aiVibePrompt, setAiVibePrompt] = useState("");
   const [isGeneratingAiPlan, setIsGeneratingAiPlan] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Planless MVP Pre-configured Experience Templates
   const suggestedExperiences = [
@@ -211,7 +211,6 @@ export const CreatePlanScreen = ({
       setNewPlanLocation(planData.location || "");
       setNewPlanTime(planData.time || "TODAY • 8:30 PM");
       setNewPlanCost((planData.cost ?? 0).toString());
-      setNewPlanSpots((planData.maxSpots ?? 6).toString());
       setNewPlanCategory(planData.category || "custom");
       setCustomPlanNotes(planData.notes || "");
 
@@ -246,6 +245,11 @@ export const CreatePlanScreen = ({
 
   const handleHostPlanSubmit = async () => {
     console.log("[CreatePlanFlow] handleHostPlanSubmit triggered!");
+    if (isSubmitting) {
+      console.warn("[CreatePlanFlow] Submission blocked: already in progress");
+      return;
+    }
+    setIsSubmitting(true);
     console.log("[CreatePlanFlow] selectedExperience:", selectedExperience);
     console.log("[CreatePlanFlow] userProfile:", userProfile);
     console.log("[CreatePlanFlow] activeUserId:", activeUserId);
@@ -275,7 +279,6 @@ export const CreatePlanScreen = ({
     const locationToUse = (newPlanLocation || selectedExperience.venue || "TBD Meetup Location").trim();
     const timeToUse = (newPlanTime || selectedExperience.time || "TODAY • 8:30 PM").trim();
     const costToUse = parseFloat(newPlanCost) || 0;
-    const spotsToUse = parseInt(newPlanSpots) || 6;
 
     const planId = `p_${Date.now()}`;
     const coverUrl = newPlanUploadedImage || selectedExperience.image || categoryCovers.custom;
@@ -290,7 +293,6 @@ export const CreatePlanScreen = ({
       location: locationToUse,
       cost: costToUse,
       confirmedCount: 1,
-      maxSpots: spotsToUse,
       coverImage: coverUrl,
       creatorId: activeUserId,
       creatorName: userProfile.name,
@@ -322,13 +324,11 @@ export const CreatePlanScreen = ({
       circleId: audienceType === "circle" ? selectedCircleIds[0] || null : null,
       hostId: activeUserId,
       groupId: audienceType === "circle" ? selectedCircleIds[0] || null : null,
-      capacity: spotsToUse,
       paymentAmount: costToUse,
       status: "active",
       createdAt: new Date().toISOString(),
       waitlistUsers: [],
-      interestedUsers: [],
-      seatsLeft: spotsToUse - 1
+      interestedUsers: []
     };
 
     const matchedCircleObj = circles.find(c => c.id === selectedCircleIds[0]);
@@ -347,7 +347,6 @@ export const CreatePlanScreen = ({
       activity_type: created.category,
       location: created.location,
       datetime: parsedIsoDateTime, // Uses valid ISO 8601 format
-      max_people: created.maxSpots,
       split_amount: created.cost,
       payment_required: created.cost > 0,
       status: "active" as const,
@@ -378,25 +377,82 @@ export const CreatePlanScreen = ({
         throw new Error("Backend did not return the generated UUID primary key for the new plan.");
       }
 
-      // Build canonical DbPlanParticipant for owner with exact UUID reference keys
+      // Collect selected invitees UUIDs
+      const inviteeUuids: string[] = [];
+
+      if (audienceType === "circle" && selectedCircleIds.length > 0) {
+        const circleUuids = selectedCircleIds.map(cid => {
+          const c = circles.find(x => x.id === cid);
+          return c?.dbUuid || c?.id;
+        });
+        dbCircleMembers.forEach(m => {
+          const matchesCircle = circleUuids.includes(m.circle_id);
+          const isNotSelf = m.user_id !== userProfile.dbUuid;
+          if (matchesCircle && isNotSelf && !inviteeUuids.includes(m.user_id)) {
+            inviteeUuids.push(m.user_id);
+          }
+        });
+      } else if (audienceType === "friends" && selectedFriendIds.length > 0) {
+        selectedFriendIds.forEach(fid => {
+          const friendUser = dbUsers.find(u => u.user_id === fid || u.id === fid);
+          const friendUuid = friendUser ? friendUser.id : fid;
+          if (friendUuid !== userProfile.dbUuid && !inviteeUuids.includes(friendUuid)) {
+            inviteeUuids.push(friendUuid);
+          }
+        });
+      } else if (audienceType === "multiple" && selectedCircleIds.length > 0) {
+        const circleUuids = selectedCircleIds.map(cid => {
+          const c = circles.find(x => x.id === cid);
+          return c?.dbUuid || c?.id;
+        });
+        dbCircleMembers.forEach(m => {
+          const matchesCircle = circleUuids.includes(m.circle_id);
+          const isNotSelf = m.user_id !== userProfile.dbUuid;
+          if (matchesCircle && isNotSelf && !inviteeUuids.includes(m.user_id)) {
+            inviteeUuids.push(m.user_id);
+          }
+        });
+      }
+
+      console.log("[CreatePlanFlow] Selected invitees UUIDs:", inviteeUuids);
+
+      // Build participant payload: 1 host (status: host) + N selected invitees (status: delivered)
+      const participantRecords = [];
+      const hostJoinedAt = new Date().toISOString();
+
       const ownerParticipant = {
         participant_id: `PP_${Date.now()}_self`,
-        plan_id: insertedPlanUuid, // Reference the generated plans.id UUID
-        user_id: userProfile.dbUuid, // Reference the logged-in users.id UUID
-        status: "going" as const,
+        plan_id: insertedPlanUuid, // Reference plans.id UUID
+        user_id: userProfile.dbUuid, // Reference users.id UUID
+        status: "host" as const,
         payment_status: "paid" as const,
-        joined_at: new Date().toISOString()
+        joined_at: hostJoinedAt
       };
+      participantRecords.push(ownerParticipant);
 
-      console.log("[CreatePlanFlow] Persisting participant to backend...", ownerParticipant);
+      inviteeUuids.forEach((inviteeUuid, idx) => {
+        participantRecords.push({
+          participant_id: `PP_${Date.now()}_invitee_${idx}`,
+          plan_id: insertedPlanUuid, // Reference plans.id UUID
+          user_id: inviteeUuid, // Reference users.id UUID
+          status: "delivered" as const,
+          payment_status: "unpaid" as const,
+          joined_at: new Date().toISOString()
+        });
+      });
+
+      console.log("[CreatePlanFlow] Participant insert payload:", JSON.stringify(participantRecords, null, 2));
+      console.log("[CreatePlanFlow] Final participant count:", participantRecords.length);
+
+      console.log("[CreatePlanFlow] Persisting participants list to backend...", participantRecords);
       const partRes = await fetch("/api/db/upsert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: "plan_participants", records: [ownerParticipant] })
+        body: JSON.stringify({ table: "plan_participants", records: participantRecords })
       });
       if (!partRes.ok) {
         const errData = await partRes.json().catch(() => ({}));
-        throw new Error(errData.error || errData.details || "Failed to write participant to backend database");
+        throw new Error(errData.error || errData.details || "Failed to write participants to backend database");
       }
 
       const partResult = await partRes.json();
@@ -404,46 +460,17 @@ export const CreatePlanScreen = ({
 
       // Build and insert notifications for all invited friends or circle members
       const inviteNotifications = [];
-      if (audienceType === "circle" && selectedCircleIds.length > 0) {
-        const circleUuids = selectedCircleIds.map(cid => {
-          const c = circles.find(x => x.id === cid);
-          return c?.dbUuid || c?.id;
+      inviteeUuids.forEach(friendUuid => {
+        inviteNotifications.push({
+          user_id: friendUuid,
+          type: "invitation",
+          title: `${userProfile.name} invited you to join "${titleToUse}"`,
+          body: `Spontaneous meetup invitation`,
+          reference_id: insertedPlanUuid,
+          is_read: false,
+          created_at: new Date().toISOString()
         });
-
-        const membersToInvite = dbCircleMembers.filter(m => {
-          const matchesCircle = circleUuids.includes(m.circle_id);
-          const isNotSelf = m.user_id !== userProfile.dbUuid;
-          return matchesCircle && isNotSelf;
-        });
-
-        for (const m of membersToInvite) {
-          inviteNotifications.push({
-            user_id: m.user_id,
-            type: "invitation",
-            title: `${userProfile.name} invited you to join "${titleToUse}"`,
-            body: `Spontaneous meetup in circle ${matchedCircleObj?.name || ""}`,
-            reference_id: insertedPlanUuid,
-            is_read: false,
-            created_at: new Date().toISOString()
-          });
-        }
-      } else if (audienceType === "friends" && selectedFriendIds.length > 0) {
-        for (const fid of selectedFriendIds) {
-          const friendUser = dbUsers.find(u => u.user_id === fid || u.id === fid);
-          const friendUuid = friendUser ? friendUser.id : fid;
-          if (friendUuid !== userProfile.dbUuid) {
-            inviteNotifications.push({
-              user_id: friendUuid,
-              type: "invitation",
-              title: `${userProfile.name} invited you to join "${titleToUse}"`,
-              body: `Spontaneous invite from friend`,
-              reference_id: insertedPlanUuid,
-              is_read: false,
-              created_at: new Date().toISOString()
-            });
-          }
-        }
-      }
+      });
 
       if (inviteNotifications.length > 0) {
         console.log("[CreatePlanFlow] Persisting invitations to backend...", inviteNotifications);
@@ -461,6 +488,34 @@ export const CreatePlanScreen = ({
 
       console.log("[CreatePlanFlow] Successfully saved plan, participant and invitations in backend!");
 
+      // Map members for local state update
+      const localMembers = [
+        {
+          userId: userProfile.user_id,
+          name: userProfile.name,
+          avatar: userProfile.avatar,
+          joinState: "host" as any,
+          reminderState: "none" as const,
+          joinedAt: hostJoinedAt,
+          checkedIn: true
+        }
+      ];
+
+      inviteeUuids.forEach(uuid => {
+        const u = dbUsers.find(user => user.id === uuid || user.user_id === uuid);
+        if (u) {
+          localMembers.push({
+            userId: u.user_id,
+            name: u.full_name,
+            avatar: u.profile_photo,
+            joinState: "delivered" as any,
+            reminderState: "none" as const,
+            joinedAt: new Date().toISOString(),
+            checkedIn: false
+          });
+        }
+      });
+
       // Update frontend local Context Stores (hydrating state with mapped objects)
       setPlans(prev => [
         {
@@ -468,28 +523,8 @@ export const CreatePlanScreen = ({
           dbUuid: insertedPlanUuid,
           creatorId: userProfile.dbUuid,
           hostId: userProfile.dbUuid,
-          members: [
-            {
-              userId: userProfile.user_id,
-              name: userProfile.name,
-              avatar: userProfile.avatar,
-              joinState: "going",
-              reminderState: "none",
-              joinedAt: ownerParticipant.joined_at,
-              checkedIn: true
-            }
-          ],
-          joinedUsers: [
-            {
-              userId: userProfile.user_id,
-              name: userProfile.name,
-              avatar: userProfile.avatar,
-              joinState: "going",
-              reminderState: "none",
-              joinedAt: ownerParticipant.joined_at,
-              checkedIn: true
-            }
-          ]
+          members: localMembers,
+          joinedUsers: localMembers
         },
         ...prev
       ]);
@@ -519,19 +554,20 @@ export const CreatePlanScreen = ({
       setNewPlanLocation("");
       setNewPlanTime("");
       setNewPlanCost("0");
-      setNewPlanSpots("6");
       setSelectedCircleIds([]);
       setSelectedFriendIds([]);
       setCustomPlanNotes("");
       setNewPlanUploadedImage(null);
       setSelectedExperience(null);
       setCreateFlowStep("BROWSE");
+      setIsSubmitting(false);
 
       // Route to Circles & Notify
       setActiveTab("circles");
       triggerToast("✨ Spontaneous Plan Spawned successfully!");
     } catch (err: any) {
       console.error("[CreatePlanFlow] Database persistence failure:", err);
+      setIsSubmitting(false);
       triggerToast(`Database save failed: ${err.message || "Unknown error"}`);
     }
   };
@@ -593,7 +629,6 @@ export const CreatePlanScreen = ({
           setNewPlanLocation={setNewPlanLocation}
           setNewPlanTime={setNewPlanTime}
           setNewPlanCost={setNewPlanCost}
-          setNewPlanSpots={setNewPlanSpots}
           setCreateFlowStep={setCreateFlowStep}
           newPlanCategory={newPlanCategory}
           setNewPlanCategory={setNewPlanCategory}
@@ -639,8 +674,6 @@ export const CreatePlanScreen = ({
           setCustomPlanNotes={setCustomPlanNotes}
           newPlanCost={newPlanCost}
           setNewPlanCost={setNewPlanCost}
-          newPlanSpots={newPlanSpots}
-          setNewPlanSpots={setNewPlanSpots}
           setCreateFlowStep={setCreateFlowStep}
         />
       )}
@@ -661,6 +694,7 @@ export const CreatePlanScreen = ({
           selectedExperience={selectedExperience}
           setCreateFlowStep={setCreateFlowStep}
           handleHostPlanSubmit={handleHostPlanSubmit}
+          isSubmitting={isSubmitting}
         />
       )}
     </div>

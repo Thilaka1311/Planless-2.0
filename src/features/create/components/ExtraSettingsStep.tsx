@@ -6,8 +6,6 @@ interface ExtraSettingsStepProps {
   setCustomPlanNotes: (val: string) => void;
   newPlanCost: string;
   setNewPlanCost: (val: string) => void;
-  newPlanSpots: string;
-  setNewPlanSpots: (val: string) => void;
   setCreateFlowStep: (step: "BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW") => void;
 }
 
@@ -16,8 +14,6 @@ export const ExtraSettingsStep = ({
   setCustomPlanNotes,
   newPlanCost,
   setNewPlanCost,
-  newPlanSpots,
-  setNewPlanSpots,
   setCreateFlowStep
 }: ExtraSettingsStepProps) => {
   return (
@@ -36,19 +32,19 @@ export const ExtraSettingsStep = ({
         <p className="text-[11px] text-zinc-500 font-sans">Add optional notes or a split amount.</p>
       </div>
 
-      <div className="bg-zinc-905 border border-zinc-900 rounded-2xl p-4 space-y-4">
-        <div className="space-y-1.5">
+      <div className="bg-zinc-905 border border-zinc-900 rounded-2xl p-5 space-y-5 shadow-inner">
+        <div className="space-y-2">
           <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-[#ff8b66]">1. Notes (Optional)</label>
           <textarea
-            rows={2}
+            rows={3}
             placeholder="e.g., Meet near Gate B inside Starbucks. Wear white sneakers, and don't be late!"
             value={customPlanNotes}
             onChange={(e) => setCustomPlanNotes(e.target.value)}
-            className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-brand-peach transition-all"
+            className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-brand-peach transition-all"
           />
         </div>
 
-        <div className="space-y-1.5">
+        <div className="space-y-2 pt-2 border-t border-zinc-900/60">
           <div className="flex items-center justify-between">
             <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-[#ff8b66]">2. Social Split Amount (Optional)</label>
             <span className="text-[9px] font-mono text-zinc-550 italic">Non-fintech, secondary</span>
@@ -88,21 +84,6 @@ export const ExtraSettingsStep = ({
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[9px] text-zinc-400 font-mono uppercase tracking-widest block font-extrabold text-[#ff8b66]">3. Spot Limit Cap</label>
-          <select
-            value={newPlanSpots}
-            onChange={(e) => setNewPlanSpots(e.target.value)}
-            className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none cursor-pointer"
-          >
-            <option value="4">Limit to 4 intimate friends</option>
-            <option value="6">Limit to 6 friend spots</option>
-            <option value="8">Limit to 8 friend spots</option>
-            <option value="12">Limit to 12 squad spot cap</option>
-            <option value="20">Limit to 20 large meetup slots</option>
-          </select>
         </div>
       </div>
 

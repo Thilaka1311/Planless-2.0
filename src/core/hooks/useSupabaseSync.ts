@@ -105,9 +105,17 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
 
         const d = json.data || {};
         const snap: DbSnapshot = {
-          users:        d.users            || [],
-          plans:        d.plans            || [],
-          participants: d.plan_participants|| [],
+          users:         d.users             || [],
+          plans:         d.plans             || [],
+          participants:  d.plan_participants || [],
+          circles:       d.circles           || [],
+          circleMembers: d.circle_members    || [],
+          userStats:     d.user_stats        || [],
+          memories:      d.memories          || [],
+          transactions:  d.transactions      || [],
+          notifications: d.notifications     || [],
+          userData:      d.user_data         || [],
+          planReminders: d.plan_reminders    || [],
         };
 
         lastSnapshotRef.current = JSON.stringify({ p: snap.plans.length, pp: snap.participants.length });
@@ -151,9 +159,17 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
 
         const d = json.data || {};
         const snap: DbSnapshot = {
-          users:        d.users            || [],
-          plans:        d.plans            || [],
-          participants: d.plan_participants|| [],
+          users:         d.users             || [],
+          plans:         d.plans             || [],
+          participants:  d.plan_participants || [],
+          circles:       d.circles           || [],
+          circleMembers: d.circle_members    || [],
+          userStats:     d.user_stats        || [],
+          memories:      d.memories          || [],
+          transactions:  d.transactions      || [],
+          notifications: d.notifications     || [],
+          userData:      d.user_data         || [],
+          planReminders: d.plan_reminders    || [],
         };
 
         const fingerprint = JSON.stringify({ p: snap.plans.length, pp: snap.participants.length });

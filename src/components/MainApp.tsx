@@ -400,38 +400,39 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   const upcomingCirclePlans = plans.filter(p => !p.isHappened);
 
   // Filter plans based on visibility rules:
-  // A plan is visible if:
-  // 1. User created it (creatorId is 'u_self' or userProfile.dbUuid/activeUserId)
-  // 2. User is part of the circle (groupId exists and user's userUuid is in circle_members)
-  // 3. User is explicitly invited (there exists an invitation notification pointing to this plan's dbUuid)
+  // A plan is visible to the active user only if they have a participant record for it.
+  // member.userId is the short user_id (e.g. "U001") resolved from the users table.
+  // We also check against dbUuid as a fallback for any inconsistency.
   const discoverablePlans = plans.filter(p => {
     if (p.isHappened) return false;
-    if (p.joinedUsers.some(u => u.name === userProfile.name)) return false;
     if (snoozedPlanIds.includes(p.id)) return false;
 
-    const userUuid = userProfile.dbUuid;
-    
-    // Rule 1: Creator
-    const isCreator = p.creatorId === "u_self" || p.creatorId === activeUserId || p.creatorId === userUuid;
-    if (isCreator) return true;
+    // Check: user must appear as a participant (host or invitee)
+    const isParticipant = p.members.some(
+      m => m.userId === userProfile.user_id || (userProfile.dbUuid && (m as any).userUuid === userProfile.dbUuid)
+    );
 
-    // Rule 2: Circle member
-    if (p.circleId) {
-      // Find the circle in dbCircles
-      const matchedCircle = dbCircles.find(c => c.circle_id === p.circleId || c.id === p.circleId);
-      if (matchedCircle) {
-        const circleUuid = matchedCircle.id;
-        const isMember = dbCircleMembers.some(cm => cm.circle_id === circleUuid && cm.user_id === userUuid);
-        if (isMember) return true;
-      }
-    }
+    if (!isParticipant) return false;
 
-    // Rule 3: Explicitly invited (tracked via notifications table where type = 'invitation' and reference_id = plan_id_uuid)
-    const isInvited = notifications.some(n => n.planId === p.id && !n.settled && n.type === "invitation");
-    if (isInvited) return true;
+    // Exclude plans where user is already in a going/joined state (they go to Plans tab)
+    const myEntry = p.members.find(
+      m => m.userId === userProfile.user_id || (userProfile.dbUuid && (m as any).userUuid === userProfile.dbUuid)
+    );
+    const myStatus = myEntry?.joinState;
 
-    return false;
+    // Only show plans that are pending action (delivered/invited), NOT already joined/going ones
+    // Host plans ("host" status) should appear in Plans hub, not the home swipe reel
+    if (myStatus === "going" || myStatus === "host") return false;
+
+    return true;
   });
+
+  // Debug log for visibility
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[HomeReel] Total plans: ${plans.length}, Discoverable: ${discoverablePlans.length}`, 
+      discoverablePlans.map(p => ({ id: p.id, title: p.title, memberCount: p.members.length }))
+    );
+  }
 
   const homeBadgeCount = discoverablePlans.length;
 
