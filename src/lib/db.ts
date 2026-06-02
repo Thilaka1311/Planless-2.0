@@ -238,6 +238,12 @@ export async function insertPlanReminder(reminder: { plan_id: string, sent_by: s
   return result?.[0] ?? null;
 }
 
+/** Insert a transaction. */
+export async function insertTransaction(tx: Omit<DbTransaction, "id">): Promise<DbTransaction | null> {
+  const result = await upsert("transactions", [tx]);
+  return (result?.[0] as DbTransaction) ?? null;
+}
+
 /** Sync user stats: increments statistics counters */
 export async function syncUserStats(
   userUuid: string,
@@ -304,5 +310,51 @@ export function myParticipant(
   userUuid: string  // UUID
 ): DbParticipant | undefined {
   return participants.find(p => p.plan_id === planId && p.user_id === userUuid);
+}
+
+// ─────────────────────────────────────────────
+// PAYMENTS HELPERS
+// ─────────────────────────────────────────────
+
+export async function createRazorpayOrder(amount: number, receipt?: string, notes?: any): Promise<any> {
+  try {
+    const res = await fetch("/api/payments/create-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount, receipt, notes }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error("[DB] createRazorpayOrder failed:", err);
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    console.error("[DB] createRazorpayOrder exception:", e);
+    return null;
+  }
+}
+
+export async function verifyRazorpayPayment(payload: {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}): Promise<any> {
+  try {
+    const res = await fetch("/api/payments/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error("[DB] verifyRazorpayPayment failed:", err);
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    console.error("[DB] verifyRazorpayPayment exception:", e);
+    return null;
+  }
 }
 

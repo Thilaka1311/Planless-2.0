@@ -54,6 +54,14 @@ export const CirclesProvider = ({
     // Database insertion trigger (background promise execution)
     const persistCircle = async () => {
       try {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const isUuid = (val: any) => typeof val === "string" && uuidRegex.test(val);
+
+        if (!activeUserUuid || !isUuid(activeUserUuid)) {
+          console.error(`[CirclesContext] Cannot insert circle: creator user UUID is missing or invalid:`, activeUserUuid);
+          return;
+        }
+
         const savedCircle = await insertCircle({
           circle_id: newDbCircle.circle_id,
           name: newDbCircle.name,
@@ -86,13 +94,23 @@ export const CirclesProvider = ({
                 joined_at: new Date().toISOString()
               };
             })
-          ];
+          ].filter(m => {
+            if (!m.user_id || !isUuid(m.user_id)) {
+              console.error(`[CirclesContext] Skipping circle member insert: user_id is missing or not a valid UUID:`, m.user_id);
+              return false;
+            }
+            return true;
+          });
 
-          await insertCircleMembers(membersToInsert);
+          if (membersToInsert.length > 0) {
+            await insertCircleMembers(membersToInsert);
 
-          // Update statistics: increment circles_joined for all members
-          for (const m of membersToInsert) {
-            await syncUserStats(m.user_id, "join_circle");
+            // Update statistics: increment circles_joined for all members
+            for (const m of membersToInsert) {
+              await syncUserStats(m.user_id, "join_circle");
+            }
+          } else {
+            console.warn(`[CirclesContext] No valid members to insert into circle_members.`);
           }
         }
       } catch (err) {
@@ -139,7 +157,7 @@ export const CirclesProvider = ({
       membersCount: allMembersList.length,
       avatars: allMembersList.slice(0, 5).map(m => m.avatar),
       groupImage: image,
-      lastSpontaneousActivity: "Late-night chats",
+      lastSpontaneousActivity: "Upcoming plans",
       description,
       type: "Spontaneous Hangout Circle",
       location: "Third Wave Coffee",

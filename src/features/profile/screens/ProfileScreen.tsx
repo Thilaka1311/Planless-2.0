@@ -23,7 +23,7 @@ export const ProfileScreen = ({
   setShowDbExplorer,
   setShowDepositModal
 }: ProfileScreenProps) => {
-  const { userProfile, activeUserId, updateProfile } = useProfileStore();
+  const { userProfile, activeUserId, activeUserUuid, updateProfile } = useProfileStore();
   const { plans, dbMemories } = usePlansStore();
   const { circles } = useCirclesStore();
   const { walletBalance, transactions } = useWalletStore();
@@ -357,17 +357,17 @@ export const ProfileScreen = ({
                 📸 Snapshot Memories
               </h4>
               <span className="text-[8.5px] font-mono text-zinc-600">
-                {dbMemories.filter(m => m.uploaded_by === activeUserId).length} snaps saved
+                {dbMemories.filter(m => m.uploaded_by === activeUserUuid || m.uploaded_by === activeUserId).length} snaps saved
               </span>
             </div>
 
-            {dbMemories.filter(m => m.uploaded_by === activeUserId).length === 0 ? (
+            {dbMemories.filter(m => m.uploaded_by === activeUserUuid || m.uploaded_by === activeUserId).length === 0 ? (
               <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-6 text-center text-zinc-500 text-xs font-sans">
                 Upload spontaneous snapshot stories inside Completed plans to view them here.
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">
-                {dbMemories.filter(m => m.uploaded_by === activeUserId).map(mem => (
+                {dbMemories.filter(m => m.uploaded_by === activeUserUuid || m.uploaded_by === activeUserId).map(mem => (
                   <div
                     key={mem.memory_id}
                     onClick={() => {

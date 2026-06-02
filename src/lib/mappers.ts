@@ -39,7 +39,8 @@ export const mapPlansToLegacyPlans = (
   plansList: DbPlan[],
   participants: DbPlanParticipant[],
   usersList: User[],
-  activeUserId: string = ""
+  activeUserId: string = "",
+  circlesList: DbCircle[] = []
 ): Plan[] => {
   const activeUserObj = usersList.find(u => u.user_id === activeUserId || (u as any).id === activeUserId);
   const activeUuid = activeUserObj ? (activeUserObj as any).id : activeUserId;
@@ -59,6 +60,15 @@ export const mapPlansToLegacyPlans = (
   }
 
   return plansList.map(p => {
+    // Resolve circle name from plans.circle_id -> circles.id -> circles.name
+    const circleObj = circlesList.find(c => c.id === p.circle_id || c.circle_id === p.circle_id);
+    const circleNameVal = circleObj ? circleObj.name : "Custom Plan";
+
+    console.log(`[Plan Circle Resolution]`);
+    console.log(`- plan id: ${p.id || p.plan_id}`);
+    console.log(`- circle_id: ${p.circle_id}`);
+    console.log(`- resolved circle name: ${circleNameVal}`);
+
     const isOwner = p.created_by === activeUserId || p.created_by === activeUuid || p.created_by === activeShortId;
     const creator = usersList.find(u => (u as any).id === p.created_by || u.user_id === p.created_by) || {
       user_id: p.created_by,
@@ -203,6 +213,7 @@ export const mapPlansToLegacyPlans = (
       userReaction: userReactionVal,
       isHappened: isHappenedVal,
       circleId: p.circle_id,
+      circleName: circleNameVal,
 
       // Sports Plan fields
       skillLevel: categoryVal === "football" ? "Competitive" : "Intermediate",
@@ -259,28 +270,53 @@ export const mapCirclesToLegacyCircles = (
 };
 
 // Helper to legacy mapped transactions expected by UI lists
-export const mapTransactionsToLegacy = (txs: DbTransaction[], usersList: User[], activeUserId: string = ""): Transaction[] => {
+export const mapTransactionsToLegacy = (
+  txs: DbTransaction[], 
+  usersList: User[], 
+  activeUserId: string = "",
+  plansList: DbPlan[] = []
+): Transaction[] => {
+  // Resolve active user's UUID so we can correctly determine credit/debit direction
+  const activeUserObj = usersList.find(u => u.user_id === activeUserId || u.id === activeUserId);
+  const activeUuid = activeUserObj?.id || "";
+
   return txs.map(t => {
-    const rx = usersList.find(u => u.user_id === t.receiver_id)?.full_name || "Self";
-    const sx = usersList.find(u => u.user_id === t.sender_id)?.full_name || "Self";
+    // transactions.sender_id and receiver_id store users.id (UUID).
+    // Fall back to user_id match for legacy/demo data that may have short IDs.
+    const rxUser = usersList.find(u => u.id === t.receiver_id || u.user_id === t.receiver_id);
+    const sxUser = usersList.find(u => u.id === t.sender_id  || u.user_id === t.sender_id);
+    const rx = rxUser?.full_name || "Self";
+    const sx = sxUser?.full_name || "Self";
     
     let title = "Deposit";
-    if (t.transaction_type === "split_payment") {
-      title = t.sender_id === activeUserId ? `Paid ${rx}` : `Received from ${sx}`;
+    if (t.transaction_type === "split_payment" || t.transaction_type === "plan_payment") {
+      // Determine direction: sender = this user → debit; else credit
+      const isSender = t.sender_id === activeUuid || t.sender_id === activeUserId;
+      title = isSender ? `Paid ${rx}` : `Received from ${sx}`;
     } else if (t.transaction_type === "deposit") {
       title = "Top-up Wallet";
     }
+
+    // Credit/debit: if sender is the active user → debit; otherwise → credit
+    const isSenderMatch = t.sender_id === activeUuid || t.sender_id === activeUserId;
+
+    const planObj = plansList.find(p => p.id === t.plan_id || p.plan_id === t.plan_id);
+    const planTitle = planObj ? planObj.title : null;
 
     return {
       id: t.transaction_id,
       title: title,
       amount: t.amount,
-      type: (t.sender_id === activeUserId ? "debit" : "credit") as "debit" | "credit",
+      type: (isSenderMatch ? "debit" : "credit") as "debit" | "credit",
       timestamp: t.timestamp,
-      settled: t.status === "success"
+      settled: (t.status as any) === "success" || (t.status as any) === "completed" || (t.status as any) === true,
+      status: t.status,
+      transactionType: t.transaction_type,
+      planTitle: planTitle
     };
   });
 };
+
 
 export const mapNotificationsToLegacy = (
   notificationsList: any[],

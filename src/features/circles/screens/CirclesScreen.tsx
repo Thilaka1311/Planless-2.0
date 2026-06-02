@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from "motion/react";
 import { ChevronRight, MoreVertical, Settings } from "lucide-react";
 import { CircleDetailScreen } from "./CircleDetailScreen";
-import { CircleSettingsScreen } from "./CircleSettingsScreen";
 import { CircleChatScreen } from "./CircleChatScreen";
 import { CreateCircleMembersScreen } from "./CreateCircleMembersScreen";
 import { CreateCircleDetailsScreen } from "./CreateCircleDetailsScreen";
+import { AddMembersScreen } from "./AddMembersScreen";
 
 export const CirclesScreen = (props: any) => {
   const {
@@ -14,20 +14,20 @@ export const CirclesScreen = (props: any) => {
     selectedCircle, setSelectedCircle,
     activeUserId,
     setIsInvitingFriends,
-    setNewPlanCircleId, setNewPlanTitle, setSelectedExperience: setSelectedPreset, setAudienceType, setSelectedCircleIds, setActiveTab, setCreateFlowStep, triggerToast,
-    dbUsers, setCircles, plans, setPaymentConfirmationPlan, handleToggleJoin, setSelectedPlan, setActiveStoryRecap,
+    setNewPlanCircleId, setNewPlanTitle, setSelectedExperience: setSelectedPreset,
+    setAudienceType, setSelectedCircleIds, setActiveTab, setCreateFlowStep, triggerToast,
+    dbUsers, setCircles, plans, setPaymentConfirmationPlan, handleToggleJoin,
+    setSelectedPlan, setActiveStoryRecap,
     handleCreateCircle
   } = props;
 
-  const [subView, setSubView] = React.useState<"chat" | "detail" | "settings">("chat");
+  // Three views: chat | detail | add_members
+  const [subView, setSubView] = React.useState<"chat" | "detail" | "add_members">("chat");
   const [showMenu, setShowMenu] = useState(false);
-
   const [selectedFriendIds, setSelectedFriendIds] = useState<string[]>([]);
 
   React.useEffect(() => {
-    if (selectedCircle) {
-      setSubView("chat");
-    }
+    if (selectedCircle) setSubView("chat");
   }, [selectedCircle]);
 
   return (
@@ -55,16 +55,15 @@ export const CirclesScreen = (props: any) => {
             }}
           />
         ) : !selectedCircle ? (
-          // ---------------- USER VIEWS ALL CIRCLES ----------------
-          <motion.div 
+          // ─── ALL CIRCLES LIST ──────────────────────────────────────────
+          <motion.div
             key="view_all_circles"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            id="view_all_circles_container" 
+            id="view_all_circles_container"
             className="space-y-6"
           >
-            {/* Lightweight Page Header */}
             <div className="flex items-center justify-between pb-1.5 pt-1.5 relative">
               <h2 className="text-xl font-display font-black text-zinc-100 tracking-tight">Circles</h2>
               <div className="relative">
@@ -91,18 +90,14 @@ export const CirclesScreen = (props: any) => {
               </div>
             </div>
 
-            {/* Interactive Circles View */}
             <div id="circles_list" className="space-y-3 pb-8">
-              {circles.map(circle => {
+              {circles.map((circle: any) => {
                 const circleActivePlans = plans.filter((p: any) => p.circleId === circle.id && !p.isHappened);
-                
                 return (
                   <div key={circle.id} className="bg-zinc-900/40 border border-zinc-900 hover:bg-zinc-850/50 hover:border-zinc-800/80 rounded-3xl overflow-hidden transition-all duration-300">
                     <button
                       type="button"
-                      onClick={() => {
-                        setSelectedCircle(circle);
-                      }}
+                      onClick={() => setSelectedCircle(circle)}
                       className="w-full px-4 py-4 flex items-center gap-3 text-left"
                     >
                       <div className="relative shrink-0 w-11 h-11 rounded-2xl overflow-hidden border border-zinc-800 shadow-md">
@@ -113,7 +108,6 @@ export const CirclesScreen = (props: any) => {
                           referrerPolicy="no-referrer"
                         />
                       </div>
-
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 justify-between">
                           <div className="min-w-0">
@@ -135,36 +129,40 @@ export const CirclesScreen = (props: any) => {
                 );
               })}
             </div>
-
-
           </motion.div>
+
         ) : subView === "chat" ? (
+          // ─── CIRCLE CHAT ───────────────────────────────────────────────
           <CircleChatScreen
             key="chat"
             circle={selectedCircle}
             plans={plans}
             activeUserId={activeUserId}
-            onBack={() => {
-              setSelectedCircle(null);
-              setIsInvitingFriends(false);
-            }}
+            onBack={() => { setSelectedCircle(null); setIsInvitingFriends(false); }}
             onOpenSettings={() => setSubView("detail")}
             setSelectedPlan={setSelectedPlan}
             setPaymentConfirmationPlan={setPaymentConfirmationPlan}
             handleToggleJoin={handleToggleJoin}
             setActiveStoryRecap={setActiveStoryRecap}
             triggerToast={triggerToast}
+            setNewPlanCircleId={setNewPlanCircleId}
+            setNewPlanTitle={setNewPlanTitle}
+            setSelectedPreset={setSelectedPreset}
+            setAudienceType={setAudienceType}
+            setSelectedCircleIds={setSelectedCircleIds}
+            setActiveTab={setActiveTab}
+            setCreateFlowStep={setCreateFlowStep}
           />
+
         ) : subView === "detail" ? (
+          // ─── UNIFIED CIRCLE DETAIL + SETTINGS ─────────────────────────
           <CircleDetailScreen
             key="detail"
             circle={selectedCircle}
             plans={plans}
             activeUserId={activeUserId}
-            onBack={() => {
-              setSubView("chat");
-            }}
-            onOpenSettings={() => setSubView("settings")}
+            onBack={() => setSubView("chat")}
+            onAddMembers={() => setSubView("add_members")}
             setSelectedPlan={setSelectedPlan}
             setPaymentConfirmationPlan={setPaymentConfirmationPlan}
             handleToggleJoin={handleToggleJoin}
@@ -177,23 +175,24 @@ export const CirclesScreen = (props: any) => {
             setActiveTab={setActiveTab}
             setCreateFlowStep={setCreateFlowStep}
             triggerToast={triggerToast}
-          />
-        ) : (
-          <CircleSettingsScreen
-            key="settings"
-            circle={selectedCircle}
             setCircles={setCircles}
             setSelectedCircle={setSelectedCircle}
-            activeUserId={activeUserId}
             dbUsers={dbUsers}
+          />
+        ) : (
+          // ─── DEDICATED ADD MEMBERS FLOW ───────────────────────────────
+          <AddMembersScreen
+            key="add_members"
+            circle={selectedCircle}
+            dbUsers={dbUsers}
+            activeUserId={activeUserId}
             onBack={() => setSubView("detail")}
-            onBackToCircles={() => setSelectedCircle(null)}
+            setCircles={setCircles}
+            setSelectedCircle={setSelectedCircle}
             triggerToast={triggerToast}
           />
         )}
       </AnimatePresence>
-
-
     </div>
   );
 };

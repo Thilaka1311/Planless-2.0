@@ -41,7 +41,7 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
     setDbParticipants(snap.participants as any);
 
     // Map to UI Plan models using the clean mapper
-    const uiPlans = mapPlansToLegacyPlans(snap.plans as any, snap.participants as any, snap.users, myUuid);
+    const uiPlans = mapPlansToLegacyPlans(snap.plans as any, snap.participants as any, snap.users, myUuid, snap.circles as any);
     setPlans(uiPlans);
 
     // Wallet balance for current user

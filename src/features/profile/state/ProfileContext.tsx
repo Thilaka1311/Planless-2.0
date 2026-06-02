@@ -4,7 +4,8 @@ import { UserProfile, User } from "../../../core/types";
 interface ProfileState {
   userProfile: UserProfile | null;
   setUserProfile: React.Dispatch<React.SetStateAction<UserProfile | null>>;
-  activeUserId: string;  // short user_id e.g. "U001" — derived from userProfile
+  activeUserId: string;      // Short display identifier e.g. "U001" — for UI comparisons only
+  activeUserUuid: string;    // Postgres UUID (users.id) — for all DB writes
   dbUsers: User[];
   setDbUsers: React.Dispatch<React.SetStateAction<User[]>>;
   dbUserData: any[];
@@ -68,7 +69,7 @@ export const ProfileProvider = ({
   };
 
   return (
-    <ProfileContext.Provider value={{ userProfile, setUserProfile, activeUserId: userProfile?.user_id || "", dbUsers, setDbUsers, dbUserData, setDbUserData, updateProfile }}>
+    <ProfileContext.Provider value={{ userProfile, setUserProfile, activeUserId: userProfile?.user_id || "", activeUserUuid: userProfile?.dbUuid || "", dbUsers, setDbUsers, dbUserData, setDbUserData, updateProfile }}>
       {children}
     </ProfileContext.Provider>
   );

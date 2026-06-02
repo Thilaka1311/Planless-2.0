@@ -5,7 +5,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, Plan, Circle, NotificationItem, Transaction, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory } from "../core/types";
 import { getInitialsAvatar, mapPlansToLegacyPlans, mapCirclesToLegacyCircles, mapTransactionsToLegacy, mapNotificationsToLegacy } from "../lib/mappers";
-import { insertCircle, insertCircleMembers, syncUserStats } from "../lib/db";
+import { insertCircle, insertCircleMembers, syncUserStats, insertTransaction } from "../lib/db";
 import { usePlansStore } from "../features/plans/state/PlansContext";
 import { useProfileStore } from "../features/profile/state/ProfileContext";
 import { useWalletStore } from "../features/wallet/state/WalletContext";
@@ -32,9 +32,9 @@ interface MainAppProps {
 export default function MainApp({ userProfile, onLogout, activeUserId }: MainAppProps) {
   // --- Decoupled Context Stores ---
   const { plans, setPlans, dbPlans, setDbPlans, dbPlanParticipants, setDbPlanParticipants, dbMemories, setDbMemories, joinPlan, waitlistPlan } = usePlansStore();
-  const { dbUsers, setDbUsers, setDbUserData, updateProfile } = useProfileStore();
+  const { dbUsers, setDbUsers, setDbUserData, updateProfile, activeUserUuid } = useProfileStore();
   const { circles, setCircles, dbCircles, setDbCircles, dbCircleMembers, setDbCircleMembers } = useCirclesStore();
-  const { walletBalance, setWalletBalance, transactions, setTransactions, dbTransactions, setDbTransactions } = useWalletStore();
+  const { walletBalance, setWalletBalance, transactions, setTransactions, dbTransactions, setDbTransactions, refreshTransactions } = useWalletStore();
 
   // --- Core Navigation Tab state ---
   const [activeTab, setActiveTab] = useState<"home" | "plans" | "create" | "circles" | "wallet" | "profile">("home");
@@ -117,7 +117,7 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
             setDbPlans(d.plans || []);
             setDbPlanParticipants(d.plan_participants || []);
             setDbMemories(d.memories || []);
-            setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], activeUserId));
+            setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], activeUserId, d.circles || []));
             
             // 3. Set circles context — only show circles where the current user is a member
             const allCircles = d.circles || [];
@@ -134,12 +134,9 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
             setCircles(mapCirclesToLegacyCircles(myCircles, allCircleMembers, allDbUsers));
             
             // 4. Set wallet context
-            const me = (d.users || []).find((u: any) => u.user_id === activeUserId);
-            if (me) {
-              setWalletBalance(Number(me.wallet_balance) || 0);
-            }
-            setDbTransactions(d.transactions || []);
-            setTransactions(mapTransactionsToLegacy(d.transactions || [], d.users || [], activeUserId));
+            const fetchedTxs = d.transactions || [];
+            setDbTransactions(fetchedTxs);
+            setTransactions(mapTransactionsToLegacy(fetchedTxs, allDbUsers, activeUserId, d.plans || []));
 
             // 5. Set notifications context
             const mappedNotifs = mapNotificationsToLegacy(d.notifications || [], d.plans || [], d.users || [], activeUserId);
@@ -173,36 +170,32 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   const handleToggleJoin = async (plan: Plan) => {
     await joinPlan(plan.id, userProfile);
 
-    // Sync Wallet & Ledger
-    if (plan.cost > 0) {
-      setWalletBalance(prev => prev - plan.cost);
-      const feeTx: Transaction = {
-        id: `t_fee_${Date.now()}`,
-        title: `Joined turf: ${plan.title}`,
-        amount: plan.cost,
-        type: "debit",
-        timestamp: "Today",
-        settled: true
-      };
-      setTransactions(prev => [feeTx, ...prev]);
+    // Sync Wallet & Ledger for cost-based plans without payment_required (which bypass Razorpay checkout but still deduct balance)
+    if (plan.cost > 0 && !(plan as any).payment_required) {
+      // Resolve UUIDs before writing to DB (transactions must use users.id, not user_id)
+      const meTxUser = dbUsers.find(u => u.user_id === activeUserId);
+      const meTxUuid = meTxUser?.id || activeUserUuid || activeUserId;
+      const creatorTxUser = dbUsers.find(u => u.user_id === plan.creatorId || u.id === plan.creatorId);
+      const creatorTxUuid = creatorTxUser?.id || plan.creatorId || null;
 
-      const newDbTx: DbTransaction = {
-        transaction_id: `T_${Date.now()}`,
-        sender_id: activeUserId,
-        receiver_id: plan.creatorId || "U002",
-        plan_id: plan.id,
+      const newDbTx = {
+        transaction_id: `T_pay_${Date.now()}`,
+        sender_id: meTxUuid,
+        receiver_id: creatorTxUuid,
+        plan_id: plan.dbUuid || plan.id,
         amount: plan.cost,
         transaction_type: "split_payment",
         status: "success",
-        timestamp: "Today"
+        timestamp: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        created_at: new Date().toISOString()
       };
-      setDbTransactions(prev => [newDbTx, ...prev]);
-      setDbUsers(prev => prev.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: u.wallet_balance - plan.cost } : u));
+      await insertTransaction(newDbTx as any);
     }
+    await refreshTransactions();
   };
 
   // Cash deposits
-  const handleDepositMoney = (e: React.FormEvent) => {
+  const handleDepositMoney = async (e: React.FormEvent) => {
     e.preventDefault();
     const amountNum = parseFloat(depositAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
@@ -210,29 +203,22 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
       return;
     }
 
-    setWalletBalance(prev => prev + amountNum);
-    const newTx: Transaction = {
-      id: `t_${Date.now()}`,
-      title: "Added Money (UPI)",
-      amount: amountNum,
-      type: "credit",
-      timestamp: "Today",
-      settled: true
-    };
-    setTransactions(prev => [newTx, ...prev]);
-
-    setDbUsers(prevUsers => prevUsers.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: u.wallet_balance + amountNum } : u));
-    const newDbTx: DbTransaction = {
-      transaction_id: `T_${Date.now()}`,
+    // Resolve UUID for receiver before writing to DB
+    const meDepUser = dbUsers.find(u => u.user_id === activeUserId);
+    const meDepUuid = meDepUser?.id || activeUserUuid || activeUserId;
+    const newDbTx = {
+      transaction_id: `T_dep_${Date.now()}`,
       sender_id: "UPI",
-      receiver_id: activeUserId,
+      receiver_id: meDepUuid,
       plan_id: null,
       amount: amountNum,
       transaction_type: "deposit",
       status: "success",
-      timestamp: "Today"
+      timestamp: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      created_at: new Date().toISOString()
     };
-    setDbTransactions(prev => [newDbTx, ...prev]);
+    await insertTransaction(newDbTx as any);
+    await refreshTransactions();
 
     setDepositAmount("");
     setShowDepositModal(false);
@@ -370,7 +356,7 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   };
 
   // Settle overdue shared split bills from Notifications list
-  const handleSettleOverdue = (notification: NotificationItem) => {
+  const handleSettleOverdue = async (notification: NotificationItem) => {
     const cost = notification.cost || 0;
     if (cost > walletBalance) {
       triggerToast(`Unable to settle. Please top-up ₹${cost - walletBalance} into wallet.`);
@@ -378,30 +364,24 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
       return;
     }
 
-    setWalletBalance(prev => prev - cost);
-
-    const settleTx: Transaction = {
-      id: `t_${Date.now()}`,
-      title: `Settled ${notification.title.split("-")[0]}`,
-      amount: cost,
-      type: "debit",
-      timestamp: "Today",
-      settled: true
-    };
-    setTransactions(prev => [settleTx, ...prev]);
-
-    setDbUsers(prevUsers => prevUsers.map(u => u.user_id === activeUserId ? { ...u, wallet_balance: u.wallet_balance - cost } : u));
-    const newDbTx: DbTransaction = {
-      transaction_id: `T_${Date.now()}`,
-      sender_id: activeUserId,
-      receiver_id: notification.creatorId || "U002",
+    // Resolve UUIDs before writing to DB
+    const meStlUser = dbUsers.find(u => u.user_id === activeUserId);
+    const meStlUuid = meStlUser?.id || activeUserUuid || activeUserId;
+    const creatorStlUser = dbUsers.find(u => u.user_id === notification.creatorId || u.id === notification.creatorId);
+    const creatorStlUuid = creatorStlUser?.id || notification.creatorId || null;
+    const newDbTx = {
+      transaction_id: `T_stl_${Date.now()}`,
+      sender_id: meStlUuid,
+      receiver_id: creatorStlUuid,
       plan_id: notification.planId || null,
       amount: cost,
       transaction_type: "settlement",
       status: "success",
-      timestamp: "Today"
+      timestamp: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      created_at: new Date().toISOString()
     };
-    setDbTransactions(prev => [newDbTx, ...prev]);
+    await insertTransaction(newDbTx as any);
+    await refreshTransactions();
 
     setNotifications(prev => prev.map(n => n.id === notification.id ? { ...n, settled: true } : n));
     // Persist read/settled status to Supabase database
@@ -438,28 +418,46 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   // Syncing countdown timers
   const upcomingCirclePlans = plans.filter(p => !p.isHappened);
 
+  // Resolve current user's UUID
+  const meUserObj = dbUsers.find(u => u.user_id === activeUserId);
+  const meUuid = meUserObj ? (meUserObj as any).id : activeUserId;
+
   // Filter plans based on visibility rules:
   // A plan is visible on Home strictly based on plan_participants record status.
+  const myParticipantRecords = dbPlanParticipants.filter(pp => pp.user_id === meUuid);
+
+  console.log(`[Home Screen Data Source Audit]`);
+  console.log(`- Current User ID (Short): ${activeUserId}`);
+  console.log(`- Current User UUID: ${meUuid}`);
+  console.log(`- Participant records found:`, myParticipantRecords.map(pp => ({
+    plan_id: pp.plan_id,
+    user_id: pp.user_id,
+    status: pp.status
+  })));
+
   const discoverablePlans = plans.filter(p => {
-    // Resolve current user's UUID and short ID
-    const myEntry = p.members.find(
-      m => m.userId === userProfile.user_id || (userProfile.dbUuid && (m as any).userUuid === userProfile.dbUuid)
-    );
-    const myStatus = myEntry?.joinState;
+    const planUuid = p.dbUuid || p.id;
+    const ppRecord = myParticipantRecords.find(pp => pp.plan_id === planUuid);
 
-    const isIncluded = myStatus && ["delivered", "seen"].includes(myStatus);
-
-    if (isIncluded) {
-      console.log(`[HomeScreen Visibility INCLUDED] Current User ID: ${userProfile.user_id} (${userProfile.dbUuid}), Plan: "${p.title}", Status: ${myStatus}`);
-    } else {
-      console.log(`[HomeScreen Visibility EXCLUDED] Current User ID: ${userProfile.user_id} (${userProfile.dbUuid}), Plan: "${p.title}", Status: ${myStatus || "none"}`);
+    if (!ppRecord) {
+      console.log(`[Home Screen Filter] Filtered out Plan ID: ${planUuid} ("${p.title}") - Reason: No participant record found for current user`);
+      return false;
     }
 
-    return !!isIncluded;
+    const status = ppRecord.status;
+    const isIncluded = ["delivered", "seen", "new"].includes(status);
+
+    if (isIncluded) {
+      console.log(`[Home Screen Filter] Plan returned to Home - Plan ID: ${planUuid} ("${p.title}")`);
+    } else {
+      console.log(`[Home Screen Filter] Filtered out Plan ID: ${planUuid} ("${p.title}") - Reason: status is "${status}" (not delivered/seen/new)`);
+    }
+
+    return isIncluded;
   });
 
   // Log visible plans
-  console.log(`[HomeScreen Visible Plans] Current User: ${userProfile.user_id}, Visible Count: ${discoverablePlans.length}, Plans:`, discoverablePlans.map(p => p.title));
+  console.log(`[HomeScreen] plans returned to HomeScreen:`, discoverablePlans.map(p => ({ id: p.id, title: p.title })));
 
   const homeBadgeCount = discoverablePlans.length;
 
@@ -533,7 +531,13 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
       {/* ---------------- MAIN APP SCREEN FRAME BODY ---------------- */}
       <main
         id="app_tab_content_wrapper"
-        className={`flex-1 relative ${activeTab === "home" ? "overflow-hidden p-0" : "overflow-y-auto no-scrollbar p-4 pb-12"}`}
+        className={`flex-1 relative ${
+          activeTab === "home"
+            ? "overflow-hidden p-0"
+            : activeTab === "circles" && selectedCircle
+            ? "overflow-hidden p-4 pb-4"
+            : "overflow-y-auto no-scrollbar p-4 pb-12"
+        }`}
       >
         {/* TAB 1: HOME PANEL */}
         {activeTab === "home" && (
@@ -721,64 +725,66 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
       />
 
       {/* ---------------- NAVIGATION FOOTER TABS ---------------- */}
-      <footer id="main_app_footer_nav" className="h-18 shrink-0 border-t border-zinc-950 bg-[#09090b]/99 backdrop-blur-md flex justify-around items-center px-4 z-30 pb-2 shadow-2xl relative select-none">
-        <button
-          id="nav_item_home"
-          onClick={() => { setActiveTab("home"); setShowNotifications(false); }}
-          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "home" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"}`}
-        >
-          <div className="relative">
-            <Home className="w-4.5 h-4.5" />
-            {homeBadgeCount > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 bg-[#f43f5e] text-white text-[8px] font-sans font-black w-3.5 h-3.5 rounded-full flex items-center justify-center shadow">
-                {homeBadgeCount}
-              </span>
-            )}
-          </div>
-          <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Home</span>
-        </button>
+      {!(activeTab === "circles" && selectedCircle) && (
+        <footer id="main_app_footer_nav" className="h-18 shrink-0 border-t border-zinc-950 bg-[#09090b]/99 backdrop-blur-md flex justify-around items-center px-4 z-30 pb-2 shadow-2xl relative select-none">
+          <button
+            id="nav_item_home"
+            onClick={() => { setActiveTab("home"); setShowNotifications(false); }}
+            className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "home" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"}`}
+          >
+            <div className="relative">
+              <Home className="w-4.5 h-4.5" />
+              {homeBadgeCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-[#f43f5e] text-white text-[8px] font-sans font-black w-3.5 h-3.5 rounded-full flex items-center justify-center shadow">
+                  {homeBadgeCount}
+                </span>
+              )}
+            </div>
+            <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Home</span>
+          </button>
 
-        <button
-          id="nav_item_plans"
-          onClick={() => { setActiveTab("plans"); setShowNotifications(false); }}
-          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "plans" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"}`}
-        >
-          <Calendar className="w-4.5 h-4.5" />
-          <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Plans</span>
-        </button>
+          <button
+            id="nav_item_plans"
+            onClick={() => { setActiveTab("plans"); setShowNotifications(false); }}
+            className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "plans" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"}`}
+          >
+            <Calendar className="w-4.5 h-4.5" />
+            <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Plans</span>
+          </button>
 
-        <button
-          id="nav_item_create"
-          onClick={() => {
-            setActiveTab("create");
-            setShowNotifications(false);
-          }}
-          className="flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer"
-        >
-          <div className={`w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center ${activeTab === "create" ? "border-[#ff8b66]" : ""}`}>
-            <Plus className="w-4 h-4 text-[#ff8b66]" />
-          </div>
-          <span className="text-[9px] font-sans tracking-wide mt-0.5 font-medium">Create</span>
-        </button>
+          <button
+            id="nav_item_create"
+            onClick={() => {
+              setActiveTab("create");
+              setShowNotifications(false);
+            }}
+            className="flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer"
+          >
+            <div className={`w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center ${activeTab === "create" ? "border-[#ff8b66]" : ""}`}>
+              <Plus className="w-4 h-4 text-[#ff8b66]" />
+            </div>
+            <span className="text-[9px] font-sans tracking-wide mt-0.5 font-medium">Create</span>
+          </button>
 
-        <button
-          id="nav_item_circles"
-          onClick={() => { setActiveTab("circles"); setShowNotifications(false); }}
-          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "circles" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"}`}
-        >
-          <Users className="w-4.5 h-4.5" />
-          <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Circle</span>
-        </button>
+          <button
+            id="nav_item_circles"
+            onClick={() => { setActiveTab("circles"); setShowNotifications(false); }}
+            className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "circles" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"}`}
+          >
+            <Users className="w-4.5 h-4.5" />
+            <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Circle</span>
+          </button>
 
-        <button
-          id="nav_item_wallet"
-          onClick={() => { setActiveTab("wallet"); setShowNotifications(false); }}
-          className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "wallet" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"}`}
-        >
-          <Wallet className="w-4.5 h-4.5" />
-          <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Wallet</span>
-        </button>
-      </footer>
+          <button
+            id="nav_item_wallet"
+            onClick={() => { setActiveTab("wallet"); setShowNotifications(false); }}
+            className={`flex flex-col items-center justify-center w-12 h-12 transition-all cursor-pointer ${activeTab === "wallet" ? "text-[#ff8b66]" : "text-zinc-500 hover:text-zinc-300"}`}
+          >
+            <Wallet className="w-4.5 h-4.5" />
+            <span className="text-[9px] font-sans tracking-wide mt-1 font-medium">Wallet</span>
+          </button>
+        </footer>
+      )}
 
       {activeTab === "circles" && !circleCreateStep && !selectedCircle && (
         <div className="absolute bottom-[84px] right-4 z-50 animate-fade-in">

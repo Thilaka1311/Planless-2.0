@@ -12,6 +12,12 @@ import { InviteRecipientsStep } from "../components/InviteRecipientsStep";
 import { ExtraSettingsStep } from "../components/ExtraSettingsStep";
 import { PlanPreviewStep } from "../components/PlanPreviewStep";
 
+// Import custom step components
+import { CustomNameStep } from "../components/CustomNameStep";
+import { CustomLocationStep } from "../components/CustomLocationStep";
+import { CustomDateTimeStep } from "../components/CustomDateTimeStep";
+import { CustomExtraSettingsStep } from "../components/CustomExtraSettingsStep";
+
 export function parseSpontaneousDateTimeToIso(displayString: string): string {
   const normalized = displayString.toUpperCase().trim();
   const now = new Date();
@@ -62,7 +68,7 @@ export const CreatePlanScreen = ({
   notifications,
   setNotifications
 }: CreatePlanScreenProps) => {
-  const { setPlans, setDbPlans, setDbPlanParticipants } = usePlansStore();
+  const { setPlans, setDbPlans, setDbPlanParticipants, refreshPlans } = usePlansStore();
   const { userProfile, dbUsers, dbUserData } = useProfileStore();
   const activeUserId = userProfile?.user_id || "U001";
   const { circles, setCircles, dbCircleMembers } = useCirclesStore();
@@ -72,10 +78,14 @@ export const CreatePlanScreen = ({
   const [newPlanTitle, setNewPlanTitle] = useState("");
   const [newPlanLocation, setNewPlanLocation] = useState("");
   const [newPlanTime, setNewPlanTime] = useState("");
+  const [newPlanIsoDateTime, setNewPlanIsoDateTime] = useState("");
   const [newPlanCost, setNewPlanCost] = useState("0");
 
   // MVP Create Plan Flow Multi-step Stepper parameters
-  const [createFlowStep, setCreateFlowStep] = useState<"BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW">("BROWSE");
+  const [createFlowStep, setCreateFlowStep] = useState<
+    "BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW" |
+    "CUSTOM_NAME" | "CUSTOM_LOCATION" | "CUSTOM_DATETIME" | "CUSTOM_RECIPIENTS" | "CUSTOM_EXTRA"
+  >("BROWSE");
   const [selectedExperience, setSelectedExperience] = useState<{
     id: string;
     title: string;
@@ -99,86 +109,82 @@ export const CreatePlanScreen = ({
   const [joinLimit, setJoinLimit] = useState(10);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Planless MVP Pre-configured Experience Templates
-  const suggestedExperiences = [
-    {
-      id: "exp_movies_1",
-      title: "DUNE PART III (IMAX 4D)",
-      category: "movies" as const,
-      tag: "BLOCKBUSTER",
-      description: "Spontaneous ticket grab for the visual masterpiece. Grab premium popcorn and join our movie discussion!",
-      time: "TODAY • 9:30 PM",
-      venue: "Luxe Cinemas, VR Chennai",
-      price: 350,
-      image: "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&q=80&w=600"
-    },
-    {
-      id: "exp_movies_2",
-      title: "CINÉPHILE INDIE CLASSICS",
-      category: "movies" as const,
-      tag: "INDIE NIGHT",
-      description: "A curated curation of European cinema classics with film buffs. Spontaneous discussion over coffee follows.",
-      time: "TOMORROW • 6:30 PM",
-      venue: "Alliance Française, Nungambakkam",
-      price: 150,
-      image: "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&q=80&w=600"
-    },
-    {
-      id: "exp_sports_1",
-      title: "SUNSET TURF FOOTBALL 7V7",
-      category: "sports" as const,
-      tag: "MATCHDAY MATCH",
-      description: "Fast-paced 7-a-side match. Bibs, football and fresh water provided by the host. Just show up and play!",
-      time: "TODAY • 8:00 PM",
-      venue: "New Bel Road Turf Arena",
-      price: 250,
-      image: "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=600"
-    },
-    {
-      id: "exp_sports_2",
-      title: "BADMINTON DOUBLES SMASH",
-      category: "sports" as const,
-      tag: "SMASH RALLY",
-      description: "Looking for two fast players to join us for a friendly doubles match on wooden court B. Non-marking shoes required.",
-      time: "TODAY • 6:00 PM",
-      venue: "Feathers Indoor Sports Club",
-      price: 120,
-      image: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?auto=format&fit=crop&q=80&w=600"
-    },
-    {
-      id: "exp_rest_1",
-      title: "LATE NIGHT WAFFLES & COFFEE",
-      category: "restaurants" as const,
-      tag: "NIGHT RUN",
-      description: "Late-night waffle craving run. Open discussions about life, work, design, and everything in between!",
-      time: "TODAY • 11:30 PM",
-      venue: "Glen's Bakehouse, New Bel Road",
-      price: 200,
-      image: "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&q=80&w=600"
-    },
-    {
-      id: "exp_rest_2",
-      title: "SPONTY RAMEN BOWLS CREW",
-      category: "restaurants" as const,
-      tag: "GOURMET ASIA",
-      description: "Indulge in some authentic spicy miso ramen bowl and hot green tea with the foodie circle.",
-      time: "TODAY • 8:30 PM",
-      venue: "Writer's Cafe, VR Chennai",
-      price: 450,
-      image: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&q=80&w=600"
-    },
-    {
-      id: "exp_custom_1",
-      title: "CUSTOM SPONTANEOUS EXPERIENCE",
-      category: "custom" as const,
-      tag: "SPONTANEOUS SPARK",
-      description: "Start from scratch and build your own spontaneous coordinate. Customize title, timings, venue coordinates, and splits.",
-      time: "TODAY • 8:30 PM",
-      venue: "",
-      price: 0,
-      image: "https://images.unsplash.com/photo-1511632765486-a01980e01a18?auto=format&fit=crop&q=80&w=600"
+  // Immersive navigation scrolling behavior for Create Page
+  React.useEffect(() => {
+    if (createFlowStep !== "BROWSE") {
+      const footer = document.getElementById("main_app_footer_nav");
+      if (footer) {
+        footer.style.transform = "";
+        footer.style.marginBottom = "";
+        footer.style.transition = "";
+      }
+      return;
     }
-  ];
+
+    const container = document.getElementById("app_tab_content_wrapper");
+    const footer = document.getElementById("main_app_footer_nav");
+    if (!container || !footer) return;
+
+    // Apply smooth transitions
+    footer.style.transition = "transform 250ms cubic-bezier(0.4, 0, 0.2, 1), margin-bottom 250ms cubic-bezier(0.4, 0, 0.2, 1)";
+
+    let lastScrollTop = container.scrollTop;
+    let accumulatedDistance = 0;
+    let isHidden = false;
+    let prevDirection: "up" | "down" | null = null;
+
+    const handleScroll = () => {
+      const scrollTop = container.scrollTop;
+      const scrollDiff = scrollTop - lastScrollTop;
+
+      // TOP OF SCREEN RULE: Always show at the top of the Create page
+      if (scrollTop <= 0) {
+        if (isHidden) {
+          footer.style.transform = "translateY(0)";
+          footer.style.marginBottom = "0px";
+          isHidden = false;
+        }
+        lastScrollTop = 0;
+        accumulatedDistance = 0;
+        return;
+      }
+
+      const currentDirection = scrollDiff > 0 ? "down" : "up";
+      if (currentDirection !== prevDirection) {
+        accumulatedDistance = 0;
+      }
+      prevDirection = currentDirection;
+      accumulatedDistance += scrollDiff;
+
+      if (currentDirection === "down") {
+        if (accumulatedDistance > 50 && !isHidden) {
+          footer.style.transform = "translateY(100%)";
+          footer.style.marginBottom = "-72px";
+          isHidden = true;
+        }
+      } else {
+        if (accumulatedDistance < -30 && isHidden) {
+          footer.style.transform = "translateY(0)";
+          footer.style.marginBottom = "0px";
+          isHidden = false;
+        }
+      }
+
+      lastScrollTop = scrollTop;
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      footer.style.transform = "";
+      footer.style.marginBottom = "";
+      footer.style.transition = "";
+    };
+  }, [createFlowStep]);
+
+
+  const suggestedExperiences: any[] = [];
 
   const categoryCovers: Record<string, string> = {
     football: "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=600",
@@ -285,7 +291,7 @@ export const CreatePlanScreen = ({
     const matchedCircleObj = circles.find(c => c.id === selectedCircleIds[0]);
     const circleUuid = audienceType === "circle" ? (matchedCircleObj?.dbUuid || null) : null;
 
-    const parsedIsoDateTime = parseSpontaneousDateTimeToIso(timeToUse);
+    const parsedIsoDateTime = newPlanIsoDateTime || parseSpontaneousDateTimeToIso(timeToUse);
     console.log("[CreatePlanFlow] Converted display datetime string:", timeToUse, "-> ISO timestamp:", parsedIsoDateTime);
 
     // Build Canonical DB DbPlan model
@@ -330,6 +336,19 @@ export const CreatePlanScreen = ({
         throw new Error("Backend did not return the generated UUID primary key for the new plan.");
       }
 
+      // 1. Fetch fresh DB snapshot to avoid relying on stale local states
+      const freshRes = await fetch("/api/db/fetch-all");
+      if (!freshRes.ok) {
+        throw new Error("Failed to fetch fresh database snapshot.");
+      }
+      const freshJson = await freshRes.json();
+      const freshCircles = freshJson?.data?.circles || [];
+      const freshCircleMembers = freshJson?.data?.circle_members || [];
+      const freshPlanParticipants = freshJson?.data?.plan_participants || [];
+      // freshUsers contains raw DB rows with BOTH user_id (short ID) AND id (Postgres UUID)
+      const freshUsers = freshJson?.data?.users || [];
+      console.log("[CreatePlanFlow] freshUsers loaded:", freshUsers.length, "rows");
+
       // Collect selected invitees UUIDs
       const inviteeUuids: string[] = [];
       const participantRecords: any[] = [];
@@ -337,29 +356,38 @@ export const CreatePlanScreen = ({
 
       if ((audienceType === "circle" || audienceType === "multiple") && selectedCircleIds.length > 0) {
         const circleUuids = selectedCircleIds.map(cid => {
-          const c = circles.find(x => x.id === cid);
-          return c?.dbUuid || c?.id;
+          const c = freshCircles.find((x: any) => x.circle_id === cid || x.id === cid);
+          return c?.id || cid;
         });
 
-        // 1. Retrieve all members from circle_members
-        const targetMembers = dbCircleMembers.filter(m => circleUuids.includes(m.circle_id));
+        // Retrieve fresh circle members directly from database matching selected circleUUIDs
+        const targetMembers = freshCircleMembers.filter((m: any) => circleUuids.includes(m.circle_id));
         
-        // Log circle_id(s), member count, and member IDs
-        console.log(`[CreatePlan] Circle Selection IDs:`, selectedCircleIds);
+        // Log circle details as required by Step 7
+        console.log(`[CreatePlan] Selected circle_id:`, selectedCircleIds[0]);
         console.log(`[CreatePlan] Resolved Circle UUIDs:`, circleUuids);
-        console.log(`[CreatePlan] Retrieved circle members count: ${targetMembers.length}`);
-        console.log(`[CreatePlan] Circle member IDs:`, targetMembers.map(m => m.user_id));
+        console.log(`[CreatePlan] Circle member count: ${targetMembers.length}`);
+        console.log(`[CreatePlan] Circle member ids:`, targetMembers.map((m: any) => m.user_id));
+        console.log(`[CreatePlan] Created plan UUID:`, insertedPlanUuid);
 
-        // Deduplicate circle members by user_id to prevent duplicates
+        // Deduplicate circle members by user_id to prevent duplicates (Step 5)
         const uniqueMembersMap = new Map();
-        targetMembers.forEach(m => {
+        targetMembers.forEach((m: any) => {
           uniqueMembersMap.set(m.user_id, m);
         });
 
-        const uniqueMembers = Array.from(uniqueMembersMap.values());
-        console.log(`[CreatePlan] Unique circle members count: ${uniqueMembers.length}`);
+        // Always ensure host is in the mapping to guarantee they get a record
+        if (userProfile.dbUuid) {
+          uniqueMembersMap.set(userProfile.dbUuid, {
+            circle_id: circleUuids[0],
+            user_id: userProfile.dbUuid,
+            role: "admin"
+          });
+        }
 
-        // 2. Create plan_participants records for each unique circle member
+        const uniqueMembers = Array.from(uniqueMembersMap.values());
+
+        // Create plan_participants records for each unique circle member
         uniqueMembers.forEach((m: any, idx) => {
           const isHost = m.user_id === userProfile.dbUuid;
           participantRecords.push({
@@ -367,7 +395,7 @@ export const CreatePlanScreen = ({
             plan_id: insertedPlanUuid,
             user_id: m.user_id,
             status: isHost ? ("host" as const) : ("delivered" as const),
-            payment_status: isHost ? ("paid" as const) : ("unpaid" as const),
+            payment_status: "unpaid" as const, // Step 3: payment_status = unpaid
             joined_at: isHost ? hostJoinedAt : new Date().toISOString()
           });
 
@@ -377,15 +405,30 @@ export const CreatePlanScreen = ({
         });
 
         // Verify: Number of participant records equals number of unique circle members
-        console.log(`[CreatePlan] Verification - uniqueMembers count: ${uniqueMembers.length}, participantRecords count: ${participantRecords.length}`);
+        console.log(`[CreatePlan Participant Verification]`);
+        console.log(`- circle_id:`, circleUuids[0]);
+        console.log(`- member count: ${uniqueMembers.length}`);
+        console.log(`- participant count: ${participantRecords.length}`);
+        console.log(`- participant user_ids:`, participantRecords.map(pr => pr.user_id));
       } else if (audienceType === "friends" && selectedFriendIds.length > 0) {
+        // selectedFriendIds contains short IDs (e.g. "U001").
+        // We must look up the Postgres UUID from freshUsers (raw DB rows with both user_id and id).
+        console.log("[CreatePlan:Custom] Selected friend short IDs:", selectedFriendIds);
+        console.log("[CreatePlan:Custom] Host UUID:", userProfile.dbUuid);
+
         selectedFriendIds.forEach(fid => {
-          const friendUser = dbUsers.find(u => u.user_id === fid || u.id === fid);
-          const friendUuid = friendUser ? friendUser.id : fid;
-          if (friendUuid !== userProfile.dbUuid && !inviteeUuids.includes(friendUuid)) {
+          // Look up in freshUsers (raw DB rows) which have BOTH user_id AND id (UUID)
+          const freshFriendRow = freshUsers.find((u: any) => u.user_id === fid || u.id === fid);
+          const friendUuid = freshFriendRow?.id || null;
+          console.log(`[CreatePlan:Custom] Resolving friend short_id=${fid} -> UUID=${friendUuid} (found=${!!freshFriendRow})`);
+          if (friendUuid && friendUuid !== userProfile.dbUuid && !inviteeUuids.includes(friendUuid)) {
             inviteeUuids.push(friendUuid);
+          } else if (!friendUuid) {
+            console.warn(`[CreatePlan:Custom] Could not resolve UUID for friend short_id=${fid}. Skipping.`);
           }
         });
+
+        console.log("[CreatePlan:Custom] Resolved invitee UUIDs:", inviteeUuids);
 
         // Build participant payload for friends audience: 1 host + N invitees
         const ownerParticipant = {
@@ -397,17 +440,22 @@ export const CreatePlanScreen = ({
           joined_at: hostJoinedAt
         };
         participantRecords.push(ownerParticipant);
+        console.log("[CreatePlan:Custom] Host participant record:", ownerParticipant);
 
         inviteeUuids.forEach((inviteeUuid, idx) => {
-          participantRecords.push({
+          const rec = {
             participant_id: `PP_${Date.now()}_invitee_${idx}`,
             plan_id: insertedPlanUuid,
             user_id: inviteeUuid,
             status: "delivered" as const,
             payment_status: "unpaid" as const,
             joined_at: new Date().toISOString()
-          });
+          };
+          participantRecords.push(rec);
+          console.log(`[CreatePlan:Custom] Invitee participant record [${idx}]:`, rec);
         });
+
+        console.log(`[CreatePlan:Custom] Total participant records: ${participantRecords.length} (1 host + ${inviteeUuids.length} invitees)`);
       } else {
         // Fallback: just insert host
         const ownerParticipant = {
@@ -421,23 +469,46 @@ export const CreatePlanScreen = ({
         participantRecords.push(ownerParticipant);
       }
 
-      console.log("[CreatePlanFlow] Selected invitees UUIDs:", inviteeUuids);
-      console.log("[CreatePlanFlow] Participant insert payload:", JSON.stringify(participantRecords, null, 2));
-      console.log("[CreatePlanFlow] Final participant count:", participantRecords.length);
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isUuid = (val: any) => typeof val === "string" && uuidRegex.test(val);
 
-      console.log("[CreatePlanFlow] Persisting participants list to backend...", participantRecords);
-      const partRes = await fetch("/api/db/upsert", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: "plan_participants", records: participantRecords })
+      // Filter out invalid/non-UUID user_ids from participantRecords
+      const validParticipantRecords = participantRecords.filter(rec => {
+        if (!rec.user_id || !isUuid(rec.user_id)) {
+          console.error(`[CreatePlan] Skipping participant insert: user_id is missing or not a valid UUID:`, rec.user_id);
+          return false;
+        }
+        return true;
       });
-      if (!partRes.ok) {
-        const errData = await partRes.json().catch(() => ({}));
-        throw new Error(errData.error || errData.details || "Failed to write participants to backend database");
-      }
 
-      const partResult = await partRes.json();
-      const dbPartRow = partResult.data?.[0];
+      // Deduplicate participant records against existing records in DB snapshot (by plan_id, user_id)
+      const filteredParticipantRecords = validParticipantRecords.filter(rec => {
+        const duplicateInDb = freshPlanParticipants.some((p: any) => 
+          p.plan_id === rec.plan_id && p.user_id === rec.user_id
+        );
+        return !duplicateInDb;
+      });
+
+      // Step 6 logging
+      console.log(`[CreatePlan] plan id:`, insertedPlanUuid);
+      console.log(`[CreatePlan] invited user ids:`, inviteeUuids);
+      console.log(`[CreatePlan] participant records created:`, filteredParticipantRecords);
+
+      let dbPartRow = null;
+      if (filteredParticipantRecords.length > 0) {
+        console.log("[CreatePlanFlow] Persisting participants list to backend...", filteredParticipantRecords);
+        const partRes = await fetch("/api/db/upsert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: "plan_participants", records: filteredParticipantRecords })
+        });
+        if (!partRes.ok) {
+          const errData = await partRes.json().catch(() => ({}));
+          throw new Error(errData.error || errData.details || "Failed to write participants to backend database");
+        }
+        const partResult = await partRes.json();
+        dbPartRow = partResult.data?.[0];
+      }
 
       // Build and insert notifications for all invited friends or circle members
       const inviteNotifications = [];
@@ -466,6 +537,9 @@ export const CreatePlanScreen = ({
       if (userProfile.dbUuid) {
         await syncUserStats(userProfile.dbUuid, "create_plan");
       }
+
+      // Force reload plans state immediately from database to sync all stores
+      await refreshPlans();
 
       console.log("[CreatePlanFlow] Successfully saved plan, participant and invitations in backend!");
 
@@ -510,7 +584,9 @@ export const CreatePlanScreen = ({
         ...prev
       ]);
       setDbPlans(prev => [dbPlanRow, ...prev]);
-      setDbPlanParticipants(prev => [dbPartRow, ...prev]);
+      if (dbPartRow) {
+        setDbPlanParticipants(prev => [dbPartRow, ...prev]);
+      }
 
       // Create new circle activity trigger
       const matchedCircleId = audienceType === "circle" ? selectedCircleIds[0] : null;
@@ -534,6 +610,7 @@ export const CreatePlanScreen = ({
       setNewPlanTitle("");
       setNewPlanLocation("");
       setNewPlanTime("");
+      setNewPlanIsoDateTime("");
       setNewPlanCost("0");
       setSelectedCircleIds([]);
       setSelectedFriendIds([]);
@@ -578,8 +655,37 @@ export const CreatePlanScreen = ({
           setNewPlanLocation={setNewPlanLocation}
           newPlanTime={newPlanTime}
           setNewPlanTime={setNewPlanTime}
+          setNewPlanIsoDateTime={setNewPlanIsoDateTime}
           setCreateFlowStep={setCreateFlowStep}
           triggerToast={triggerToast}
+        />
+      )}
+
+      {/* CUSTOM FLOW STEP 1: ACTIVITY NAME */}
+      {createFlowStep === "CUSTOM_NAME" && selectedExperience && (
+        <CustomNameStep
+          newPlanTitle={newPlanTitle}
+          setNewPlanTitle={setNewPlanTitle}
+          setCreateFlowStep={setCreateFlowStep}
+        />
+      )}
+
+      {/* CUSTOM FLOW STEP 2: LOCATION */}
+      {createFlowStep === "CUSTOM_LOCATION" && selectedExperience && (
+        <CustomLocationStep
+          newPlanLocation={newPlanLocation}
+          setNewPlanLocation={setNewPlanLocation}
+          setCreateFlowStep={setCreateFlowStep}
+        />
+      )}
+
+      {/* CUSTOM FLOW STEP 3: DATE & TIME */}
+      {createFlowStep === "CUSTOM_DATETIME" && selectedExperience && (
+        <CustomDateTimeStep
+          newPlanTime={newPlanTime}
+          setNewPlanTime={setNewPlanTime}
+          setNewPlanIsoDateTime={setNewPlanIsoDateTime}
+          setCreateFlowStep={setCreateFlowStep}
         />
       )}
 
@@ -606,12 +712,58 @@ export const CreatePlanScreen = ({
         />
       )}
 
+      {/* CUSTOM FLOW STEP 4: INVITED PEOPLE */}
+      {createFlowStep === "CUSTOM_RECIPIENTS" && (
+        <InviteRecipientsStep
+          audienceType={audienceType}
+          setAudienceType={setAudienceType}
+          recipientSearchQuery={recipientSearchQuery}
+          setRecipientSearchQuery={setRecipientSearchQuery}
+          selectedCircleIds={selectedCircleIds}
+          setSelectedCircleIds={setSelectedCircleIds}
+          selectedFriendIds={selectedFriendIds}
+          setSelectedFriendIds={setSelectedFriendIds}
+          circles={circles}
+          dbUsers={dbUsers}
+          activeUserId={activeUserId}
+          setCreateFlowStep={setCreateFlowStep}
+          triggerToast={triggerToast}
+          dbUserData={dbUserData}
+          waitlistEnabled={waitlistEnabled}
+          setWaitlistEnabled={setWaitlistEnabled}
+          joinLimit={joinLimit}
+          setJoinLimit={setJoinLimit}
+          onBack={() => setCreateFlowStep("CUSTOM_DATETIME")}
+          onNext={() => setCreateFlowStep("CUSTOM_EXTRA")}
+          hideWaitlist={true}
+        />
+      )}
+
       {createFlowStep === "EXTRA" && selectedExperience && (
         <ExtraSettingsStep
           customPlanNotes={customPlanNotes}
           setCustomPlanNotes={setCustomPlanNotes}
           newPlanCost={newPlanCost}
           setNewPlanCost={setNewPlanCost}
+          setCreateFlowStep={setCreateFlowStep}
+        />
+      )}
+
+      {/* CUSTOM FLOW STEP 5: OPTIONAL DETAILS */}
+      {createFlowStep === "CUSTOM_EXTRA" && selectedExperience && (
+        <CustomExtraSettingsStep
+          customPlanNotes={customPlanNotes}
+          setCustomPlanNotes={setCustomPlanNotes}
+          newPlanCost={newPlanCost}
+          setNewPlanCost={setNewPlanCost}
+          waitlistEnabled={waitlistEnabled}
+          setWaitlistEnabled={setWaitlistEnabled}
+          joinLimit={joinLimit}
+          setJoinLimit={setJoinLimit}
+          selectedCircleIds={selectedCircleIds}
+          selectedFriendIds={selectedFriendIds}
+          circles={circles}
+          audienceType={audienceType}
           setCreateFlowStep={setCreateFlowStep}
         />
       )}
@@ -633,6 +785,7 @@ export const CreatePlanScreen = ({
           setCreateFlowStep={setCreateFlowStep}
           handleHostPlanSubmit={handleHostPlanSubmit}
           isSubmitting={isSubmitting}
+          onBack={() => setCreateFlowStep(selectedExperience.category === "custom" ? "CUSTOM_EXTRA" : "EXTRA")}
         />
       )}
     </div>

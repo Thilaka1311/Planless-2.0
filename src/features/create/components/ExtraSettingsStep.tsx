@@ -1,5 +1,6 @@
 import React from "react";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { CreatePlanCTAButton } from "./CreatePlanCTAButton";
 
 interface ExtraSettingsStepProps {
   customPlanNotes: string;
@@ -87,17 +88,13 @@ export const ExtraSettingsStep = ({
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => {
+      <CreatePlanCTAButton
+        text="FINALIZE PLAN"
+        onPress={() => {
           if (!newPlanCost) setNewPlanCost("0");
           setCreateFlowStep("PREVIEW");
         }}
-        className="w-full py-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-955 font-display font-semibold text-xs uppercase tracking-wider transition-colors text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 font-bold"
-      >
-        <span>Continue</span>
-        <ChevronRight className="w-4 h-4" />
-      </button>
+      />
     </div>
   );
 };

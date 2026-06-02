@@ -1,5 +1,6 @@
 import React from "react";
 import { ArrowLeft, Search, ChevronRight } from "lucide-react";
+import { CreatePlanCTAButton } from "./CreatePlanCTAButton";
 
 interface CircleItem {
   id: string;
@@ -28,13 +29,16 @@ interface InviteRecipientsStepProps {
   circles: CircleItem[];
   dbUsers: DbUserItem[];
   activeUserId: string | null;
-  setCreateFlowStep: (step: "BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW") => void;
+  setCreateFlowStep: (step: any) => void;
   triggerToast: (msg: string) => void;
   dbUserData?: any[];
   waitlistEnabled: boolean;
   setWaitlistEnabled: (val: boolean) => void;
   joinLimit: number;
   setJoinLimit: (val: number) => void;
+  onBack?: () => void;
+  onNext?: () => void;
+  hideWaitlist?: boolean;
 }
 
 export const InviteRecipientsStep = ({
@@ -55,7 +59,10 @@ export const InviteRecipientsStep = ({
   waitlistEnabled,
   setWaitlistEnabled,
   joinLimit,
-  setJoinLimit
+  setJoinLimit,
+  onBack,
+  onNext,
+  hideWaitlist = false,
 }: InviteRecipientsStepProps) => {
   const getSelectedParticipantsCount = () => {
     if (audienceType === "friends") {
@@ -80,7 +87,7 @@ export const InviteRecipientsStep = ({
     <div className="space-y-5 animate-fade-in text-left">
       <button
         type="button"
-        onClick={() => setCreateFlowStep("DETAILS")}
+        onClick={onBack || (() => setCreateFlowStep("DETAILS"))}
         className="text-xs font-mono font-medium text-zinc-550 hover:text-zinc-200 flex items-center gap-1.5 cursor-pointer py-1"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
@@ -106,7 +113,7 @@ export const InviteRecipientsStep = ({
             }}
             className={`py-1.5 text-[10px] font-mono rounded-lg transition-all border cursor-pointer ${audienceType === tab.key
               ? "bg-zinc-950 text-white border-zinc-850 shadow-md font-semibold"
-              : "text-zinc-550 hover:text-zinc-350 border-transparent"
+              : "text-zinc-550 hover:text-zinc-355 border-transparent"
               }`}
           >
             {tab.label}
@@ -127,7 +134,7 @@ export const InviteRecipientsStep = ({
           }
           value={recipientSearchQuery}
           onChange={(e) => setRecipientSearchQuery(e.target.value)}
-          className="w-full bg-zinc-905 border border-zinc-850 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-zinc-650 focus:outline-none"
+          className="w-full bg-zinc-905 border border-zinc-855 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-zinc-650 focus:outline-none"
         />
       </div>
 
@@ -200,7 +207,7 @@ export const InviteRecipientsStep = ({
                     }}
                     className={`p-2.5 rounded-2xl flex items-center justify-between cursor-pointer border transition-all ${isSelected
                       ? "bg-[#ff8b66]/10 border-[#ff8b66]/30"
-                      : "bg-zinc-950/40 border-zinc-900 hover:border-zinc-850"
+                      : "bg-zinc-950/40 border-zinc-900 hover:border-zinc-855"
                       }`}
                   >
                     <div className="flex items-center gap-2.5 text-left">
@@ -269,54 +276,57 @@ export const InviteRecipientsStep = ({
         )}
       </div>
 
-      {/* Live count of selected participants */}
       <div className="flex justify-between items-center bg-zinc-950/60 border border-zinc-900 rounded-2xl p-3 text-xs">
         <span className="text-zinc-400 font-sans">Selected Participants</span>
         <span className="text-brand-peach font-mono font-bold text-sm">{selectedCount}</span>
       </div>
 
-      {/* Enable Waitlist Toggle */}
-      <div className="flex justify-between items-center bg-zinc-950/60 border border-zinc-900 rounded-2xl p-3 text-xs">
-        <span className="text-zinc-400 font-sans">Enable Waitlist</span>
-        <input
-          type="checkbox"
-          checked={waitlistEnabled}
-          onChange={(e) => {
-            const enabled = e.target.checked;
-            setWaitlistEnabled(enabled);
-            if (enabled && joinLimit > selectedCount) {
-              setJoinLimit(selectedCount > 0 ? selectedCount : 1);
-            }
-          }}
-          className="accent-[#ff8b66] w-4.5 h-4.5 cursor-pointer"
-        />
-      </div>
+      {/* Enable Waitlist Toggle (Hidden if hideWaitlist is true) */}
+      {!hideWaitlist && (
+        <>
+          <div className="flex justify-between items-center bg-zinc-950/60 border border-zinc-900 rounded-2xl p-3 text-xs">
+            <span className="text-zinc-400 font-sans">Enable Waitlist</span>
+            <input
+              type="checkbox"
+              checked={waitlistEnabled}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                setWaitlistEnabled(enabled);
+                if (enabled && joinLimit > selectedCount) {
+                  setJoinLimit(selectedCount > 0 ? selectedCount : 1);
+                }
+              }}
+              className="accent-[#ff8b66] w-4.5 h-4.5 cursor-pointer"
+            />
+          </div>
 
-      {/* Join Limit Slider (conditional) */}
-      {waitlistEnabled && (
-        <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 space-y-2.5 text-left">
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-zinc-400 font-sans">Maximum Going Participants</span>
-            <span className="text-[#ff8b66] font-mono font-bold text-sm">{joinLimit}</span>
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={selectedCount > 0 ? selectedCount : 1}
-            value={joinLimit}
-            onChange={(e) => setJoinLimit(Number(e.target.value))}
-            className="w-full accent-[#ff8b66] cursor-pointer"
-          />
-          <div className="flex justify-between text-[9px] font-mono text-zinc-600">
-            <span>1</span>
-            <span>{selectedCount > 0 ? selectedCount : 1}</span>
-          </div>
-        </div>
+          {/* Join Limit Slider (conditional) */}
+          {waitlistEnabled && (
+            <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl p-4 space-y-2.5 text-left">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-zinc-400 font-sans">Maximum Going Participants</span>
+                <span className="text-[#ff8b66] font-mono font-bold text-sm">{joinLimit}</span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={selectedCount > 0 ? selectedCount : 1}
+                value={joinLimit}
+                onChange={(e) => setJoinLimit(Number(e.target.value))}
+                className="w-full accent-[#ff8b66] cursor-pointer"
+              />
+              <div className="flex justify-between text-[9px] font-mono text-zinc-600">
+                <span>1</span>
+                <span>{selectedCount > 0 ? selectedCount : 1}</span>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
-      <button
-        type="button"
-        onClick={() => {
+      <CreatePlanCTAButton
+        text="INVITE PEOPLE"
+        onPress={() => {
           const hasCircleRecipients = audienceType === "circle" && selectedCircleIds.length > 0;
           const hasFriendsRecipients = audienceType === "friends" && selectedFriendIds.length > 0;
           const hasMultiRecipients = audienceType === "multiple" && selectedCircleIds.length > 0;
@@ -325,13 +335,13 @@ export const InviteRecipientsStep = ({
             triggerToast("Please pick at least one recipient first before proceeding.");
             return;
           }
-          setCreateFlowStep("EXTRA");
+          if (onNext) {
+            onNext();
+          } else {
+            setCreateFlowStep("EXTRA");
+          }
         }}
-        className="w-full py-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-955 font-display font-semibold text-xs uppercase tracking-wider transition-colors text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 font-bold"
-      >
-        <span>Continue</span>
-        <ChevronRight className="w-4 h-4" />
-      </button>
+      />
     </div>
   );
 };

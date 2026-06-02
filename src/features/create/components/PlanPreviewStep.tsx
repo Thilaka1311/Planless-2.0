@@ -1,5 +1,6 @@
 import React from "react";
 import { ArrowLeft, Clock, MapPin, Landmark, Users } from "lucide-react";
+import { CreatePlanCTAButton } from "./CreatePlanCTAButton";
 
 interface CircleItem {
   id: string;
@@ -27,6 +28,7 @@ interface PlanPreviewStepProps {
   setCreateFlowStep: (step: "BROWSE" | "DETAILS" | "RECIPIENTS" | "EXTRA" | "PREVIEW") => void;
   handleHostPlanSubmit: () => void;
   isSubmitting: boolean;
+  onBack?: () => void;
 }
 
 export const PlanPreviewStep = ({
@@ -44,7 +46,8 @@ export const PlanPreviewStep = ({
   selectedExperience,
   setCreateFlowStep,
   handleHostPlanSubmit,
-  isSubmitting
+  isSubmitting,
+  onBack
 }: PlanPreviewStepProps) => {
   const defaultCustomCover = "https://images.unsplash.com/photo-1511632765486-a01980e01a18?auto=format&fit=crop&q=80&w=600";
 
@@ -52,7 +55,7 @@ export const PlanPreviewStep = ({
     <div className="space-y-5 animate-fade-in text-left">
       <button
         type="button"
-        onClick={() => setCreateFlowStep("EXTRA")}
+        onClick={onBack || (() => setCreateFlowStep("EXTRA"))}
         className="text-xs font-mono font-medium text-zinc-500 hover:text-zinc-200 flex items-center gap-1.5 cursor-pointer py-1"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
@@ -157,24 +160,14 @@ export const PlanPreviewStep = ({
         </div>
       </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleHostPlanSubmit();
-        }}
-        className="space-y-3"
-      >
-        <button
-          id="host_plan_submit_btn"
-          type="submit"
-          disabled={isSubmitting}
-          className={`w-full py-4 rounded-xl bg-[#ff5d41] text-white font-display font-black text-xs uppercase tracking-widest hover:bg-opacity-80 active:scale-[0.99] transition-all text-center shadow-lg flex items-center justify-center gap-2 font-bold ${
-            isSubmitting ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
-          }`}
-        >
-          <span>{isSubmitting ? "Hosting..." : "Host Plan"}</span>
-        </button>
-      </form>
+      <CreatePlanCTAButton
+        id="host_plan_submit_btn"
+        text={isSubmitting ? "LAUNCHING..." : "HOST PLAN"}
+        onPress={handleHostPlanSubmit}
+        disabled={isSubmitting}
+        loading={isSubmitting}
+        variant="final"
+      />
     </div>
   );
 };

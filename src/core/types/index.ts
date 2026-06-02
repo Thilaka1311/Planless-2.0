@@ -7,7 +7,8 @@
 
 // 1. USERS TABLE
 export interface User {
-  user_id: string;
+  id?: string;          // UUID primary key (users.id) — used for all FK relationships
+  user_id: string;      // Sequential display identifier e.g. "U001" — display only, NOT a FK
   username: string;
   full_name: string;
   phone_number: string;
@@ -19,6 +20,7 @@ export interface User {
   wallet_balance: number;
   active_status: boolean;
 }
+
 
 // 2. CIRCLES TABLE
 export interface DbCircle {
@@ -94,8 +96,8 @@ export interface DbPlanParticipant {
 export interface DbTransaction {
   id?: string; // UUID primary key
   transaction_id: string;
-  sender_id: string | null; // user_id or "TOPUP" or null
-  receiver_id: string | null; // user_id or "SYSTEM" or null
+  sender_id: string | null; // UUID → users.id (or special values: "SYSTEM", "UPI", null)
+  receiver_id: string | null; // UUID → users.id (or special values: "SYSTEM", null)
   plan_id: string | null;
   amount: number;
   transaction_type: string; // "split_payment" | "deposit" | "settlement"
@@ -174,6 +176,7 @@ export interface Plan {
   isActive?: boolean;
   reminderNotificationSent?: boolean;
   circleId?: string | null;
+  circleName?: string | null;
 
   // Sports Plan fields
   skillLevel?: string;
@@ -220,6 +223,9 @@ export interface Transaction {
   type: "credit" | "debit";
   timestamp: string;
   settled: boolean;
+  status?: string;
+  transactionType?: string;
+  planTitle?: string | null;
 }
 
 export interface NotificationItem {

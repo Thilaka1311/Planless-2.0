@@ -326,7 +326,16 @@ export const PlansScreen = ({
                 .replace("bg-rose-500/15", "bg-rose-500/8")
                 .replace("bg-white/12", "bg-white/5")}`}
             >
-              {badge.label.replace(" ✓", "")}
+              {(() => {
+                const label = badge.label.replace(" ✓", "");
+                if (label === "Going") {
+                  const myPp = dbPlanParticipants.find(pp => pp.plan_id === plan.id && pp.user_id === activeUserId);
+                  if (myPp && myPp.payment_status === "unpaid" && plan.cost > 0) {
+                    return `Pay ₹${plan.cost}`;
+                  }
+                }
+                return label;
+              })()}
             </span>
           )}
           <ChevronRight className="w-3.5 h-3.5 text-zinc-650 group-hover:text-zinc-400 transition-colors" />

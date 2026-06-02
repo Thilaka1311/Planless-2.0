@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, ReactNode } from "react";
 import { Plan, PlanMember, DbPlan, DbPlanParticipant, DbMemory, User } from "../../../core/types";
 import { useProfileStore } from "../../profile/state/ProfileContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
-import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats } from "../../../lib/db";
+import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats, createRazorpayOrder, verifyRazorpayPayment, insertTransaction } from "../../../lib/db";
 import { mapPlansToLegacyPlans } from "../../../lib/mappers";
 
 interface ParticipantCounts {
@@ -35,6 +35,7 @@ interface PlansContextType {
   getHomeFeedPlans: (userId: string) => Plan[];
   getHubPlans: (userId: string) => Plan[];
   getParticipantCounts: (planId: string) => ParticipantCounts;
+  refreshPlans: () => Promise<void>;
 }
 
 const PlansContext = createContext<PlansContextType | undefined>(undefined);
@@ -52,6 +53,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return userObj ? userObj.id : uId;
   };
 
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const isUuid = (val: any) => typeof val === "string" && uuidRegex.test(val);
+
   const refreshPlans = async () => {
     try {
       const res = await fetch("/api/db/fetch-all");
@@ -62,7 +66,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setDbPlans(d.plans || []);
           setDbPlanParticipants(d.plan_participants || []);
           setDbMemories(d.memories || []);
-          setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], userId));
+          setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], userId, d.circles || []));
           console.log(`[PlansContext refreshPlans] Successfully refreshed plans state. Count: ${d.plans?.length}, Participants: ${d.plan_participants?.length}`);
         }
       }
@@ -76,10 +80,167 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const planUuid = matchedPlan?.dbUuid || planId;
     const userUuid = userProfile.dbUuid || resolveUserUuid(userProfile.user_id || userId);
 
+    if (!userUuid || !isUuid(userUuid)) {
+      console.error(`[PlansContext] Cannot join plan: user UUID is missing or invalid:`, userUuid);
+      return;
+    }
+
     // Logging: status before action
     const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id));
     console.log(`[PlansContext] JOIN ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userProfile.name}`);
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none (not invited/joined)");
+
+    const isHost = existingBefore?.status === "host" || matchedPlan?.creatorId === userUuid || matchedPlan?.creatorId === "u_self";
+    if (matchedPlan && matchedPlan.payment_required && !isHost) {
+      // 1. Create Razorpay Order
+      const amount = matchedPlan.cost;
+      const orderRes = await createRazorpayOrder(amount, `receipt_${Date.now()}_${planId}`, { planId, userUuid });
+      if (!orderRes || !orderRes.success || !orderRes.order) {
+        console.error("[PlansContext] Failed to create Razorpay order.");
+        return;
+      }
+
+      const order = orderRes.order;
+
+      // 2. Load Razorpay Checkout Script
+      const loadScript = () => {
+        return new Promise<boolean>((resolve) => {
+          if ((window as any).Razorpay) {
+            resolve(true);
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = "https://checkout.razorpay.com/v1/checkout.js";
+          script.onload = () => resolve(true);
+          script.onerror = () => resolve(false);
+          document.body.appendChild(script);
+        });
+      };
+
+      const scriptLoaded = await loadScript();
+      if (!scriptLoaded) {
+        console.error("[PlansContext] Razorpay checkout script failed to load.");
+        return;
+      }
+
+      // 3. Open Razorpay Checkout and wait for verification
+      const isVerified = await new Promise<boolean>((resolveVerify) => {
+        const options = {
+          key: orderRes.sandbox ? "rzp_test_mock" : (orderRes.order?.notes?.key || "rzp_test_mock"),
+          amount: order.amount,
+          currency: order.currency,
+          name: "Planless",
+          description: `RSVP Payment for ${matchedPlan.title}`,
+          order_id: order.id,
+          handler: async function (response: any) {
+            console.log("[PlansContext] Razorpay checkout success payload received:", response);
+            // 4. Verify payment with backend
+            const verifyRes = await verifyRazorpayPayment({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            });
+
+            // Required Logging: plan id, participant id, order id, payment id, verification result
+            console.log(`[Razorpay Payment Audit]`);
+            console.log(`- plan id: ${planId}`);
+            console.log(`- participant id: ${existingBefore?.id || "new_participant"}`);
+            console.log(`- order id: ${response.razorpay_order_id}`);
+            console.log(`- payment id: ${response.razorpay_payment_id}`);
+            console.log(`- verification result: ${verifyRes && verifyRes.success ? "SUCCESS" : "FAILED"}`);
+
+            if (verifyRes && verifyRes.success) {
+              resolveVerify(true);
+            } else {
+              resolveVerify(false);
+            }
+          },
+          prefill: {
+            name: userProfile.name || "",
+            contact: userProfile.phone || "",
+          },
+          theme: {
+            color: "#ff8b66",
+          },
+          modal: {
+            ondismiss: function () {
+              console.log("[PlansContext] Razorpay Checkout dismissed by user.");
+              // Required Logging on failure/dismiss:
+              console.log(`[Razorpay Payment Audit]`);
+              console.log(`- plan id: ${planId}`);
+              console.log(`- participant id: ${existingBefore?.id || "new_participant"}`);
+              console.log(`- order id: ${order.id}`);
+              console.log(`- payment id: N/A (dismissed)`);
+              console.log(`- verification result: CANCELLED`);
+              resolveVerify(false);
+            }
+          }
+        };
+
+        const rzp = new (window as any).Razorpay(options);
+        rzp.open();
+      });
+
+      if (!isVerified) {
+        console.warn("[PlansContext] Razorpay payment could not be verified. Aborting accept transition.");
+        return;
+      }
+
+      // 5. Update participant on success: status = going, payment_status = paid
+      if (planUuid && userUuid) {
+        if (existingBefore && existingBefore.id) {
+          await updateParticipantStatus(existingBefore.id, "going", "paid");
+        } else {
+          await insertParticipant({
+            plan_id: planUuid,
+            user_id: userUuid,
+            status: "going",
+            payment_status: "paid",
+            joined_at: new Date().toISOString()
+          });
+        }
+        await syncUserStats(userUuid, "join_plan");
+
+        // 6. Create completed transaction record with duplicate check
+        try {
+          const freshRes = await fetch("/api/db/fetch-all");
+          if (freshRes.ok) {
+            const freshJson = await freshRes.json();
+            const existingTransactions = freshJson?.data?.transactions || [];
+            const isDuplicate = existingTransactions.some((tx: any) => tx.plan_id === planUuid && tx.sender_id === userUuid);
+
+            if (!isDuplicate) {
+              const hostUuid = matchedPlan.creatorId || matchedPlan.hostId;
+              const newTx = {
+                transaction_id: `T_${Date.now()}`,
+                sender_id: userUuid,
+                receiver_id: hostUuid,
+                plan_id: planUuid,
+                amount: matchedPlan.cost,
+                transaction_type: "plan_payment",
+                status: "completed",
+                created_at: new Date().toISOString()
+              };
+
+              console.log(`[Transaction Insert Audit]`);
+              console.log(`- transaction id: ${newTx.transaction_id}`);
+              console.log(`- sender_id: ${newTx.sender_id}`);
+              console.log(`- receiver_id: ${newTx.receiver_id}`);
+              console.log(`- plan_id: ${newTx.plan_id}`);
+              console.log(`- amount: ${newTx.amount}`);
+
+              await insertTransaction(newTx);
+            } else {
+              console.warn(`[PlansContext] Duplicate transaction detected for plan_id=${planUuid} and sender_id=${userUuid}. Skipping insert.`);
+            }
+          }
+        } catch (txErr: any) {
+          console.error("[PlansContext] Failed to persist transaction record:", txErr);
+        }
+      }
+      await refreshPlans();
+      return;
+    }
 
     // 1. Update UI plans state locally for immediate response
     setPlans(prevPlans => prevPlans.map(plan => {
@@ -176,6 +337,11 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const planUuid = matchedPlan?.dbUuid || planId;
     const userUuid = userProfile.dbUuid || resolveUserUuid(userProfile.user_id || userId);
 
+    if (!userUuid || !isUuid(userUuid)) {
+      console.error(`[PlansContext] Cannot waitlist plan: user UUID is missing or invalid:`, userUuid);
+      return;
+    }
+
     const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id));
     console.log(`[PlansContext] WAITLIST ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userProfile.name}`);
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none");
@@ -236,6 +402,11 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const planUuid = matchedPlan?.dbUuid || planId;
     const userUuid = resolveUserUuid(leaverId);
 
+    if (!userUuid || !isUuid(userUuid)) {
+      console.error(`[PlansContext] Cannot leave plan: user UUID is missing or invalid:`, userUuid);
+      return;
+    }
+
     const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === leaverId));
     console.log(`[PlansContext] LEAVE ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${leaverId}`);
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none");
@@ -276,6 +447,11 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const matchedPlan = plans.find(p => p.id === planId);
     const planUuid = matchedPlan?.dbUuid || planId;
     const userUuid = resolveUserUuid(passerId);
+
+    if (!userUuid || !isUuid(userUuid)) {
+      console.error(`[PlansContext] Cannot pass plan: user UUID is missing or invalid:`, userUuid);
+      return;
+    }
 
     const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === passerId));
     console.log(`[PlansContext] PASS ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${passerId}`);
@@ -382,22 +558,14 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { host, going, waitlist, delivered, seen, passed, pending, total };
   };
 
-  const getHomeFeedPlans = (userId: string) => {
-    // userId may be either the short user_id ("U001") or UUID
+  const getHomeFeedPlans = (userIdStr: string) => {
+    const userUuid = resolveUserUuid(userIdStr);
+    const myParticipantRecords = dbPlanParticipants.filter(pp => pp.user_id === userUuid);
+
     const filtered = plans.filter(plan => {
-      const member = plan.members.find(
-        m => m.userId === userId || (m as any).userUuid === userId
-      );
-      const state = member?.joinState;
-
-      const isIncluded = state && ["delivered", "seen"].includes(state);
-
-      if (isIncluded) {
-        console.log(`[PlansContext getHomeFeedPlans INCLUDED] Current User ID: ${userId}, Plan: "${plan.title}", Status: ${state}`);
-      } else {
-        console.log(`[PlansContext getHomeFeedPlans EXCLUDED] Current User ID: ${userId}, Plan: "${plan.title}", Status: ${state || "none"}`);
-      }
-
+      const planUuid = plan.dbUuid || plan.id;
+      const ppRecord = myParticipantRecords.find(pp => pp.plan_id === planUuid);
+      const isIncluded = ppRecord && ["delivered", "seen", "new"].includes(ppRecord.status);
       return !!isIncluded;
     });
 
@@ -464,7 +632,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dbPlans, setDbPlans, 
       dbPlanParticipants, setDbPlanParticipants,
       dbMemories, setDbMemories,
-      joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans, getParticipantCounts 
+      joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans, getParticipantCounts, refreshPlans 
     }}>
       {children}
     </PlansContext.Provider>

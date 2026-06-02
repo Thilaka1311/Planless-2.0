@@ -1,17 +1,27 @@
-import React from 'react';
-import { ArrowLeft, Settings, Users, Calendar, Clock, MapPin, CheckCircle, ChevronRight, MessageSquare } from "lucide-react";
+import React, { useState } from 'react';
+import {
+  ArrowLeft, Edit, Save, Users, UserPlus, LogOut,
+  Shield, MapPin, Compass, Calendar, ChevronRight, Plus
+} from "lucide-react";
 
+/**
+ * CircleDetailScreen — unified Circle Info + Settings screen.
+ *
+ * Replaces the two-step Detail → Settings navigation.
+ * Tapping the settings icon from CircleChatScreen lands here directly.
+ */
 export const CircleDetailScreen = (props: any) => {
   const {
     circle,
     plans,
     activeUserId,
-    onBack,
-    onOpenSettings,
+    onBack,                  // back to CircleChatScreen
+    onOpenSettings,          // no-op kept for compat – no second settings screen
     setSelectedPlan,
     setPaymentConfirmationPlan,
     handleToggleJoin,
     setActiveStoryRecap,
+    // Create plan navigation
     setNewPlanCircleId,
     setNewPlanTitle,
     setSelectedPreset,
@@ -19,286 +29,276 @@ export const CircleDetailScreen = (props: any) => {
     setSelectedCircleIds,
     setActiveTab,
     setCreateFlowStep,
-    triggerToast
+    // Settings mutations
+    setCircles,
+    setSelectedCircle,
+    dbUsers,
+    triggerToast,
+    onAddMembers,
   } = props;
 
-  // Filter plans belonging to this circle
-  const circlePlans = plans.filter((p: any) => p.circleId === circle.id);
+  // ── editable name state ────────────────────────────────────────────────────
+  const [name, setName] = useState(circle.name);
+  const [isEditingName, setIsEditingName] = useState(false);
 
-  // Sort plans chronologically (newest or upcoming first, we can do chronological order)
-  const sortedPlans = [...circlePlans].sort((a: any, b: any) => {
-    const dateA = new Date(a.date).getTime() || 0;
-    const dateB = new Date(b.date).getTime() || 0;
-    return dateA - dateB; // chronological order (oldest to newest)
-  });
+  // ── helpers ────────────────────────────────────────────────────────────────
+  const handleSaveName = () => {
+    if (!name.trim()) { triggerToast("Circle name cannot be empty!"); return; }
+    const updated = { ...circle, name: name.trim() };
+    setCircles?.((prev: any[]) => prev.map(c => c.id === circle.id ? updated : c));
+    setSelectedCircle?.(updated);
+    setIsEditingName(false);
+    triggerToast("Circle name updated! ✏️");
+  };
+
+  const handleLeaveCircle = () => {
+    setCircles?.((prev: any[]) => prev.filter(c => c.id !== circle.id));
+    setSelectedCircle?.(null);
+    onBack();
+    triggerToast(`Left ${circle.name}.`);
+  };
+
+  const handleHostPlan = () => {
+    setNewPlanCircleId?.(circle.id);
+    setNewPlanTitle?.(`Meetup with ${circle.name}`);
+    setSelectedPreset?.("custom");
+    setAudienceType?.("circle");
+    setSelectedCircleIds?.([circle.id]);
+    setActiveTab?.("create");
+    setCreateFlowStep?.("DETAILS");
+    triggerToast?.(`Creating plan for ${circle.name} ⚡`);
+  };
+
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (scrollRef.current && containerRef.current) {
+      console.log("[CircleDetailScreen Logs]");
+      console.log("- Viewport height (container clientHeight):", containerRef.current.clientHeight);
+      console.log("- Scroll content height (scrollHeight):", scrollRef.current.scrollHeight);
+      const isScrollable = scrollRef.current.scrollHeight > scrollRef.current.clientHeight;
+      console.log("- Scroll enabled status (content exceeds viewport):", isScrollable);
+    }
+  }, [circle]);
 
   return (
-    <div id="circle_detail_pane" className="flex flex-col h-full space-y-4 animate-fade-in pb-12">
-      
-      {/* 1. CHAT-STYLE TOP HEADER */}
-      <div 
-        id="circle_detail_header" 
-        className="flex items-center justify-between bg-zinc-950/80 border border-zinc-900 rounded-3xl p-3.5 backdrop-blur-md sticky top-0 z-20 shadow-lg"
+    <div
+      id="circle_detail_pane"
+      ref={containerRef}
+      className="flex flex-col h-full animate-fade-in select-none text-left"
+    >
+      {/* ── HEADER ─────────────────────────────────────────────────────── */}
+      <div className="shrink-0 flex items-center gap-3 pb-2 border-b border-zinc-900">
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-zinc-500 hover:text-white flex items-center gap-1.5 text-[10.5px] uppercase font-mono font-bold cursor-pointer"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" /> Plans
+        </button>
+        <span className="flex-1" />
+        <span className="text-[9.5px] font-mono text-[#ff8b66] font-bold uppercase tracking-widest">
+          Circle Hub
+        </span>
+      </div>
+
+      {/* ── SINGLE PRIMARY SCROLL CONTAINER ───────────────────────────── */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto no-scrollbar space-y-4 pt-3 pb-8"
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            type="button"
-            onClick={onBack}
-            className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-900 rounded-full transition-all cursor-pointer flex items-center justify-center"
-            aria-label="Back to circles"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          
-          {/* Header Info - Tapping opens Circle Settings */}
-          <div 
-            onClick={onOpenSettings}
-            className="flex items-center gap-2.5 cursor-pointer group min-w-0"
-            title="Open Circle Settings"
-          >
-            <img
-              src={circle.groupImage || circle.avatars?.[0] || "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=200"}
-              className="w-10 h-10 rounded-xl object-cover border border-zinc-800 group-hover:border-[#ff8b66] transition-colors"
-              alt=""
-              referrerPolicy="no-referrer"
-            />
-            <div className="min-w-0">
-              <h3 className="text-sm font-display font-bold text-white tracking-tight truncate group-hover:text-[#ff8b66] transition-colors">
-                {circle.name}
-              </h3>
-              <span className="text-[10px] text-zinc-500 font-mono flex items-center gap-1 mt-0.5">
-                <Users className="w-3 h-3 text-[#ff8b66]/70" /> 
-                {circle.membersCount || circle.membersList?.length || 0} members • Tap for settings
+
+      {/* ── 1. CIRCLE INFO & EDITABLE NAME ──────────────────────────────── */}
+      <div className="bg-gradient-to-b from-zinc-900 to-zinc-955 border border-zinc-900 rounded-3xl p-5 space-y-4 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-20 h-20 bg-[#ff8b66]/5 rounded-full blur-xl pointer-events-none" />
+
+        <div className="flex items-center gap-3">
+          <img
+            src={circle.groupImage || circle.avatars?.[0] || "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=200"}
+            className="w-12 h-12 rounded-2xl object-cover border border-zinc-800 shrink-0"
+            alt=""
+            referrerPolicy="no-referrer"
+          />
+          <div className="flex-1 min-w-0">
+            {isEditingName ? (
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  className="bg-zinc-950 border border-zinc-850 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none flex-1 min-w-0"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveName}
+                  className="p-2 bg-[#ff8b66] text-black hover:bg-[#ff9a7c] rounded-xl flex items-center justify-center shrink-0 cursor-pointer"
+                  title="Save name"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-display font-black text-white tracking-tight truncate">
+                  {circle.name}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingName(true)}
+                  className="text-zinc-500 hover:text-white transition-colors cursor-pointer"
+                  title="Rename circle"
+                >
+                  <Edit className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            <span className="text-[9.5px] font-mono text-zinc-500 block mt-0.5 uppercase">
+              {circle.location} · {circle.membersCount || circle.membersList?.length || 0} members
+            </span>
+          </div>
+        </div>
+
+        {/* Meta rows */}
+        <div className="pt-3 border-t border-zinc-950 space-y-2 text-xs">
+          {circle.description && (
+            <div className="flex justify-between items-start">
+              <span className="text-zinc-550 font-mono text-[10px] shrink-0">DESCRIPTION:</span>
+              <span className="text-zinc-400 font-sans text-right leading-relaxed pl-4">
+                {circle.description}
               </span>
             </div>
-          </div>
+          )}
+          {circle.location && (
+            <div className="flex justify-between items-center">
+              <span className="text-zinc-550 font-mono text-[10px]">LOCATION:</span>
+              <span className="text-zinc-300 font-semibold flex items-center gap-1">
+                <MapPin className="w-3 h-3 text-[#ff8b66]" /> {circle.location}
+              </span>
+            </div>
+          )}
+          {circle.format && (
+            <div className="flex justify-between items-center">
+              <span className="text-zinc-550 font-mono text-[10px]">FORMAT:</span>
+              <span className="text-zinc-300 font-semibold flex items-center gap-1">
+                <Compass className="w-3 h-3 text-[#ff8b66]" /> {circle.format}
+              </span>
+            </div>
+          )}
         </div>
-
-        {/* Right Gear Button */}
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="p-2 text-zinc-400 hover:text-white bg-zinc-900/60 border border-zinc-850 hover:border-zinc-700 rounded-full transition-all cursor-pointer flex items-center justify-center"
-          title="Circle Settings"
-        >
-          <Settings className="w-4.5 h-4.5 text-zinc-400" />
-        </button>
       </div>
 
-      {/* 2. CHAT-STYLE ACTIVITIES FEED AREA */}
-      <div 
-        id="circle_chat_feed" 
-        className="flex-1 space-y-5 overflow-y-auto no-scrollbar pr-1"
+      {/* ── 2. HOST A PLAN ───────────────────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={handleHostPlan}
+        className="w-full flex items-center gap-3 bg-zinc-950/80 border border-zinc-900 hover:border-zinc-800 rounded-2xl px-4 py-3 backdrop-blur-md transition-all group cursor-pointer"
       >
-        {/* Welcome message bubble */}
-        <div className="flex items-start gap-2.5 max-w-[85%] select-none">
-          <div className="w-6.5 h-6.5 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
-            <span className="text-[10px]">🤖</span>
+        <div className="w-7 h-7 rounded-lg bg-[#ff8b66]/10 border border-[#ff8b66]/20 group-hover:bg-[#ff8b66]/20 transition-colors flex items-center justify-center shrink-0">
+          <Plus className="w-4 h-4 text-[#ff8b66]" />
+        </div>
+        <div className="flex-1 text-left">
+          <span className="text-[11px] font-sans font-bold text-zinc-300 group-hover:text-white transition-colors block">
+            Host a New Plan
+          </span>
+          <span className="text-[9px] font-mono text-zinc-600">
+            Create a plan for this circle
+          </span>
+        </div>
+        <ChevronRight className="w-3.5 h-3.5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
+      </button>
+
+      {/* ── 3. PERMISSIONS ──────────────────────────────────────────────── */}
+      <div className="bg-zinc-900/30 border border-zinc-900 rounded-3xl p-5 space-y-3">
+        <h3 className="text-[10px] font-display font-semibold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+          <Shield className="w-4 h-4 text-[#ff8b66]" /> Group Permissions
+        </h3>
+        <div className="divide-y divide-zinc-950 text-xs">
+          <div className="flex justify-between items-center py-2.5">
+            <div>
+              <h4 className="font-semibold text-zinc-200">Founder Authority</h4>
+              <p className="text-[9.5px] text-zinc-500">Only founders can edit details & reassign coordinates</p>
+            </div>
+            <span className="text-[8.5px] font-mono text-emerald-400 bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-900/30 font-bold uppercase select-none">
+              ACTIVE
+            </span>
           </div>
-          <div className="bg-zinc-900/40 border border-zinc-900 rounded-2xl rounded-tl-none p-3 text-[11px] text-zinc-450 leading-relaxed font-sans">
-            Welcome to the activity hub for <span className="text-white font-semibold">{circle.name}</span>! 🎉
-            <p className="mt-1">All co-pay plans, football tickets, and spontaneous meetups created within this circle stack here in chronological order.</p>
+          <div className="flex justify-between items-center py-2.5">
+            <div>
+              <h4 className="font-semibold text-zinc-200">Open Hosting</h4>
+              <p className="text-[9.5px] text-zinc-500">Any member can trigger co-pay meets</p>
+            </div>
+            <span className="text-[8.5px] font-mono text-emerald-400 bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-900/30 font-bold uppercase select-none">
+              ENABLED
+            </span>
           </div>
         </div>
+      </div>
 
-        {sortedPlans.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center space-y-3 select-none">
-            <div className="w-12 h-12 rounded-full bg-zinc-900/50 border border-zinc-850 flex items-center justify-center text-zinc-500">
-              <Calendar className="w-5 h-5" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs text-zinc-400 font-medium">No plans posted yet</p>
-              <p className="text-[10.5px] text-zinc-505 max-w-[220px]">Post a co-pay plan or spontaneous meet to start the activity thread!</p>
-            </div>
-          </div>
-        ) : (
-          sortedPlans.map((plan: any) => {
-            const isCompleted = plan.isHappened;
-            const isAlreadyJoined = plan.joinedUsers?.some((u: any) => u.userId === activeUserId);
-            
-            return (
-              <div 
-                key={plan.id} 
-                className="flex items-start gap-2.5 max-w-[95%] animate-slide-up"
-              >
-                {/* Host avatar acting as sender info */}
-                <div 
-                  className="w-7 h-7 rounded-full overflow-hidden border border-zinc-800 shrink-0 shadow-sm"
-                  title={`Hosted by ${plan.creatorName || "Founder"}`}
-                >
-                  <img
-                    src={plan.creatorAvatar || "https://api.dicebear.com/7.x/initials/svg?seed=Host"}
-                    className="w-full h-full object-cover"
-                    alt=""
-                    referrerPolicy="no-referrer"
-                  />
-                </div>
-
-                <div className="space-y-1 flex-1 min-w-0">
-                  {/* Sender Name & Timestamp info */}
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-[10px] font-bold text-zinc-350">{plan.creatorName || "Host"}</span>
-                    <span className="text-[8px] font-mono text-zinc-650 uppercase">posted plan</span>
-                  </div>
-
-                  {/* Plan Attachment Bubble */}
-                  <div 
-                    className={`border rounded-2xl rounded-tl-none p-4 space-y-3.5 shadow-md ${
-                      isCompleted 
-                        ? "bg-[#09090b]/40 border-zinc-950 text-zinc-450" 
-                        : "bg-zinc-900/60 border-zinc-850 text-zinc-205 hover:border-zinc-700 transition-colors"
-                    }`}
-                  >
-                    {/* Header line */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h4 className={`text-xs font-sans font-black uppercase tracking-wide truncate ${isCompleted ? "text-zinc-500" : "text-white"}`}>
-                          {plan.title}
-                        </h4>
-                        
-                        <div className="text-[10px] font-mono mt-1 space-y-0.5 text-zinc-500">
-                          <div className="flex items-center gap-1.5">
-                            <Calendar className="w-3 h-3 text-[#ff8b66]" />
-                            <span className={isCompleted ? "" : "text-zinc-350"}>{plan.date} • {plan.time}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <MapPin className="w-3 h-3 text-zinc-600" />
-                            <span className="truncate">{plan.location}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Ticket price split */}
-                      <div className="text-right shrink-0">
-                        <span className={`text-[10.5px] font-black font-mono block ${isCompleted ? "text-zinc-500" : "text-zinc-200"}`}>
-                          ₹{plan.cost}
-                        </span>
-                        <span className="text-[7.5px] font-mono text-zinc-600 uppercase tracking-wider block">Split/Head</span>
-                      </div>
-                    </div>
-
-                    {/* Member Avatars & status */}
-                    <div className="flex items-center justify-between pt-2 border-t border-zinc-950/60">
-                      <div className="flex items-center gap-1.5">
-                        <div className="flex -space-x-1.5">
-                          {plan.joinedUsers?.filter((u: any) => u.joinState === "going" || u.joinState === "host").slice(0, 4).map((u: any, ui: number) => (
-                            <img 
-                              key={ui} 
-                              src={u.avatar} 
-                              className="w-4.5 h-4.5 rounded-full object-cover border border-zinc-950" 
-                              alt="" 
-                              referrerPolicy="no-referrer" 
-                            />
-                          ))}
-                        </div>
-                        <span className="text-[9px] text-zinc-500">
-                          {plan.confirmedCount} joined {plan.maxSpots ? `(${plan.maxSpots - plan.confirmedCount} left)` : ""}
-                        </span>
-                      </div>
-
-                      {/* Status indicator bubble */}
-                      {isCompleted ? (
-                        <span className="text-[7px] font-mono font-bold text-zinc-650 bg-zinc-950/50 border border-zinc-900 px-1.5 py-0.5 rounded uppercase leading-none tracking-wider">
-                          Completed
-                        </span>
-                      ) : (
-                        <span className="text-[7px] font-mono font-bold text-emerald-400 bg-emerald-950/20 px-1.5 py-0.5 rounded uppercase leading-none tracking-wider flex items-center gap-0.5">
-                          <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" /> Active
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Action buttons */}
-                    <div className="flex gap-2 pt-0.5">
-                      {isCompleted ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => setActiveStoryRecap(plan)}
-                            className="flex-1 py-1.5 text-center border border-[#ff8b66]/20 hover:bg-[#ff8b66]/5 text-[#ff8b66] text-[10px] font-mono font-bold uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
-                          >
-                            View Recap
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPlan(plan)}
-                            className="flex-1 py-1.5 text-center bg-zinc-950 hover:bg-zinc-900 border border-zinc-900 text-zinc-500 text-[10px] font-mono font-semibold uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
-                          >
-                            Chat Archive
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          {!isAlreadyJoined ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (plan.cost > 0) {
-                                  setPaymentConfirmationPlan(plan);
-                                } else {
-                                  handleToggleJoin(plan);
-                                  triggerToast(`Joined active coordination! ⚡`);
-                                }
-                              }}
-                              className="flex-1 py-1.5 text-center bg-[#ff8b66] hover:bg-[#ff9a7c] text-black text-[10px] font-black uppercase tracking-wider rounded-lg transition-all shadow cursor-pointer"
-                            >
-                              Join Plan
-                            </button>
-                          ) : (
-                            <button
-                              disabled
-                              className="flex-1 py-1.5 text-center bg-zinc-950 border border-zinc-900 text-[#ff8b66] text-[10px] font-bold uppercase rounded-lg"
-                            >
-                              Joined
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPlan(plan)}
-                            className="flex-1 py-1.5 text-center bg-zinc-900 border border-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider hover:bg-zinc-850 rounded-lg transition-colors cursor-pointer"
-                          >
-                            Open Chat
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
+      {/* ── 4. MEMBER DIRECTORY ─────────────────────────────────────────── */}
+      <div className="bg-zinc-900/30 border border-zinc-955 rounded-3xl p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[10px] font-display font-semibold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+            <Users className="w-4 h-4 text-[#ff8b66]" /> Members ({circle.membersList?.length || 0})
+          </h3>
+          <button
+            type="button"
+            onClick={onAddMembers}
+            className="text-[9px] font-sans font-black uppercase tracking-wider bg-[#ff8b66] hover:bg-[#ff9a7c] text-black px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+          >
+            Add Members
+          </button>
+        </div>
+        <div className="space-y-2">
+          {circle.membersList?.map((m: any, idx: number) => (
+            <div
+              key={idx}
+              className="flex items-center justify-between p-2 bg-zinc-955/60 rounded-xl border border-zinc-900"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <img
+                  src={m.avatar}
+                  className="w-6 h-6 rounded-full object-cover shrink-0"
+                  alt=""
+                  referrerPolicy="no-referrer"
+                />
+                <div className="min-w-0">
+                  <span className="text-[10.5px] font-bold text-zinc-250 truncate block leading-tight">{m.name}</span>
+                  <span className="text-[8.5px] font-mono text-zinc-505 block">{m.phone}</span>
                 </div>
               </div>
-            );
-          })
-        )}
-      </div>
-
-      {/* 3. FLOAT HOSTER CONTROL PANEL */}
-      <div 
-        id="circle_detail_footer_controls" 
-        className="shrink-0 flex items-center justify-between gap-3 bg-zinc-950/80 border border-zinc-900 p-2.5 rounded-2xl backdrop-blur-md select-none"
-      >
-        <div className="flex flex-col text-left px-1">
-          <span className="text-[8px] font-mono text-zinc-550 uppercase tracking-widest font-extrabold">Instant Meet</span>
-          <span className="text-[10px] text-zinc-400 font-sans">Ready to host with this circle?</span>
+              <span className="text-[7.5px] font-mono uppercase bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded text-zinc-505 select-none font-bold">
+                {idx === 0 ? "Founder" : "Member"}
+              </span>
+            </div>
+          ))}
         </div>
-        
-        <button
-          type="button"
-          onClick={() => {
-            setNewPlanCircleId(circle.id);
-            setNewPlanTitle(`Meetup with ${circle.name}`);
-            setSelectedPreset("custom");
-            setAudienceType("circle");
-            setSelectedCircleIds([circle.id]);
-            setActiveTab("create");
-            setCreateFlowStep("DETAILS");
-            triggerToast(`Fast Hosted: target ${circle.name}`);
-          }}
-          className="bg-[#ff8b66] hover:bg-[#ff9a7c] text-black text-[10px] font-black uppercase tracking-wider px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer"
-        >
-          Host New Plan
-        </button>
       </div>
 
+      {/* ── 6. LEAVE CIRCLE ─────────────────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={handleLeaveCircle}
+        className="w-full bg-[#ff5d41]/5 hover:bg-[#ff5d41]/10 border border-[#ff5d41]/20 rounded-2xl p-4 flex items-center justify-between transition-colors text-left text-[#ff5d41] cursor-pointer"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-[#ff5d41]/10 flex items-center justify-center shrink-0">
+            <LogOut className="w-4 h-4 text-[#ff5d41]" />
+          </div>
+          <div>
+            <h4 className="text-xs font-semibold">Leave Circle</h4>
+            <span className="text-[9.5px] font-mono text-[#ff8b66]/60 uppercase block mt-0.5">
+              Remove yourself from this circle
+            </span>
+          </div>
+        </div>
+        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#ff5d41]">
+          Leave
+        </span>
+      </button>
+
+      </div>
     </div>
   );
 };

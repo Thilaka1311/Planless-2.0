@@ -8,6 +8,8 @@ import dotenv from "dotenv";
 import authRouter from "./routes/auth";
 import dbRouter from "./routes/db";
 import aiRouter from "./routes/ai";
+import paymentsRouter from "./routes/payments";
+import discoveryRouter from "./routes/discovery";
 
 dotenv.config();
 
@@ -91,11 +93,12 @@ async function startServer() {
     });
   });
 
-  // Register modular Express routers
   app.use("/api/auth", authRouter);
   app.use("/api/db", dbRouter);
   app.use("/api", aiRouter);
   app.use("/api/ai", aiRouter);
+  app.use("/api/payments", paymentsRouter);
+  app.use("/api/discovery", discoveryRouter);
 
   // Health check API
   app.get("/api/health", (req, res) => {

@@ -222,17 +222,14 @@ const PlanReelCard = ({
     categoryColorDot = "bg-sky-450";
   }
 
-  let groupName = "Midnight Masala";
+  let groupName = plan.circleName || "Custom Plan";
   let groupColor = "text-[#ff8b66]";
 
   if (categoryStr === "sports" || (plan.category as string) === "football" || plan.title.toLowerCase().includes("football") || plan.title.toLowerCase().includes("turf")) {
-    groupName = "Navkis Matchday";
     groupColor = "text-emerald-400";
   } else if (categoryStr === "movies" || plan.title.toLowerCase().includes("movie")) {
-    groupName = "Jobis";
     groupColor = "text-sky-400";
   } else if (categoryStr === "sunset" || categoryStr === "brunch" || categoryStr === "restaurants" || categoryStr === "cafe" || plan.title.toLowerCase().includes("waffles") || plan.title.toLowerCase().includes("spice")) {
-    groupName = "Midnight Masala";
     groupColor = "text-rose-400";
   }
 

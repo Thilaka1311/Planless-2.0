@@ -12,16 +12,24 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
   onBack
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "incoming" | "outgoing">("all");
 
-  // Filter transactions based on query (Name/title, type, amount, or settled status)
+  // Filter transactions based on query and filter tab
   const filteredTransactions = transactions.filter((tx) => {
+    const isCredit = tx.type === "credit";
+    if (filter === "incoming" && !isCredit) return false;
+    if (filter === "outgoing" && isCredit) return false;
+
     const query = searchQuery.toLowerCase();
     const titleMatch = tx.title.toLowerCase().includes(query);
     const typeMatch = tx.type.toLowerCase().includes(query);
     const amountMatch = tx.amount.toString().includes(query);
     const dateMatch = tx.timestamp.toLowerCase().includes(query);
+    const statusMatch = tx.status ? tx.status.toLowerCase().includes(query) : false;
+    const planMatch = tx.planTitle ? tx.planTitle.toLowerCase().includes(query) : false;
+    const txTypeMatch = tx.transactionType ? tx.transactionType.toLowerCase().includes(query) : false;
 
-    return titleMatch || typeMatch || amountMatch || dateMatch;
+    return titleMatch || typeMatch || amountMatch || dateMatch || statusMatch || planMatch || txTypeMatch;
   });
 
   return (
@@ -42,6 +50,24 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
         </div>
       </div>
 
+      {/* Filter Tabs */}
+      <div className="flex bg-zinc-950/40 p-1 rounded-xl border border-zinc-900/80 gap-1">
+        {(["all", "incoming", "outgoing"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setFilter(tab)}
+            className={`flex-1 py-1.5 text-center text-[10px] font-semibold rounded-lg transition-all capitalize cursor-pointer ${
+              filter === tab
+                ? "bg-zinc-900 text-white shadow-sm border border-zinc-800"
+                : "text-zinc-500 hover:text-zinc-300 border border-transparent"
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
       {/* Search Input */}
       <div className="relative">
         <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-zinc-500">
@@ -51,7 +77,7 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search by name, type, date..."
+          placeholder="Search by name, type, date, plan, status..."
           className="w-full bg-zinc-900/40 border border-zinc-900 rounded-2xl pl-10 pr-4 py-3 text-xs text-white focus:outline-none focus:border-zinc-800 transition-colors"
         />
         {searchQuery && (
@@ -84,11 +110,11 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
               return (
                 <div
                   key={tx.id}
-                  className="flex items-center justify-between py-4 first:pt-0 last:pb-0 hover:bg-zinc-900/10 px-1 rounded-lg transition-colors"
+                  className="flex items-start justify-between py-4 first:pt-0 last:pb-0 hover:bg-zinc-900/10 px-1 rounded-lg transition-colors"
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="flex items-start gap-3.5 min-w-0">
                     <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border mt-0.5 ${
                         isCredit
                           ? "bg-emerald-500/5 text-emerald-400 border-emerald-500/10"
                           : "bg-[#ff8b66]/5 text-[#ff8b66] border-[#ff8b66]/10"
@@ -103,21 +129,34 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
                     
                     <div className="min-w-0">
                       <h4 className="text-xs font-semibold text-zinc-200 truncate">{tx.title}</h4>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      {tx.planTitle && (
+                        <p className="text-[10px] text-[#ff8b66] font-sans mt-0.5 truncate">
+                          Plan: {tx.planTitle}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2 mt-1.5">
                         <span className="text-[10px] text-zinc-500 font-sans">
                           {tx.timestamp}
                         </span>
                         <span className="text-zinc-700 text-[10px]">•</span>
-                        <span className={`text-[8.5px] font-sans font-bold uppercase tracking-wider ${
-                          isCredit ? "text-emerald-500/80" : "text-[#ff8b66]/80"
+                        <span className="text-[9px] bg-zinc-900 text-zinc-400 px-1.5 py-0.5 rounded border border-zinc-800/80 capitalize font-mono">
+                          {tx.transactionType || tx.type}
+                        </span>
+                        <span className="text-zinc-700 text-[10px]">•</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded border font-mono capitalize ${
+                          tx.status === "success" || tx.status === "completed" || tx.settled
+                            ? "bg-emerald-500/5 text-emerald-400 border-emerald-500/10"
+                            : tx.status === "failed"
+                            ? "bg-red-500/5 text-red-400 border-red-500/10"
+                            : "bg-amber-500/5 text-amber-400 border-amber-500/10"
                         }`}>
-                          {tx.type}
+                          {tx.status || (tx.settled ? "Success" : "Pending")}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className={`font-sans text-xs font-bold shrink-0 ${
+                  <div className={`font-sans text-xs font-bold shrink-0 mt-0.5 ${
                     isCredit ? "text-emerald-400" : "text-zinc-200"
                   }`}>
                     {isCredit ? "+" : "−"} ₹{tx.amount.toLocaleString("en-IN")}
