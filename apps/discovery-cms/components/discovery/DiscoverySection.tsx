@@ -1,5 +1,5 @@
 import React from "react";
-import { DiscoverySection as DiscoverySectionType } from "../../../../../core/types/discovery";
+import { DiscoverySection as DiscoverySectionType } from "../../../app/src/core/types/discovery";
 import { DiscoveryCarousel } from "./DiscoveryCarousel";
 
 interface DiscoverySectionProps {

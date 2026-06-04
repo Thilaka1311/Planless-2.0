@@ -1,5 +1,5 @@
 import React from "react";
-import { DiscoveryItem } from "../../../../../core/types/discovery";
+import { DiscoveryItem } from "../../../app/src/core/types/discovery";
 
 interface CardProps {
   item: DiscoveryItem;

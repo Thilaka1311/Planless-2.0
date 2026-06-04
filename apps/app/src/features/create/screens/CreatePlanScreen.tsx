@@ -71,6 +71,14 @@ export const CreatePlanScreen = ({
   const [selectedActivity, setSelectedActivity] = useState<string | null>(null);
   const [newPlanTitle, setNewPlanTitle] = useState("");
   const [newPlanLocation, setNewPlanLocation] = useState("");
+  const [selectedLocation, setSelectedLocation] = useState<{
+    name: string;
+    address: string;
+    fullAddress: string;
+    latitude: number;
+    longitude: number;
+    placeId: string;
+  } | null>(null);
   const [newPlanTime, setNewPlanTime] = useState("");
   const [newPlanIsoDateTime, setNewPlanIsoDateTime] = useState("");
   const [newPlanCost, setNewPlanCost] = useState("0");
@@ -408,6 +416,7 @@ export const CreatePlanScreen = ({
       setSelectedActivity(null);
       setNewPlanTitle("");
       setNewPlanLocation("");
+      setSelectedLocation(null);
       setNewPlanTime("");
       setNewPlanIsoDateTime("");
       setNewPlanCost("0");
@@ -447,6 +456,8 @@ export const CreatePlanScreen = ({
         <CustomLocationStep
           newPlanLocation={newPlanLocation}
           setNewPlanLocation={setNewPlanLocation}
+          selectedLocation={selectedLocation}
+          setSelectedLocation={setSelectedLocation}
           setCreateFlowStep={setCreateFlowStep}
         />
       )}

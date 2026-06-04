@@ -1,7 +1,7 @@
 import React from "react";
 import { ArrowLeft, Clock, Lock } from "lucide-react";
-import { CreatePlanCTAButton } from "../active/CreatePlanCTAButton";
-import { ActivityVenue, ActivityTimeSlot } from "../../../../core/types";
+import { CreatePlanCTAButton } from "../../app/src/features/create/components/active/CreatePlanCTAButton";
+import { ActivityVenue, ActivityTimeSlot } from "../../app/src/core/types";
 
 interface SlotStepProps {
   selectedVenue: ActivityVenue | null;

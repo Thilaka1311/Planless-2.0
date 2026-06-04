@@ -1,6 +1,6 @@
 import React from "react";
 import { Star } from "lucide-react";
-import { DiscoveryItem } from "../../../../../core/types/discovery";
+import { DiscoveryItem } from "../../../app/src/core/types/discovery";
 
 interface CardProps {
   item: DiscoveryItem;

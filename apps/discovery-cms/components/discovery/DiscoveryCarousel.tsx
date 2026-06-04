@@ -1,5 +1,5 @@
 import React from "react";
-import { DiscoveryItem } from "../../../../../core/types/discovery";
+import { DiscoveryItem } from "../../../app/src/core/types/discovery";
 import { MoviePosterCard } from "./MoviePosterCard";
 import { SportsCard } from "./SportsCard";
 import { DiningCard } from "./DiningCard";

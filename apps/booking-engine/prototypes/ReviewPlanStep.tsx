@@ -1,7 +1,7 @@
 import React from "react";
 import { ArrowLeft, Edit3 } from "lucide-react";
-import { CreatePlanCTAButton } from "../active/CreatePlanCTAButton";
-import { ActivityVenue, ActivityTimeSlot } from "../../../../core/types";
+import { CreatePlanCTAButton } from "../../app/src/features/create/components/active/CreatePlanCTAButton";
+import { ActivityVenue, ActivityTimeSlot } from "../../app/src/core/types";
 
 interface ReviewPlanStepProps {
   selectedSport: "Football" | "Badminton" | "Basketball";

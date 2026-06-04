@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Search, Plus } from "lucide-react";
-import { getSectionsByCategory } from "../../../../services/discoveryService";
-import { DiscoverySection as DiscoverySectionType, DiscoveryItem } from "../../../../core/types/discovery";
+import { getSectionsByCategory } from "../../app/src/services/discoveryService";
+import { DiscoverySection as DiscoverySectionType, DiscoveryItem } from "../../app/src/core/types/discovery";
 import { HeroBanner } from "./discovery/HeroBanner";
 import { DiscoverySection } from "./discovery/DiscoverySection";
 

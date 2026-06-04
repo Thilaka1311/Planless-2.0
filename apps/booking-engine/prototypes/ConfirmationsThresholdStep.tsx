@@ -1,6 +1,6 @@
 import React from "react";
 import { ArrowLeft, CheckCircle2 } from "lucide-react";
-import { CreatePlanCTAButton } from "../active/CreatePlanCTAButton";
+import { CreatePlanCTAButton } from "../../app/src/features/create/components/active/CreatePlanCTAButton";
 
 interface ConfirmationsThresholdStepProps {
   requiredConfirmations: number;
@@ -50,11 +50,10 @@ export const ConfirmationsThresholdStep = ({
                   key={count}
                   type="button"
                   onClick={() => setRequiredConfirmations(count)}
-                  className={`p-3 rounded-lg border text-center transition-all duration-200 font-mono font-bold text-sm ${
-                    isSelected
-                      ? "border-brand-peach bg-brand-peach/10 text-white shadow-lg"
-                      : "border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-                  }`}
+                  className={`p-3 rounded-lg border text-center transition-all duration-200 font-mono font-bold text-sm ${isSelected
+                    ? "border-brand-peach bg-brand-peach/10 text-white shadow-lg"
+                    : "border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                    }`}
                 >
                   {count}
                 </button>
