@@ -99,6 +99,81 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const promoteWaitlistIfSpotsAvailable = async (planUuid: string) => {
+    try {
+      const res = await fetch("/api/db/fetch-all?tables=plans,plan_participants");
+      if (!res.ok) {
+        console.error("[PlansContext promoteWaitlist] Failed to fetch latest tables");
+        return;
+      }
+      const json = await res.json();
+      const dbPlansList: DbPlan[] = json.data?.plans || [];
+      const dbParticipantsList: DbPlanParticipant[] = json.data?.plan_participants || [];
+
+      const dbPlanObj = dbPlansList.find(p => p.id === planUuid);
+      if (!dbPlanObj) {
+        console.warn(`[PlansContext promoteWaitlist] Plan ${planUuid} not found in DB`);
+        return;
+      }
+
+      if (!dbPlanObj.waitlist_enabled) {
+        console.log(`[PlansContext promoteWaitlist] Waitlist not enabled for plan ${planUuid}`);
+        return;
+      }
+
+      const planParticipants = dbParticipantsList.filter(pp => pp.plan_id === planUuid);
+      const acceptedCount = planParticipants.filter(pp => pp.status === "going").length;
+      const limit = dbPlanObj.join_limit || 0;
+      const availableCapacity = limit - acceptedCount;
+
+      console.log(`[PlansContext promoteWaitlist] capacity check for ${planUuid}: limit=${limit}, accepted=${acceptedCount}, available=${availableCapacity}`);
+
+      if (availableCapacity <= 0) {
+        console.log(`[PlansContext promoteWaitlist] No spots available (available capacity: ${availableCapacity})`);
+        return;
+      }
+
+      const waitlisted = planParticipants
+        .filter(pp => pp.status === "waitlist")
+        .sort((a, b) => {
+          const timeA = a.waitlisted_at ? new Date(a.waitlisted_at).getTime() : 0;
+          const timeB = b.waitlisted_at ? new Date(b.waitlisted_at).getTime() : 0;
+          return timeA - timeB;
+        });
+
+      if (waitlisted.length === 0) {
+        console.log(`[PlansContext promoteWaitlist] No waitlisted users found`);
+        return;
+      }
+
+      const countToPromote = Math.min(availableCapacity, waitlisted.length);
+      const updates = [];
+      for (let i = 0; i < countToPromote; i++) {
+        const pToPromote = waitlisted[i];
+        updates.push({
+          id: pToPromote.id,
+          status: "going",
+          payment_status: dbPlanObj.payment_required && dbPlanObj.split_amount && dbPlanObj.split_amount > 0 ? "paid" : "unpaid",
+          joined_at: new Date().toISOString()
+        });
+      }
+
+      if (updates.length > 0) {
+        console.log(`[PlansContext promoteWaitlist] Promoting ${updates.length} users to 'going':`, updates);
+        const ppRes = await fetch("/api/db/upsert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: "plan_participants", records: updates })
+        });
+        if (!ppRes.ok) {
+          console.error("[PlansContext promoteWaitlist] Failed to upsert promoted participants");
+        }
+      }
+    } catch (err) {
+      console.error("[PlansContext promoteWaitlist] Exception during waitlist promotion:", err);
+    }
+  };
+
   const joinPlan = async (planId: string, userProfile: any) => {
     const matchedPlan = plans.find(p => p.id === planId);
     const planUuid = matchedPlan?.dbUuid || planId;
@@ -114,7 +189,8 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     console.log(`[PlansContext] JOIN ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userProfile.name}`);
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none (not invited/joined)");
 
-    const isHost = matchedPlan?.hostId === "u_self" || matchedPlan?.creatorId === userUuid || matchedPlan?.creatorId === "u_self" || existingBefore?.status === "host";
+    const hostUuid = matchedPlan?.hostId || matchedPlan?.creatorId;
+    const isHost = hostUuid === userUuid || hostUuid === "u_self";
     if (matchedPlan && matchedPlan.payment_required && !isHost) {
       // 1. Create Razorpay Order
       const amount = matchedPlan.cost;
@@ -268,14 +344,14 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // 2. Database Persistence
     if (planUuid && userUuid) {
-      if (existingBefore && (existingBefore.status === "host" || isHost)) {
+      if (existingBefore && isHost) {
         console.log(`[PlansContext] User is host. Skipping database participant status overwrite.`);
         return;
       }
 
       const acceptedCount = dbPlanParticipants.filter(
         pp => (pp.plan_id === planUuid || pp.plan_id === planId) &&
-              (pp.status === "going" || pp.status === "host")
+              pp.status === "going"
       ).length;
       
       // joinLimit = total going capacity (host-inclusive). Full when acceptedCount >= limit.
@@ -290,17 +366,21 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       console.log(`- waitlist decision result: ${targetDbState}`);
 
       if (existingBefore && existingBefore.id) {
-        await updateParticipantStatus(existingBefore.id, targetDbState, targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid");
+        const joinedAtVal = targetDbState === "going" ? new Date().toISOString() : undefined;
+        const waitlistedAtVal = targetDbState === "going" ? null : (targetDbState === "waitlist" ? new Date().toISOString() : undefined);
+        await updateParticipantStatus(existingBefore.id, targetDbState, targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid", joinedAtVal, waitlistedAtVal);
       } else {
         await insertParticipant({
           plan_id: planUuid,
           user_id: userUuid,
           status: targetDbState,
           payment_status: targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid",
-          joined_at: new Date().toISOString()
+          joined_at: new Date().toISOString(),
+          waitlisted_at: targetDbState === "waitlist" ? new Date().toISOString() : null
         });
       }
       await syncUserStats(userUuid, "join_plan");
+      await promoteWaitlistIfSpotsAvailable(planUuid);
     }
 
     // 3. Sync state from DB
@@ -329,14 +409,15 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 2. Database Persistence
     if (planUuid && userUuid) {
       if (existingBefore && existingBefore.id) {
-        await updateParticipantStatus(existingBefore.id, "waitlist", "unpaid");
+        await updateParticipantStatus(existingBefore.id, "waitlist", "unpaid", undefined, new Date().toISOString());
       } else {
         await insertParticipant({
           plan_id: planUuid,
           user_id: userUuid,
           status: "waitlist",
           payment_status: "unpaid",
-          joined_at: new Date().toISOString()
+          joined_at: new Date().toISOString(),
+          waitlisted_at: new Date().toISOString()
         });
       }
     }
@@ -369,6 +450,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         await updateParticipantStatus(existingBefore.id, "skipped", existingBefore.payment_status);
         console.log(`[leavePlan] Updated participant row ${existingBefore.id} status to 'skipped'`);
+        await promoteWaitlistIfSpotsAvailable(planUuid);
       } catch (err) {
         console.error(`[PlansContext] leavePlan DB write failed:`, err);
         throw err;
@@ -404,6 +486,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (planUuid && userUuid) {
       if (existingBefore && existingBefore.id) {
         await updateParticipantStatus(existingBefore.id, "passed", "unpaid");
+        await promoteWaitlistIfSpotsAvailable(planUuid);
       } else {
         await insertParticipant({
           plan_id: planUuid,
@@ -412,6 +495,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           payment_status: "unpaid",
           joined_at: new Date().toISOString()
         });
+        await promoteWaitlistIfSpotsAvailable(planUuid);
       }
     }
 
@@ -479,8 +563,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    const isHost = matchedPlan?.hostId === "u_self" || matchedPlan?.creatorId === userUuid || matchedPlan?.creatorId === "u_self";
-    if (existingBefore.status === "host" || isHost) {
+    const hostUuid = matchedPlan?.hostId || matchedPlan?.creatorId;
+    const isHost = hostUuid === userUuid || hostUuid === "u_self";
+    if (isHost) {
       console.log(`[PlansContext] User is host. Skip transition aborted.`);
       console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_FAILED: user is host`);
       return;
@@ -500,6 +585,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const result = await updateParticipantStatus(existingBefore.id, "skipped", existingBefore.payment_status);
         if (result && normalizeStatus(result.status) === "skipped") {
           console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_SUCCESS: status updated to skipped`);
+          await promoteWaitlistIfSpotsAvailable(planUuid);
         } else {
           throw new Error("Update returned invalid row or status wasn't skipped");
         }
@@ -535,8 +621,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    const isHost = matchedPlan?.hostId === "u_self" || matchedPlan?.creatorId === userUuid || matchedPlan?.creatorId === "u_self";
-    if (existingBefore.status === "host" || isHost) {
+    const hostUuid = matchedPlan?.hostId || matchedPlan?.creatorId;
+    const isHost = hostUuid === userUuid || hostUuid === "u_self";
+    if (isHost) {
       console.log(`[PlansContext] User is host. Rejoin transition aborted.`);
       return;
     }
@@ -556,7 +643,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // 2. Use existing attendance routing logic
       const acceptedCount = dbPlanParticipants.filter(
         pp => (pp.plan_id === planUuid || pp.plan_id === planId) &&
-              (pp.status === "going" || pp.status === "host")
+              pp.status === "going"
       ).length;
       
       const limit = matchedPlan?.joinLimit || 0;
@@ -564,14 +651,20 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       console.log(`[PlansContext] rejoinPlan routing: decided status is '${targetDbState}' (limit: ${limit}, accepted: ${acceptedCount})`);
 
+      const joinedAtVal = targetDbState === "going" ? new Date().toISOString() : undefined;
+      const waitlistedAtVal = targetDbState === "going" ? null : (targetDbState === "waitlist" ? new Date().toISOString() : undefined);
+
       // 3. Update existing participant row to target status
       await updateParticipantStatus(
         existingBefore.id,
         targetDbState,
-        targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid"
+        targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid",
+        joinedAtVal,
+        waitlistedAtVal
       );
       
       await syncUserStats(userUuid, "join_plan");
+      await promoteWaitlistIfSpotsAvailable(planUuid);
     }
 
     await refreshPlans(["plan_participants", "user_stats"]);
@@ -664,6 +757,8 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
 
+    await promoteWaitlistIfSpotsAvailable(planUuid);
+
     console.log(`[PlansContext] CHANGE HOST SUCCESS. Refreshing plans state.`);
     await refreshPlans(["plans", "plan_participants"]);
   };
@@ -746,7 +841,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 1. Resolve capacity decision
     const acceptedCount = dbPlanParticipants.filter(
       pp => (pp.plan_id === planUuid || pp.plan_id === planId) &&
-            (pp.status === "going" || pp.status === "host")
+            pp.status === "going"
     ).length;
     const limit = matchedPlan?.joinLimit || 0;
     const targetDbState = (matchedPlan?.waitlistEnabled && acceptedCount >= limit) ? "waitlist" : "going";
@@ -755,8 +850,17 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       (p) => (p.plan_id === planUuid || p.plan_id === planId) && p.user_id === userUuid
     );
 
+    const joinedAtVal = targetDbState === "going" ? new Date().toISOString() : undefined;
+    const waitlistedAtVal = targetDbState === "going" ? null : (targetDbState === "waitlist" ? new Date().toISOString() : undefined);
+
     if (existing && existing.id) {
-      await updateParticipantStatus(existing.id, targetDbState, targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid");
+      await updateParticipantStatus(
+        existing.id, 
+        targetDbState, 
+        targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid",
+        joinedAtVal,
+        waitlistedAtVal
+      );
     } else {
       await insertParticipant({
         plan_id: planUuid,
@@ -764,6 +868,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         status: targetDbState,
         payment_status: targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid",
         joined_at: new Date().toISOString(),
+        waitlisted_at: targetDbState === "waitlist" ? new Date().toISOString() : null
       });
     }
 
@@ -847,6 +952,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
     if (existing && existing.id) {
       await updateParticipantStatus(existing.id, "skipped", "unpaid");
+      await promoteWaitlistIfSpotsAvailable(planUuid);
     }
 
     await refreshPlans(["plan_participants"]);
@@ -1012,7 +1118,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const member = plan.members.find(
          m => m.userId === userIdStr || (m as any).userUuid === userIdStr
       );
-      return member?.joinState === "going" || member?.joinState === "host";
+      return member?.joinState === "going";
     });
   };
 

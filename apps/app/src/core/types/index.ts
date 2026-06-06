@@ -100,6 +100,7 @@ export interface DbPlanParticipant {
   status: "new" | "going" | "waitlist" | "passed" | "seen" | "skipped" | string;
   payment_status: "paid" | "unpaid" | string;
   joined_at: string;
+  waitlisted_at?: string | null;
 }
 
 // 6. TRANSACTIONS TABLE (Handles spontaneous social splits/obligations)

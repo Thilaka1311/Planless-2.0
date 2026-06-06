@@ -52,6 +52,7 @@ export interface DbParticipant {
   status: "going" | "delivered" | "waitlist" | "passed" | "host" | "accepted" | "declined" | "seen" | "skipped" | string;
   payment_status: "paid" | "unpaid";
   joined_at: string;
+  waitlisted_at?: string | null;
 }
 
 export interface DbCircle {
@@ -207,7 +208,9 @@ export async function insertParticipant(
 export async function updateParticipantStatus(
   participantId: string,   // UUID primary key
   status: DbParticipant["status"],
-  paymentStatus?: DbParticipant["payment_status"]
+  paymentStatus?: DbParticipant["payment_status"],
+  joinedAt?: string,
+  waitlistedAt?: string | null
 ): Promise<DbParticipant | null> {
   if (!participantId) {
     console.warn("[DB] updateParticipantStatus: missing participantId.");
@@ -215,6 +218,8 @@ export async function updateParticipantStatus(
   }
   const update: any = { id: participantId, status };
   if (paymentStatus !== undefined) update.payment_status = paymentStatus;
+  if (joinedAt !== undefined) update.joined_at = joinedAt;
+  if (waitlistedAt !== undefined) update.waitlisted_at = waitlistedAt;
   const rows = await upsert("plan_participants", [update]);
   return rows?.[0] ?? null;
 }
