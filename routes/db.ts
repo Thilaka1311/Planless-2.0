@@ -10,7 +10,7 @@ router.get("/fetch-all", async (req, res) => {
       res.json({
         configured: false,
         tables_missing: true,
-        missing_tables: ["users", "circles", "circle_members", "plans", "plan_participants", "transactions", "memories"],
+        missing_tables: ["users", "circles", "circle_members", "plans", "plan_participants", "transactions", "memories", "memory_attendees", "memory_ratings", "memory_matches", "friendships"],
         data: null
       });
       return;
@@ -27,10 +27,14 @@ router.get("/fetch-all", async (req, res) => {
       "plan_participants",
       "transactions",
       "memories",
+      "memory_attendees",
+      "memory_ratings",
+      "memory_matches",
       "user_stats",
       "notifications",
       "user_data",
-      "plan_reminders"
+      "plan_reminders",
+      "friendships"
     ];
 
     const results: Record<string, any[]> = {};

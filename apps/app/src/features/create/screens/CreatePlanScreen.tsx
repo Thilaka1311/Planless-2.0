@@ -351,7 +351,7 @@ export const CreatePlanScreen = ({
       // Notifications
       const inviteNotifications = inviteeUuids.map((uuid) => ({
         user_id: uuid,
-        type: "invitation",
+        type: "PLAN_INVITATION",
         title: `${userProfile.name} invited you to join "${titleToUse}"`,
         body: "Spontaneous meetup invitation",
         reference_id: insertedPlanUuid,

@@ -613,28 +613,25 @@ export const initialTransactions: DbTransaction[] = [
 // ----------------------------------------------------
 export const initialMemories: DbMemory[] = [
   {
-    memory_id: "M001",
-    plan_id: "P001", // Navkis Matchday
-    uploaded_by: "U002", // Keval
-    media_url: "https://images.unsplash.com/photo-1517521782213-e7a9c422c83d?auto=format&fit=crop&q=80&w=400",
-    caption: "What a crazy 7v7 tonight. Clinched the winning goal at the buzzer! 🔥",
-    timestamp: "2026-05-23T16:45:00Z"
+    id: "M001",
+    plan_id: "P001",
+    memory_type: "football",
+    status: "completed",
+    created_at: "2026-05-23T16:45:00Z",
+    locked_at: "2026-05-24T16:45:00Z",
+    editable_until: "2026-05-24T16:45:00Z",
+    team_a_score: 4,
+    team_b_score: 2,
+    mvp_user_id: "U003"
   },
   {
-    memory_id: "M002",
-    plan_id: "P001", // Navkis Matchday
-    uploaded_by: "U003", // Medhaj
-    media_url: "https://images.unsplash.com/photo-1516567727245-ad8c68f3ec93?auto=format&fit=crop&q=80&w=400",
-    caption: "Absolute masterclass from everyone on New Bel Road. Spot on coordination!",
-    timestamp: "2026-05-23T17:00:00Z"
-  },
-  {
-    memory_id: "M003",
-    plan_id: "P002", // Midnight Masala Sunset & Drive
-    uploaded_by: "U005", // Rahul
-    media_url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&q=80&w=400",
-    caption: "The breeze tonight is therapeutic. Marina never disappoints.",
-    timestamp: "2026-05-23T17:30:00Z"
+    id: "M002",
+    plan_id: "P002",
+    memory_type: "dining",
+    status: "pending",
+    created_at: "2026-05-23T17:30:00Z",
+    locked_at: null,
+    editable_until: "2026-05-24T17:30:00Z"
   }
 ];
 

@@ -1,18 +1,21 @@
 import React from "react";
 import { NotificationItem } from "../../core/types";
+import { NotificationMeta } from "../../lib/mappers";
 
 interface NotificationsTrayModalProps {
   isOpen: boolean;
   onClose: () => void;
   filteredNotifications: NotificationItem[];
   handleAcceptInviteFromNotif: (notif: NotificationItem) => void;
+  handleOpenNotification: (notif: NotificationItem) => void;
 }
 
 export default function NotificationsTrayModal({
   isOpen,
   onClose,
   filteredNotifications,
-  handleAcceptInviteFromNotif
+  handleAcceptInviteFromNotif,
+  handleOpenNotification
 }: NotificationsTrayModalProps) {
   if (!isOpen) return null;
 
@@ -20,29 +23,44 @@ export default function NotificationsTrayModal({
     <div id="notifications_tray_overlay" className="absolute inset-0 bg-[#0C0C0E]/98 z-40 flex flex-col animate-fade-in text-left">
       <div className="p-4 flex items-center justify-between border-b border-zinc-900 bg-zinc-950 shrink-0">
         <h3 className="text-sm font-display font-semibold text-zinc-200">Notifications</h3>
-        <button onClick={onClose} className="text-xs text-zinc-500 hover:text-white focus:outline-none">Close</button>
+        <button onClick={onClose} className="text-xs text-zinc-500 hover:text-white focus:outline-none cursor-pointer">Close</button>
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-3">
         {filteredNotifications.length === 0 ? (
           <p className="text-center text-xs text-zinc-650 py-16 font-mono">Tray clear</p>
         ) : (
-          filteredNotifications.map(notif => (
-            <div key={notif.id} className="p-3.5 bg-zinc-900 border border-zinc-850 rounded-2xl space-y-2 animate-slide-up">
-              <div className="flex items-start justify-between gap-3 text-xs">
-                <p className="text-zinc-200 font-medium">{notif.title}</p>
-                <span className="text-[9px] font-mono text-zinc-500 shrink-0">{notif.relativeTime}</span>
+          filteredNotifications.map(notif => {
+            const meta = NotificationMeta[notif.type] || { label: "Notification", icon: "🔔" };
+            return (
+              <div 
+                key={notif.id} 
+                onClick={() => handleOpenNotification(notif)}
+                className={`p-3.5 bg-zinc-900 border border-zinc-850 rounded-2xl space-y-2 animate-slide-up cursor-pointer hover:border-zinc-700 transition-colors ${notif.settled ? "opacity-60" : ""}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-base">{meta.icon}</span>
+                  <span className="text-[10px] font-bold font-mono text-[#ff8b66] uppercase tracking-wider">{meta.label}</span>
+                  <span className="text-[9px] font-mono text-zinc-650 ml-auto">{notif.relativeTime}</span>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-zinc-100">{notif.title}</p>
+                  {notif.body && <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">{notif.body}</p>}
+                </div>
+                {!notif.settled && notif.actionText && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAcceptInviteFromNotif(notif);
+                    }}
+                    className="bg-[#ff8b66] text-black text-[9px] font-black uppercase font-mono px-3.5 py-1 rounded focus:outline-none cursor-pointer"
+                  >
+                    {notif.actionText}
+                  </button>
+                )}
               </div>
-              {!notif.settled && notif.actionText && (
-                <button
-                  onClick={() => handleAcceptInviteFromNotif(notif)}
-                  className="bg-[#ff8b66] text-black text-[9px] font-black uppercase font-mono px-3.5 py-1 rounded focus:outline-none"
-                >
-                  Accept
-                </button>
-              )}
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

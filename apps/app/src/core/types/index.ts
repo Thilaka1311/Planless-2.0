@@ -118,13 +118,48 @@ export interface DbTransaction {
 
 // 7. MEMORIES TABLE (Post-plan visual layer capturing shared identity)
 export interface DbMemory {
-  id?: string; // UUID primary key
-  memory_id: string;
+  id: string;
   plan_id: string;
-  uploaded_by: string; // user_id
-  media_url: string;
-  caption: string;
-  timestamp: string;
+  memory_type: string;
+  status: string;
+  created_at: string;
+  locked_at: string | null;
+  editable_until: string;
+  team_a_score?: number | null;
+  team_b_score?: number | null;
+  mvp_user_id?: string | null;
+}
+
+export interface DbMemoryAttendee {
+  id: string;
+  memory_id: string;
+  user_id: string;
+  created_at: string;
+}
+
+export interface DbMemoryRating {
+  id: string;
+  memory_id: string;
+  user_id: string;
+  rating: number;
+  created_at: string;
+}
+
+export interface DbMemoryMatch {
+  id: string;
+  memory_id: string;
+  match_number: number;
+  team_a_score: number;
+  team_b_score: number;
+  created_by: string;
+  created_at: string;
+}
+
+export interface DbFriendship {
+  id?: string; // UUID primary key
+  sender_id: string; // UUID -> users.id
+  receiver_id: string; // UUID -> users.id
+  created_at?: string;
 }
 
 // ---------------------------------------------
@@ -248,14 +283,16 @@ export interface Transaction {
 
 export interface NotificationItem {
   id: string;
-  type: "invitation" | "urgency" | "payment" | "general";
+  type: "PLAN_INVITATION" | "WAITLIST_PROMOTED" | "PLAN_CANCELLED" | "PLAN_UPDATED" | "HOST_TRANSFERRED" | "PARTICIPANT_JOINED" | "PARTICIPANT_SKIPPED" | "invitation" | "urgency" | "payment" | "general" | string;
   title: string;
+  body?: string;
   relativeTime: string;
   actionText?: string;
   planId?: string;
   settled?: boolean;
   cost?: number;
-  creatorId?: string; // reference
+  creatorId?: string;
+  createdAt?: string;
 }
 
 export interface UserProfile {

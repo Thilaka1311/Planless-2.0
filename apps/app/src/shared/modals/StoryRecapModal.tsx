@@ -18,25 +18,7 @@ export default function StoryRecapModal({
   dbUsers,
   storyIndex
 }: StoryRecapModalProps) {
-  // Resolve the active user's UUID from dbUsers so uploaded_by (which stores UUIDs) matches correctly
-  const activeUserObj = dbUsers.find(u => u.user_id === activeUserId || u.id === activeUserId);
-  const activeUuid = activeUserObj?.id || "";
-
-  const storyMemories = dbMemories.filter(m => m.plan_id === activeStoryRecap.id || m.plan_id === activeStoryRecap.dbUuid);
-  const activeSlides = storyMemories.length ? storyMemories.map(m => {
-    // Match uploader by UUID first (canonical), fall back to short ID for legacy data
-    const isMyMem = m.uploaded_by === activeUuid || m.uploaded_by === activeUserId;
-    // Find uploader: check by UUID (u.id) first, then short ID fallback
-    const uploaderUser = dbUsers.find(u => u.id === m.uploaded_by || u.user_id === m.uploaded_by);
-    const uploaderName = uploaderUser?.full_name || "Participant";
-    return {
-      image: m.media_url,
-      caption: m.caption,
-      footerText: isMyMem ? "Shared by You (Attendee)" : `Shared by ${uploaderName}`,
-      isMyMem,
-      originalMemory: m
-    };
-  }) : [
+  const activeSlides = [
     {
       image: activeStoryRecap.coverImage,
       caption: `⚡ Spontaneous "${activeStoryRecap.title}" launched successfully!`,

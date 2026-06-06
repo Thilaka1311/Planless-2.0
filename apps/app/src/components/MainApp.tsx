@@ -23,6 +23,7 @@ import NotificationsTrayModal from "../shared/modals/NotificationsTrayModal";
 import DepositCashModal from "../shared/modals/DepositCashModal";
 import PaymentConfirmationModal from "../shared/modals/PaymentConfirmationModal";
 import ReservationSuccessModal from "../shared/modals/ReservationSuccessModal";
+import { isMemoryVisibleToUser } from "../lib/memoryVisibility";
 interface MainAppProps {
   userProfile: UserProfile;
   onLogout: () => void;
@@ -31,8 +32,8 @@ interface MainAppProps {
 
 export default function MainApp({ userProfile, onLogout, activeUserId }: MainAppProps) {
   // --- Decoupled Context Stores ---
-  const { plans, setPlans, dbPlans, setDbPlans, dbPlanParticipants, setDbPlanParticipants, dbMemories, setDbMemories, joinPlan, waitlistPlan, passPlan } = usePlansStore();
-  const { dbUsers, setDbUsers, setDbUserData, updateProfile, activeUserUuid } = useProfileStore();
+  const { plans, setPlans, dbPlans, setDbPlans, dbPlanParticipants, setDbPlanParticipants, dbMemories, setDbMemories, dbMemoryAttendees, setDbMemoryAttendees, dbMemoryRatings, setDbMemoryRatings, dbMemoryMatches, setDbMemoryMatches, joinPlan, waitlistPlan, passPlan } = usePlansStore();
+  const { dbUsers, setDbUsers, setDbUserData, setDbFriendships, updateProfile, activeUserUuid } = useProfileStore();
   const { circles, setCircles, dbCircles, setDbCircles, dbCircleMembers, setDbCircleMembers } = useCirclesStore();
   const { walletBalance, setWalletBalance, transactions, setTransactions, dbTransactions, setDbTransactions, refreshTransactions } = useWalletStore();
 
@@ -112,11 +113,15 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
             // 1. Set profile context
             setDbUsers(d.users || []);
             setDbUserData(d.user_data || []);
+            setDbFriendships(d.friendships || []);
             
             // 2. Set plans context
             setDbPlans(d.plans || []);
             setDbPlanParticipants(d.plan_participants || []);
             setDbMemories(d.memories || []);
+            setDbMemoryAttendees(d.memory_attendees || []);
+            setDbMemoryRatings(d.memory_ratings || []);
+            setDbMemoryMatches(d.memory_matches || []);
             setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], activeUserId, d.circles || []));
             
             // 3. Set circles context — only show circles where the current user is a member
@@ -165,6 +170,25 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
       }
     }
   }, [plans]);
+
+  // Enforce memory visibility for StoryRecapModal
+  React.useEffect(() => {
+    if (activeStoryRecap) {
+      const mem = dbMemories.find(m => m.plan_id === activeStoryRecap.id);
+      if (mem) {
+        const isVisible = isMemoryVisibleToUser(
+          mem,
+          activeUserUuid || activeUserId,
+          dbMemoryAttendees,
+          dbPlans,
+          dbCircleMembers
+        );
+        if (!isVisible) {
+          setActiveStoryRecap(null);
+        }
+      }
+    }
+  }, [activeStoryRecap, dbMemories, activeUserUuid, activeUserId, dbMemoryAttendees, dbPlans, dbCircleMembers]);
 
   // Checkin join toggle
   const handleToggleJoin = async (plan: Plan) => {
@@ -412,6 +436,30 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
           records: [{ id: notif.id, is_read: true }]
         })
       }).catch(err => console.error("Failed to mark notification as read:", err));
+    }
+  };
+
+  const handleOpenNotification = async (notif: NotificationItem) => {
+    // 1. Mark read in DB if not already read
+    if (!notif.settled) {
+      setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, settled: true } : n));
+      fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table: "notifications",
+          records: [{ id: notif.id, is_read: true }]
+        })
+      }).catch(err => console.error("Failed to mark notification as read:", err));
+    }
+
+    // 2. Open associated plan preview
+    if (notif.planId) {
+      const plan = plans.find(p => p.plan_id === notif.planId || p.id === notif.planId);
+      if (plan) {
+        setSelectedPlan(plan);
+        setShowNotifications(false);
+      }
     }
   };
 
@@ -668,16 +716,27 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
 
       {/* ---------------- 🎬 IMMERSIVE FIGMA FULLSCREEN STORY RECAP MODAL ---------------- */}
       <AnimatePresence>
-        {activeStoryRecap && (
-          <StoryRecapModal
-            activeStoryRecap={activeStoryRecap}
-            onClose={() => setActiveStoryRecap(null)}
-            dbMemories={dbMemories}
-            activeUserId={activeUserId}
-            dbUsers={dbUsers}
-            storyIndex={storyIndex}
-          />
-        )}
+        {activeStoryRecap && (() => {
+          const mem = dbMemories.find(m => m.plan_id === activeStoryRecap.id);
+          const isVisible = !mem || isMemoryVisibleToUser(
+            mem,
+            activeUserUuid || activeUserId,
+            dbMemoryAttendees,
+            dbPlans,
+            dbCircleMembers
+          );
+          if (!isVisible) return null;
+          return (
+            <StoryRecapModal
+              activeStoryRecap={activeStoryRecap}
+              onClose={() => setActiveStoryRecap(null)}
+              dbMemories={dbMemories}
+              activeUserId={activeUserId}
+              dbUsers={dbUsers}
+              storyIndex={storyIndex}
+            />
+          );
+        })()}
       </AnimatePresence>
 
       {/* ---------------- 💾 RELATIONAL DATABASE EXPLORER ---------------- */}
@@ -693,6 +752,9 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
         dbPlanParticipants={dbPlanParticipants}
         dbTransactions={dbTransactions}
         dbMemories={dbMemories}
+        dbMemoryAttendees={dbMemoryAttendees}
+        dbMemoryRatings={dbMemoryRatings}
+        dbMemoryMatches={dbMemoryMatches}
       />
 
       {/* ---------------- NOTIFICATIONS TRAY ---------------- */}
@@ -701,6 +763,7 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
         onClose={() => setShowNotifications(false)}
         filteredNotifications={filteredNotifications}
         handleAcceptInviteFromNotif={handleAcceptInviteFromNotif}
+        handleOpenNotification={handleOpenNotification}
       />
 
       {/* ---------------- DEPOSIT CASH MODAL ---------------- */}

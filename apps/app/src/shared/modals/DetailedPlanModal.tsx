@@ -19,7 +19,7 @@ export default function DetailedPlanModal({
   activeUserId,
   triggerToast,
 }: DetailedPlanModalProps) {
-  const { getParticipantCounts, dbPlanParticipants, markPlanSeen, skipPlan, rejoinPlan, acceptPlan, joinPlan, leavePlan, changePlanHost, cancelPlan } = usePlansStore();
+  const { getParticipantCounts, dbPlanParticipants, markPlanSeen, skipPlan, rejoinPlan, acceptPlan, joinPlan, leavePlan, changePlanHost, cancelPlan, completePlan } = usePlansStore();
   const [isSkipping, setIsSkipping] = useState(false);
   const [isRejoining, setIsRejoining] = useState(false);
   const [isJoiningDirect, setIsJoiningDirect] = useState(false);
@@ -30,6 +30,7 @@ export default function DetailedPlanModal({
   const [isChangingHost, setIsChangingHost] = useState(false);
   const [showDitchConfirm, setShowDitchConfirm] = useState(false);
   const [isDitching, setIsDitching] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   const [selectedNewHost, setSelectedNewHost] = useState<{ userId: string; name: string } | null>(null);
 
   const planUuid = (selectedPlan as any).dbUuid || selectedPlan.id;
@@ -123,6 +124,20 @@ export default function DetailedPlanModal({
       triggerToast("Failed to ditch plan");
     } finally {
       setIsDitching(false);
+    }
+  };
+
+  const handleCompletePlan = async () => {
+    if (isCompleting) return;
+    setIsCompleting(true);
+    try {
+      await completePlan(selectedPlan.id);
+      triggerToast("Plan marked completed successfully");
+      onClose();
+    } catch (err) {
+      triggerToast("Failed to complete plan");
+    } finally {
+      setIsCompleting(false);
     }
   };
 
@@ -417,6 +432,16 @@ export default function DetailedPlanModal({
                 Ditch Plan
               </button>
             </div>
+            {selectedPlan.status === "active" && (
+              <button
+                type="button"
+                onClick={handleCompletePlan}
+                disabled={isCompleting}
+                className="w-full mt-2 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white text-xs font-mono font-bold uppercase tracking-wider active:scale-[0.98] transition-all cursor-pointer text-center shadow-[0_0_12px_rgba(16,185,129,0.2)] disabled:opacity-50"
+              >
+                {isCompleting ? "Marking complete…" : "Complete Plan"}
+              </button>
+            )}
           </div>
         ) : (
           <>

@@ -1,6 +1,6 @@
 import React from "react";
 import { Database } from "lucide-react";
-import { User, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory } from "../../core/types";
+import { User, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory, DbMemoryAttendee, DbMemoryRating, DbMemoryMatch } from "../../core/types";
 
 interface DbExplorerModalProps {
   isOpen: boolean;
@@ -14,6 +14,9 @@ interface DbExplorerModalProps {
   dbPlanParticipants: DbPlanParticipant[];
   dbTransactions: DbTransaction[];
   dbMemories: DbMemory[];
+  dbMemoryAttendees: DbMemoryAttendee[];
+  dbMemoryRatings: DbMemoryRating[];
+  dbMemoryMatches: DbMemoryMatch[];
 }
 
 export default function DbExplorerModal({
@@ -27,9 +30,25 @@ export default function DbExplorerModal({
   dbPlans,
   dbPlanParticipants,
   dbTransactions,
-  dbMemories
+  dbMemories,
+  dbMemoryAttendees,
+  dbMemoryRatings,
+  dbMemoryMatches
 }: DbExplorerModalProps) {
   if (!isOpen) return null;
+
+  const tables = [
+    "users",
+    "circles",
+    "circle_members",
+    "plans",
+    "plan_participants",
+    "transactions",
+    "memories",
+    "memory_attendees",
+    "memory_ratings",
+    "memory_matches"
+  ];
 
   return (
     <div id="db_explorer_slide_panel" className="absolute inset-0 bg-[#0C0C0E]/99 z-45 flex flex-col animate-fade-in text-zinc-100 font-sans">
@@ -47,7 +66,7 @@ export default function DbExplorerModal({
       </div>
 
       <div className="flex border-b border-zinc-900/60 bg-zinc-950 shrink-0 overflow-x-auto no-scrollbar">
-        {["users", "circles", "circle_members", "plans", "plan_participants", "transactions", "memories"].map(table => (
+        {tables.map(table => (
           <button
             key={table}
             onClick={() => setSelectedDbTable(table)}
@@ -67,6 +86,9 @@ export default function DbExplorerModal({
           {selectedDbTable === "plan_participants" && JSON.stringify(dbPlanParticipants, null, 2)}
           {selectedDbTable === "transactions" && JSON.stringify(dbTransactions, null, 2)}
           {selectedDbTable === "memories" && JSON.stringify(dbMemories, null, 2)}
+          {selectedDbTable === "memory_attendees" && JSON.stringify(dbMemoryAttendees, null, 2)}
+          {selectedDbTable === "memory_ratings" && JSON.stringify(dbMemoryRatings, null, 2)}
+          {selectedDbTable === "memory_matches" && JSON.stringify(dbMemoryMatches, null, 2)}
         </pre>
       </div>
     </div>

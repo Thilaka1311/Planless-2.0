@@ -4,6 +4,7 @@ import { CreatePlanCTAButton } from "./CreatePlanCTAButton";
 
 import { PlanSummary } from "./PlanSummary";
 import { AttendanceSummaryCard } from "./AttendanceSummaryCard";
+import { useProfileStore } from "../../../profile/state/ProfileContext";
 
 interface CircleItem {
   id: string;
@@ -15,6 +16,7 @@ interface CircleItem {
 }
 
 interface DbUserItem {
+  id: string;
   user_id: string;
   full_name: string;
   username: string;
@@ -78,6 +80,9 @@ export const InviteRecipientsStep = ({
   hideWaitlist = false,
   summary,
 }: InviteRecipientsStepProps) => {
+  const { dbFriendships, userProfile } = useProfileStore();
+  const myUuid = userProfile?.dbUuid || userProfile?.id || "";
+
   const invitedGuestsCount = React.useMemo(() => {
     const set = new Set<string>();
 
@@ -147,6 +152,15 @@ export const InviteRecipientsStep = ({
     if (user.user_id === activeUserId) return false;
     // Hide friend if they are in a selected group
     if (selectedCircleMemberUserIds.has(user.user_id)) return false;
+
+    // Filter to only display active friends (bidirectional symmetric lookup)
+    const targetUserUuid = user.id;
+    if (!targetUserUuid || !myUuid) return false;
+    const sender = myUuid < targetUserUuid ? myUuid : targetUserUuid;
+    const receiver = myUuid < targetUserUuid ? targetUserUuid : myUuid;
+    const isFriend = dbFriendships.some(f => f.sender_id === sender && f.receiver_id === receiver);
+    if (!isFriend) return false;
+
     if (!recipientSearchQuery) return true;
     const q = recipientSearchQuery.toLowerCase();
     return (

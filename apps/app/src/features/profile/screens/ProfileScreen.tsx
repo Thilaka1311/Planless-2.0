@@ -7,6 +7,7 @@ import { usePlansStore } from "../../plans/state/PlansContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
 import { useWalletStore } from "../../wallet/state/WalletContext";
 import { UserProfile } from "../../../core/types";
+import { isMemoryVisibleToUser } from "../../../lib/memoryVisibility";
 
 interface ProfileScreenProps {
   onLogout: () => void;
@@ -24,8 +25,8 @@ export const ProfileScreen = ({
   setShowDepositModal
 }: ProfileScreenProps) => {
   const { userProfile, activeUserId, activeUserUuid, updateProfile } = useProfileStore();
-  const { plans, dbMemories } = usePlansStore();
-  const { circles } = useCirclesStore();
+  const { plans, dbMemories, dbMemoryAttendees, dbPlans } = usePlansStore();
+  const { circles, dbCircleMembers } = useCirclesStore();
   const { walletBalance, transactions } = useWalletStore();
 
   const [activeProfileSubView, setActiveProfileSubView] = useState<"none" | "settings" | "payments" | "account" | "notifications" | "privacy" | "help">("none");
@@ -350,51 +351,62 @@ export const ProfileScreen = ({
             )}
           </div>
 
-          {/* Snapshots Gallery */}
+          {/* Memories Gallery */}
           <div id="memories_gallery_segment" className="space-y-3.5 text-left">
-            <div className="flex items-center justify-between px-1 border-b border-zinc-950 pb-1.5">
-              <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
-                📸 Snapshot Memories
-              </h4>
-              <span className="text-[8.5px] font-mono text-zinc-600">
-                {dbMemories.filter(m => m.uploaded_by === activeUserUuid || m.uploaded_by === activeUserId).length} snaps saved
-              </span>
-            </div>
+            {(() => {
+              const visibleMemories = dbMemories.filter(mem =>
+                isMemoryVisibleToUser(
+                  mem,
+                  activeUserUuid || activeUserId,
+                  dbMemoryAttendees,
+                  dbPlans,
+                  dbCircleMembers
+                )
+              );
 
-            {dbMemories.filter(m => m.uploaded_by === activeUserUuid || m.uploaded_by === activeUserId).length === 0 ? (
-              <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-6 text-center text-zinc-500 text-xs font-sans">
-                Upload spontaneous snapshot stories inside Completed plans to view them here.
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 gap-2">
-                {dbMemories.filter(m => m.uploaded_by === activeUserUuid || m.uploaded_by === activeUserId).map(mem => (
-                  <div
-                    key={mem.memory_id}
-                    onClick={() => {
-                      setEditingMemory(mem);
-                      setEditedCaption(mem.caption || "");
-                    }}
-                    className="aspect-square bg-zinc-900 border border-zinc-850 rounded-xl overflow-hidden relative group cursor-pointer active:scale-95 transition-all shadow-md"
-                    title="Click to tweak caption or delete snapshot"
-                  >
-                    <img
-                      src={mem.media_url}
-                      alt="Your memory"
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-end p-1.5 transition-opacity pointer-events-none">
-                      <span className="text-[7.5px] font-sans font-bold text-white truncate w-full">
-                        "{mem.caption}"
-                      </span>
-                    </div>
-                    <span className="absolute top-1 right-1 bg-[#ff8b66] text-white text-[6.5px] font-sans font-bold px-1 rounded-sm shadow">
-                      You
+              return (
+                <>
+                  <div className="flex items-center justify-between px-1 border-b border-zinc-950 pb-1.5">
+                    <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
+                      ⚡ Completed Memories
+                    </h4>
+                    <span className="text-[8.5px] font-mono text-zinc-600">
+                      {visibleMemories.length} memories saved
                     </span>
                   </div>
-                ))}
-              </div>
-            )}
+
+                  {visibleMemories.length === 0 ? (
+                    <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-6 text-center text-zinc-500 text-xs font-sans">
+                      Completed plans will appear here as permanent historical memories.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {visibleMemories.map(mem => {
+                        const plan = plans.find(p => p.id === mem.plan_id || p.dbUuid === mem.plan_id);
+                        return (
+                          <div
+                            key={mem.id}
+                            className="bg-zinc-900/40 border border-zinc-900 rounded-xl p-3 flex items-center justify-between"
+                          >
+                            <div>
+                              <div className="text-xs font-sans font-bold text-zinc-200">
+                                {plan?.title || "Meetup"}
+                              </div>
+                              <div className="text-[10px] font-mono text-zinc-550 mt-0.5">
+                                Type: {mem.memory_type} • Status: {mem.status}
+                              </div>
+                            </div>
+                            <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8px] font-mono uppercase px-1.5 py-0.5 rounded-full">
+                              Completed
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

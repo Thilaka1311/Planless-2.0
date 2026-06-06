@@ -323,6 +323,40 @@ export const mapTransactionsToLegacy = (
 };
 
 
+export const NotificationMeta: Record<string, { label: string; icon: string }> = {
+  PLAN_INVITATION: { label: "Invitation", icon: "✉️" },
+  WAITLIST_PROMOTED: { label: "Promoted", icon: "⚡" },
+  PLAN_CANCELLED: { label: "Cancelled", icon: "❌" },
+  PLAN_UPDATED: { label: "Updated", icon: "✏️" },
+  HOST_TRANSFERRED: { label: "Host Transfer", icon: "👑" },
+  PARTICIPANT_JOINED: { label: "Joined", icon: "✅" },
+  PARTICIPANT_SKIPPED: { label: "Skipped", icon: "🏃" },
+  // Compatibility fallbacks:
+  invitation: { label: "Invitation", icon: "✉️" },
+  urgency: { label: "Urgent", icon: "⚠️" },
+  payment: { label: "Payment", icon: "💳" },
+  general: { label: "General", icon: "🔔" }
+};
+
+function formatRelativeTime(createdTime?: string): string {
+  if (!createdTime) return "just now";
+  try {
+    const diffMs = new Date().getTime() - new Date(createdTime).getTime();
+    const diffSecs = Math.floor(diffMs / 1000);
+    const diffMins = Math.floor(diffSecs / 60);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffSecs < 60) return "just now";
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return new Date(createdTime).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  } catch {
+    return "just now";
+  }
+}
+
 export const mapNotificationsToLegacy = (
   notificationsList: any[],
   plansList: DbPlan[],
@@ -333,7 +367,8 @@ export const mapNotificationsToLegacy = (
   const activeUuid = activeUserObj ? (activeUserObj as any).id : activeUserId;
 
   return (notificationsList || [])
-    .filter(n => n.user_id === activeUuid && !n.is_read)
+    .filter(n => n.user_id === activeUuid)
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
     .map(n => {
       const plan = plansList.find(p => (p as any).id === n.reference_id || p.plan_id === n.reference_id);
       
@@ -341,12 +376,14 @@ export const mapNotificationsToLegacy = (
         id: n.id,
         type: n.type as any,
         title: n.title,
-        relativeTime: "just now",
-        actionText: n.type === "invitation" ? "Accept & Join" : undefined,
+        body: n.body || "",
+        relativeTime: formatRelativeTime(n.created_at),
+        actionText: n.type === "PLAN_INVITATION" || n.type === "invitation" ? "Accept & Join" : undefined,
         planId: plan ? plan.plan_id : undefined,
         settled: n.is_read,
         cost: plan ? Number(plan.split_amount) : undefined,
-        creatorId: plan ? plan.created_by : undefined
+        creatorId: plan ? plan.created_by : undefined,
+        createdAt: n.created_at
       };
     });
 };

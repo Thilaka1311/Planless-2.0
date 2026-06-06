@@ -55,6 +55,13 @@ export interface DbParticipant {
   waitlisted_at?: string | null;
 }
 
+export interface DbFriendship {
+  id?: string;
+  sender_id: string;
+  receiver_id: string;
+  created_at?: string;
+}
+
 export interface DbCircle {
   id: string;           // UUID primary key
   circle_id: string;    // text public ID
@@ -86,11 +93,39 @@ export interface DbUserStats {
 
 export interface DbMemory {
   id: string;
-  memory_id: string;
   plan_id: string;
-  uploaded_by: string;  // UUID -> users.id
-  media_url: string;
-  caption: string;
+  memory_type: string;
+  status: string;
+  created_at: string;
+  locked_at: string | null;
+  editable_until: string;
+  team_a_score?: number | null;
+  team_b_score?: number | null;
+  mvp_user_id?: string | null;
+}
+
+export interface DbMemoryAttendee {
+  id: string;
+  memory_id: string;
+  user_id: string;
+  created_at: string;
+}
+
+export interface DbMemoryRating {
+  id: string;
+  memory_id: string;
+  user_id: string;
+  rating: number;
+  created_at: string;
+}
+
+export interface DbMemoryMatch {
+  id: string;
+  memory_id: string;
+  match_number: number;
+  team_a_score: number;
+  team_b_score: number;
+  created_by: string;
   created_at: string;
 }
 
@@ -118,10 +153,14 @@ export interface DbSnapshot {
   circleMembers: DbCircleMember[];
   userStats: DbUserStats[];
   memories: DbMemory[];
+  memoryAttendees: DbMemoryAttendee[];
+  memoryRatings: DbMemoryRating[];
+  memoryMatches: DbMemoryMatch[];
   transactions: DbTransaction[];
   notifications: any[];
   userData: any[];
   planReminders: any[];
+  friendships: DbFriendship[];
 }
 
 // ─────────────────────────────────────────────
@@ -152,10 +191,14 @@ export async function fetchSnapshot(): Promise<DbSnapshot | null> {
       circleMembers: (json.data?.circle_members     || []) as DbCircleMember[],
       userStats:     (json.data?.user_stats        || []) as DbUserStats[],
       memories:      (json.data?.memories          || []) as DbMemory[],
+      memoryAttendees:(json.data?.memory_attendees  || []) as DbMemoryAttendee[],
+      memoryRatings: (json.data?.memory_ratings    || []) as DbMemoryRating[],
+      memoryMatches: (json.data?.memory_matches    || []) as DbMemoryMatch[],
       transactions:  (json.data?.transactions      || []) as DbTransaction[],
       notifications: (json.data?.notifications     || []) as any[],
       userData:      (json.data?.user_data         || []) as any[],
       planReminders: (json.data?.plan_reminders    || []) as any[],
+      friendships:   (json.data?.friendships       || []) as DbFriendship[],
     };
   } catch {
     return null;
@@ -253,10 +296,74 @@ export async function insertCircle(circle: Omit<DbCircle, "id">): Promise<DbCirc
   return rows?.[0] ?? null;
 }
 
+async function generateCircleFriendships(insertedMembers: DbCircleMember[]): Promise<void> {
+  try {
+    if (insertedMembers.length === 0) return;
+    
+    // Get unique circle IDs from the inserted members
+    const circleIds = [...new Set(insertedMembers.map(m => m.circle_id))];
+    if (circleIds.length === 0) return;
+
+    // Fetch latest snapshot to get all current circle members and existing friendships
+    const freshRes = await fetch("/api/db/fetch-all");
+    if (!freshRes.ok) return;
+    const json = await freshRes.json();
+    const allMembers: DbCircleMember[] = json.data?.circle_members || [];
+    const existingFriendships: any[] = json.data?.friendships || [];
+
+    // Filter to find all members of the circles we care about
+    const circleMembers = allMembers.filter(m => circleIds.includes(m.circle_id));
+
+    // Group members by circle_id
+    const membersByCircle: Record<string, string[]> = {};
+    circleMembers.forEach(m => {
+      if (m.circle_id && m.user_id) {
+        if (!membersByCircle[m.circle_id]) {
+          membersByCircle[m.circle_id] = [];
+        }
+        membersByCircle[m.circle_id].push(m.user_id);
+      }
+    });
+
+    // Generate unique symmetric friendship pairs (min_id, max_id)
+    const newFriendshipsMap = new Map<string, { sender_id: string; receiver_id: string }>();
+
+    Object.values(membersByCircle).forEach(userIds => {
+      const uniqueUserIds = [...new Set(userIds)];
+      for (let i = 0; i < uniqueUserIds.length; i++) {
+        for (let j = i + 1; j < uniqueUserIds.length; j++) {
+          const u1 = uniqueUserIds[i];
+          const u2 = uniqueUserIds[j];
+          if (u1 === u2) continue;
+          const sender = u1 < u2 ? u1 : u2;
+          const receiver = u1 < u2 ? u2 : u1;
+          const key = `${sender}_${receiver}`;
+          newFriendshipsMap.set(key, { sender_id: sender, receiver_id: receiver });
+        }
+      }
+    });
+
+    // Filter out friendships that already exist in database
+    const friendshipsToInsert = Array.from(newFriendshipsMap.values()).filter(f => {
+      return !existingFriendships.some(ef => ef.sender_id === f.sender_id && ef.receiver_id === f.receiver_id);
+    });
+
+    if (friendshipsToInsert.length > 0) {
+      console.log(`[Friendships Auto-gen] Inserting ${friendshipsToInsert.length} new friendships:`, friendshipsToInsert);
+      await upsert("friendships", friendshipsToInsert);
+    }
+  } catch (err) {
+    console.error("[Friendships Auto-gen] Failed to generate circle friendships:", err);
+  }
+}
+
 /** Insert circle members. */
 export async function insertCircleMembers(members: Omit<DbCircleMember, "id">[]): Promise<DbCircleMember[]> {
   if (members.length === 0) return [];
   const result = await upsert("circle_members", members);
+  if (result && result.length > 0) {
+    await generateCircleFriendships(result);
+  }
   return result ?? [];
 }
 

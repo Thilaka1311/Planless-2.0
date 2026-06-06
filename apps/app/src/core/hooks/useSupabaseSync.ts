@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { UserProfile, Circle, NotificationItem, Transaction, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory } from "../types";
+import { UserProfile, Circle, NotificationItem, Transaction, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory, DbMemoryAttendee, DbMemoryRating, DbMemoryMatch } from "../types";
 import { DbUser, DbSnapshot } from "../../lib/db";
 import { mapPlansToLegacyPlans, mapCirclesToLegacyCircles, mapTransactionsToLegacy } from "../../lib/mappers";
 
@@ -14,6 +14,10 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
   const [dbCircleMembers, setDbCircleMembers]= useState<DbCircleMember[]>([]);
   const [dbTransactions,  setDbTransactions] = useState<DbTransaction[]>([]);
   const [dbMemories,      setDbMemories]     = useState<DbMemory[]>([]);
+  const [dbMemoryAttendees, setDbMemoryAttendees] = useState<DbMemoryAttendee[]>([]);
+  const [dbMemoryRatings,  setDbMemoryRatings] = useState<DbMemoryRating[]>([]);
+  const [dbMemoryMatches,  setDbMemoryMatches] = useState<DbMemoryMatch[]>([]);
+  const [dbFriendships,   setDbFriendships]  = useState<any[]>([]);
 
   // ─── UI state ─────────────────────────────────────────────────────────────
   const [circles,       setCircles]      = useState<Circle[]>([]);
@@ -48,31 +52,6 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
     const me = snap.users.find((u: DbUser) => u.id === myUuid);
     if (me) setWalletBalance(Number(me.wallet_balance) || 0);
 
-    // Notifications: any plan where I am "delivered" (invited) that I haven't seen yet
-    setNotifications(prev => {
-      const existingIds = new Set(prev.map(n => n.id));
-      const newNotifs: NotificationItem[] = [];
-      snap.participants.forEach((pp: any) => {
-        if (pp.user_id !== myUuid || pp.status !== "delivered") return;
-        const notifId = `invite_${pp.plan_id}`;
-        if (existingIds.has(notifId)) return;
-        const plan = snap.plans.find((p: any) => p.id === pp.plan_id);
-        if (!plan) return;
-        const hostUser = snap.users.find((u: DbUser) => u.id === (plan.host_id || plan.created_by));
-        newNotifs.push({
-          id:           notifId,
-          type:         "invitation",
-          title:        `${hostUser?.full_name ?? "Someone"} invited you to "${plan.title}"`,
-          relativeTime: "just now",
-          actionText:   "Accept & Join",
-          planId:       plan.plan_id, // public ID used by UI for lookup
-          cost:         Number(plan.split_amount ?? 0),
-          creatorId:    plan.host_id || plan.created_by,
-        });
-      });
-      if (newNotifs.length === 0) return prev;
-      return [...newNotifs, ...prev];
-    });
   }, [myUuid, setPlans]);
 
   // ─── Initial boot load ────────────────────────────────────────────────────
@@ -112,10 +91,14 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
           circleMembers: d.circle_members    || [],
           userStats:     d.user_stats        || [],
           memories:      d.memories          || [],
+          memoryAttendees: d.memory_attendees || [],
+          memoryRatings: d.memory_ratings    || [],
+          memoryMatches: d.memory_matches    || [],
           transactions:  d.transactions      || [],
           notifications: d.notifications     || [],
           userData:      d.user_data         || [],
           planReminders: d.plan_reminders    || [],
+          friendships:   d.friendships       || [],
         };
 
         lastSnapshotRef.current = JSON.stringify({ p: snap.plans.length, pp: snap.participants.length });
@@ -126,6 +109,10 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
         setDbCircleMembers(d.circle_members || []);
         setDbTransactions(d.transactions || []);
         setDbMemories(d.memories || []);
+        setDbMemoryAttendees(d.memory_attendees || []);
+        setDbMemoryRatings(d.memory_ratings || []);
+        setDbMemoryMatches(d.memory_matches || []);
+        setDbFriendships(d.friendships || []);
         setCircles(mapCirclesToLegacyCircles(d.circles || [], d.circle_members || [], d.users || []));
         setTransactions(mapTransactionsToLegacy(d.transactions || [], d.users || [], myUuid));
 
@@ -166,10 +153,14 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
           circleMembers: d.circle_members    || [],
           userStats:     d.user_stats        || [],
           memories:      d.memories          || [],
+          memoryAttendees: d.memory_attendees || [],
+          memoryRatings: d.memory_ratings    || [],
+          memoryMatches: d.memory_matches    || [],
           transactions:  d.transactions      || [],
           notifications: d.notifications     || [],
           userData:      d.user_data         || [],
           planReminders: d.plan_reminders    || [],
+          friendships:   d.friendships       || [],
         };
 
         const fingerprint = JSON.stringify({ p: snap.plans.length, pp: snap.participants.length });
@@ -206,6 +197,10 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
     dbCircleMembers, setDbCircleMembers,
     dbTransactions, setDbTransactions,
     dbMemories, setDbMemories,
+    dbMemoryAttendees, setDbMemoryAttendees,
+    dbMemoryRatings, setDbMemoryRatings,
+    dbMemoryMatches, setDbMemoryMatches,
+    dbFriendships, setDbFriendships,
     circles, setCircles,
     notifications, setNotifications,
     transactions, setTransactions,

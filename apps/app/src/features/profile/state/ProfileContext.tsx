@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
-import { UserProfile, User } from "../../../core/types";
+import { UserProfile, User, DbFriendship } from "../../../core/types";
 
 interface ProfileState {
   userProfile: UserProfile | null;
@@ -10,6 +10,8 @@ interface ProfileState {
   setDbUsers: React.Dispatch<React.SetStateAction<User[]>>;
   dbUserData: any[];
   setDbUserData: React.Dispatch<React.SetStateAction<any[]>>;
+  dbFriendships: DbFriendship[];
+  setDbFriendships: React.Dispatch<React.SetStateAction<DbFriendship[]>>;
   updateProfile: (updated: UserProfile) => void;
 }
 
@@ -26,6 +28,7 @@ export const ProfileProvider = ({
 }) => {
   const [userProfile, setUserProfileState] = useState<UserProfile | null>(initialProfile);
   const [dbUserData, setDbUserData] = useState<any[]>([]);
+  const [dbFriendships, setDbFriendships] = useState<DbFriendship[]>([]);
   const [dbUsers, setDbUsers] = useState<User[]>(() => {
     if (initialProfile) {
       return [{
@@ -69,7 +72,7 @@ export const ProfileProvider = ({
   };
 
   return (
-    <ProfileContext.Provider value={{ userProfile, setUserProfile, activeUserId: userProfile?.dbUuid || "", activeUserUuid: userProfile?.dbUuid || "", dbUsers, setDbUsers, dbUserData, setDbUserData, updateProfile }}>
+    <ProfileContext.Provider value={{ userProfile, setUserProfile, activeUserId: userProfile?.dbUuid || "", activeUserUuid: userProfile?.dbUuid || "", dbUsers, setDbUsers, dbUserData, setDbUserData, dbFriendships, setDbFriendships, updateProfile }}>
       {children}
     </ProfileContext.Provider>
   );

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
-import { Plan, PlanMember, DbPlan, DbPlanParticipant, DbMemory, User } from "../../../core/types";
+import { Plan, PlanMember, DbPlan, DbPlanParticipant, DbMemory, DbMemoryAttendee, DbMemoryRating, DbMemoryMatch, User } from "../../../core/types";
 import { useProfileStore } from "../../profile/state/ProfileContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
 import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats, createRazorpayOrder, verifyRazorpayPayment, insertTransaction } from "../../../lib/db";
@@ -25,8 +25,14 @@ interface PlansContextType {
   setDbPlans: React.Dispatch<React.SetStateAction<DbPlan[]>>;
   dbPlanParticipants: DbPlanParticipant[];
   setDbPlanParticipants: React.Dispatch<React.SetStateAction<DbPlanParticipant[]>>;
-  dbMemories: any[];
-  setDbMemories: React.Dispatch<React.SetStateAction<any[]>>;
+  dbMemories: DbMemory[];
+  setDbMemories: React.Dispatch<React.SetStateAction<DbMemory[]>>;
+  dbMemoryAttendees: DbMemoryAttendee[];
+  setDbMemoryAttendees: React.Dispatch<React.SetStateAction<DbMemoryAttendee[]>>;
+  dbMemoryRatings: DbMemoryRating[];
+  setDbMemoryRatings: React.Dispatch<React.SetStateAction<DbMemoryRating[]>>;
+  dbMemoryMatches: DbMemoryMatch[];
+  setDbMemoryMatches: React.Dispatch<React.SetStateAction<DbMemoryMatch[]>>;
   createPlan: (plan: DbPlan, invitees: string[]) => Promise<any>;
   joinPlan: (planId: string, userProfile: any) => Promise<void>;
   leavePlan: (planId: string, leaverId: string) => Promise<void>;
@@ -48,6 +54,8 @@ interface PlansContextType {
   bookNow: (planId: string, hostProfile: any) => Promise<{ success: boolean; status?: string; error?: string }>;
   changePlanHost: (planId: string, newHostUuid: string, oldHostUuid: string) => Promise<void>;
   cancelPlan: (planId: string) => Promise<void>;
+  updatePlanDetails: (planId: string, updates: Partial<DbPlan>) => Promise<void>;
+  completePlan: (planId: string) => Promise<void>;
 }
 
 const PlansContext = createContext<PlansContextType | undefined>(undefined);
@@ -56,7 +64,10 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [plans, setPlans] = useState<Plan[]>([]);
   const [dbPlans, setDbPlans] = useState<DbPlan[]>([]);
   const [dbPlanParticipants, setDbPlanParticipants] = useState<DbPlanParticipant[]>([]);
-  const [dbMemories, setDbMemories] = useState<any[]>([]);
+  const [dbMemories, setDbMemories] = useState<DbMemory[]>([]);
+  const [dbMemoryAttendees, setDbMemoryAttendees] = useState<DbMemoryAttendee[]>([]);
+  const [dbMemoryRatings, setDbMemoryRatings] = useState<DbMemoryRating[]>([]);
+  const [dbMemoryMatches, setDbMemoryMatches] = useState<DbMemoryMatch[]>([]);
 
   const { activeUserId: userId, dbUsers } = useProfileStore();
 
@@ -76,10 +87,12 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const json = await res.json();
         if (json.configured && (!json.tables_missing || targetTables)) {
           const d = json.data || {};
-          
           if (d.plans !== undefined) setDbPlans(d.plans);
           if (d.plan_participants !== undefined) setDbPlanParticipants(d.plan_participants);
           if (d.memories !== undefined) setDbMemories(d.memories);
+          if (d.memory_attendees !== undefined) setDbMemoryAttendees(d.memory_attendees);
+          if (d.memory_ratings !== undefined) setDbMemoryRatings(d.memory_ratings);
+          if (d.memory_matches !== undefined) setDbMemoryMatches(d.memory_matches);
 
           // Trigger plans update with latest values combined from state and fetched subset
           setDbPlans(currentPlans => {
@@ -96,6 +109,66 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     } catch (err) {
       console.error("[PlansContext refreshPlans] Failed to fetch updated state:", err);
+    }
+  };
+
+  const handleParticipantStatusChange = async (
+    planUuid: string,
+    participantUserUuid: string,
+    oldStatus: string | null | undefined,
+    newStatus: string
+  ) => {
+    const matchedPlan = plans.find(p => p.id === planUuid || p.dbUuid === planUuid);
+    const dbPlanObj = dbPlans.find(p => p.id === planUuid || p.plan_id === planUuid);
+    const hostUuid = resolveUserUuid(matchedPlan?.hostId || matchedPlan?.creatorId || dbPlanObj?.host_id || dbPlanObj?.created_by || "");
+    
+    const participantUuid = resolveUserUuid(participantUserUuid);
+    const normOld = oldStatus ? normalizeStatus(oldStatus) : null;
+    const normNew = normalizeStatus(newStatus);
+
+    if (!hostUuid || !participantUuid || hostUuid === participantUuid) {
+      return;
+    }
+
+    if (normOld === normNew) {
+      return;
+    }
+
+    const participantUser = dbUsers.find(u => u.id === participantUuid || u.user_id === participantUuid || (u as any).dbUuid === participantUuid);
+    const participantName = participantUser?.name || "Someone";
+    const planTitle = matchedPlan?.title || dbPlanObj?.title || "meetup";
+
+    let notifRecord = null;
+
+    if (normOld !== "going" && normNew === "going") {
+      notifRecord = {
+        user_id: hostUuid,
+        type: "PARTICIPANT_JOINED",
+        title: `${participantName} joined "${planTitle}"`,
+        body: `${participantName} is now attending.`,
+        reference_id: planUuid,
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
+    } else if (normOld !== "skipped" && normNew === "skipped") {
+      notifRecord = {
+        user_id: hostUuid,
+        type: "PARTICIPANT_SKIPPED",
+        title: `${participantName} skipped "${planTitle}"`,
+        body: `${participantName} can no longer make it.`,
+        reference_id: planUuid,
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
+    }
+
+    if (notifRecord) {
+      console.log(`[handleParticipantStatusChange] Writing notification to DB:`, notifRecord);
+      await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "notifications", records: [notifRecord] })
+      }).catch(err => console.error("[PlansContext handleParticipantStatusChange] Failed to save notification:", err));
     }
   };
 
@@ -167,6 +240,36 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
         if (!ppRes.ok) {
           console.error("[PlansContext promoteWaitlist] Failed to upsert promoted participants");
+        } else {
+          // Send PARTICIPANT_JOINED notifications to host for each promoted participant
+          for (const upd of updates) {
+            const pToPromote = waitlisted.find(w => w.id === upd.id);
+            if (pToPromote?.user_id) {
+              await handleParticipantStatusChange(planUuid, pToPromote.user_id, "waitlist", "going");
+            }
+          }
+
+          // Write WAITLIST_PROMOTED notifications to promoted users
+          const promoNotifications = updates.map(upd => {
+            const pToPromote = waitlisted.find(w => w.id === upd.id);
+            return {
+              user_id: pToPromote?.user_id,
+              type: "WAITLIST_PROMOTED",
+              title: `A spot opened up. You're now in for "${dbPlanObj.title}"`,
+              body: "You've been promoted from the waitlist to attending.",
+              reference_id: planUuid,
+              is_read: false,
+              created_at: new Date().toISOString()
+            };
+          }).filter(n => n.user_id);
+
+          if (promoNotifications.length > 0) {
+            await fetch("/api/db/upsert", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ table: "notifications", records: promoNotifications })
+            }).catch(err => console.error("[PlansContext promoteWaitlist] Failed to save promotion notifications:", err));
+          }
         }
       }
     } catch (err) {
@@ -299,6 +402,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             joined_at: new Date().toISOString()
           });
         }
+        await handleParticipantStatusChange(planUuid, userUuid, existingBefore?.status, "going");
         await syncUserStats(userUuid, "join_plan");
 
         // 6. Create completed transaction record with duplicate check
@@ -379,6 +483,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           waitlisted_at: targetDbState === "waitlist" ? new Date().toISOString() : null
         });
       }
+      await handleParticipantStatusChange(planUuid, userUuid, existingBefore?.status, targetDbState);
       await syncUserStats(userUuid, "join_plan");
       await promoteWaitlistIfSpotsAvailable(planUuid);
     }
@@ -450,6 +555,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         await updateParticipantStatus(existingBefore.id, "skipped", existingBefore.payment_status);
         console.log(`[leavePlan] Updated participant row ${existingBefore.id} status to 'skipped'`);
+        await handleParticipantStatusChange(planUuid, userUuid, existingBefore.status, "skipped");
         await promoteWaitlistIfSpotsAvailable(planUuid);
       } catch (err) {
         console.error(`[PlansContext] leavePlan DB write failed:`, err);
@@ -585,6 +691,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const result = await updateParticipantStatus(existingBefore.id, "skipped", existingBefore.payment_status);
         if (result && normalizeStatus(result.status) === "skipped") {
           console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_SUCCESS: status updated to skipped`);
+          await handleParticipantStatusChange(planUuid, userUuid, existingBefore.status, "skipped");
           await promoteWaitlistIfSpotsAvailable(planUuid);
         } else {
           throw new Error("Update returned invalid row or status wasn't skipped");
@@ -662,6 +769,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         joinedAtVal,
         waitlistedAtVal
       );
+      await handleParticipantStatusChange(planUuid, userUuid, existingBefore.status, targetDbState);
       
       await syncUserStats(userUuid, "join_plan");
       await promoteWaitlistIfSpotsAvailable(planUuid);
@@ -757,6 +865,23 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
 
+    // Write HOST_TRANSFERRED notification to the new host
+    const hostTransNotifications = [{
+      user_id: resolvedNewHostUuid,
+      type: "HOST_TRANSFERRED",
+      title: `You are now hosting "${matchedPlan?.title || 'Meetup'}"`,
+      body: "Hosting permissions have been reassigned to you.",
+      reference_id: planUuid,
+      is_read: false,
+      created_at: new Date().toISOString()
+    }];
+
+    await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "notifications", records: hostTransNotifications })
+    }).catch(err => console.error("[PlansContext changePlanHost] Failed to save host transfer notifications:", err));
+
     await promoteWaitlistIfSpotsAvailable(planUuid);
 
     console.log(`[PlansContext] CHANGE HOST SUCCESS. Refreshing plans state.`);
@@ -787,8 +912,185 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error("Failed to cancel plan in database");
     }
 
+    // Write PLAN_CANCELLED notifications to all participants except the host
+    const planParticipantsList = dbPlanParticipants.filter(pp => pp.plan_id === planUuid);
+    const hostUuid = matchedPlan?.hostId || matchedPlan?.creatorId || resolveUserUuid(matchedPlan?.creatorId || "");
+    const cancelNotifications = planParticipantsList
+      .filter(pp => pp.user_id !== hostUuid)
+      .map(pp => ({
+        user_id: pp.user_id,
+        type: "PLAN_CANCELLED",
+        title: `"${matchedPlan?.title}" has been cancelled`,
+        body: "The host has cancelled this meetup.",
+        reference_id: planUuid,
+        is_read: false,
+        created_at: new Date().toISOString()
+      }));
+
+    if (cancelNotifications.length > 0) {
+      await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "notifications", records: cancelNotifications })
+      }).catch(err => console.error("[PlansContext cancelPlan] Failed to save cancel notifications:", err));
+    }
+
     console.log(`[PlansContext] CANCEL PLAN SUCCESS. Refreshing plans state.`);
     await refreshPlans(["plans"]);
+  };
+
+  const updatePlanDetails = async (planId: string, updates: Partial<DbPlan>) => {
+    console.log(`[updatePlanDetails] Payload before database write:`, { planId, updates });
+
+    const matchedPlan = plans.find(p => p.id === planId || p.dbUuid === planId);
+    const planUuid = matchedPlan?.dbUuid || planId;
+
+    // Persist updates to the plans table
+    const planUpdate = { id: planUuid, ...updates };
+    console.log(`[updatePlanDetails] Final Supabase query payload:`, { table: "plans", records: [planUpdate] });
+
+    const res = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "plans", records: [planUpdate] })
+    });
+    if (!res.ok) {
+      throw new Error("Failed to update plan details in database");
+    }
+
+    // Fetch fresh participants to avoid stale state
+    const participantRes = await fetch(`/api/db/fetch-all?tables=plan_participants`);
+    let freshParticipants: DbPlanParticipant[] = dbPlanParticipants;
+    if (participantRes.ok) {
+      const pJson = await participantRes.json();
+      freshParticipants = pJson.data?.plan_participants || dbPlanParticipants;
+    }
+
+    // Write PLAN_UPDATED notifications to all active participants (going + waitlist), excluding the host
+    const hostUuid = resolveUserUuid(matchedPlan?.hostId || matchedPlan?.creatorId || "");
+    const planParticipantsList = freshParticipants.filter(pp => pp.plan_id === planUuid);
+    const updatedNotifications = planParticipantsList
+      .filter(pp => (pp.status === "going" || pp.status === "waitlist") && pp.user_id !== hostUuid)
+      .map(pp => ({
+        user_id: pp.user_id,
+        type: "PLAN_UPDATED",
+        title: `"${matchedPlan?.title || updates.title || "A meetup"}" has been updated`,
+        body: "The host has made changes to this plan. Tap to see the latest details.",
+        reference_id: planUuid,
+        is_read: false,
+        created_at: new Date().toISOString()
+      }));
+
+    if (updatedNotifications.length > 0) {
+      await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "notifications", records: updatedNotifications })
+      }).catch(err => console.error("[PlansContext updatePlanDetails] Failed to save update notifications:", err));
+    }
+
+    console.log(`[PlansContext] UPDATE PLAN DETAILS SUCCESS. Refreshing plans state.`);
+    await refreshPlans(["plans"]);
+  };
+
+  const completePlan = async (planId: string) => {
+    console.log(`[completePlan] Starting completion flow for planId:`, planId);
+
+    const matchedPlan = plans.find(p => p.id === planId || p.dbUuid === planId);
+    const planUuid = matchedPlan?.dbUuid || planId;
+
+    if (!planUuid) {
+      throw new Error("Cannot complete plan: invalid plan ID");
+    }
+
+    // Determine memory_type from plan category or title keywords
+    let memory_type = "football";
+    const category = (matchedPlan?.category || "").toLowerCase();
+    const title = (matchedPlan?.title || "").toLowerCase();
+    if (category === "movies" || title.includes("movie") || title.includes("cinema") || title.includes("film")) {
+      memory_type = "movie";
+    } else if (category === "restaurants" || title.includes("dinner") || title.includes("lunch") || title.includes("food") || title.includes("dining") || title.includes("eat")) {
+      memory_type = "dining";
+    } else if (title.includes("badminton") || title.includes("shuttle")) {
+      memory_type = "badminton";
+    }
+
+    // Get going participants fresh from DB
+    const participantRes = await fetch(`/api/db/fetch-all?tables=plan_participants`);
+    let freshParticipants: DbPlanParticipant[] = dbPlanParticipants;
+    if (participantRes.ok) {
+      const pJson = await participantRes.json();
+      freshParticipants = pJson.data?.plan_participants || dbPlanParticipants;
+    }
+
+    const goingParticipants = freshParticipants.filter(
+      pp => pp.plan_id === planUuid && pp.status === "going"
+    );
+
+    const now = new Date();
+    const created_at = now.toISOString();
+    const editable_until = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const memoryId = crypto.randomUUID();
+
+    // 1. Update plan status to completed
+    const planRes = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "plans",
+        records: [{ id: planUuid, status: "completed" }]
+      })
+    });
+    if (!planRes.ok) {
+      throw new Error("Failed to update plan status to completed");
+    }
+
+    // 2. Insert memories row
+    const memoryRecord = {
+      id: memoryId,
+      plan_id: planUuid,
+      memory_type,
+      status: "pending",
+      created_at,
+      editable_until
+    };
+
+    const memRes = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "memories",
+        records: [memoryRecord]
+      })
+    });
+    if (!memRes.ok) {
+      throw new Error("Failed to create memory record in database");
+    }
+
+    // 3. Snapshot going participants to memory_attendees
+    if (goingParticipants.length > 0) {
+      const attendeeRecords = goingParticipants.map(gp => ({
+        id: crypto.randomUUID(),
+        memory_id: memoryId,
+        user_id: gp.user_id,
+        created_at
+      }));
+
+      const attRes = await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table: "memory_attendees",
+          records: attendeeRecords
+        })
+      });
+      if (!attRes.ok) {
+        console.error("[completePlan] Failed to write memory attendee snapshot to database");
+      }
+    }
+
+    console.log(`[completePlan] SUCCESSFULLY COMPLETED PLAN. Refreshing state.`);
+    await refreshPlans(["plans", "memories", "memory_attendees", "plan_participants"]);
   };
 
   // Reminder System
@@ -871,6 +1173,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         waitlisted_at: targetDbState === "waitlist" ? new Date().toISOString() : null
       });
     }
+    await handleParticipantStatusChange(planUuid, userUuid, existing?.status, targetDbState);
 
     console.log(`[acceptPlan] User ${userUuid} joined plan ${planUuid} with status ${targetDbState}`);
 
@@ -951,7 +1254,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       (p) => (p.plan_id === planUuid || p.plan_id === planId) && p.user_id === userUuid
     );
     if (existing && existing.id) {
+      const oldStatus = existing.status;
       await updateParticipantStatus(existing.id, "skipped", "unpaid");
+      await handleParticipantStatusChange(planUuid, userUuid, oldStatus, "skipped");
       await promoteWaitlistIfSpotsAvailable(planUuid);
     }
 
@@ -1128,8 +1433,11 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dbPlans, setDbPlans, 
       dbPlanParticipants, setDbPlanParticipants,
       dbMemories, setDbMemories,
+      dbMemoryAttendees, setDbMemoryAttendees,
+      dbMemoryRatings, setDbMemoryRatings,
+      dbMemoryMatches, setDbMemoryMatches,
       joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans, getParticipantCounts, refreshPlans, markPlanSeen, skipPlan, rejoinPlan,
-      acceptPlan, declinePlan, hostPay, bookNow, changePlanHost, cancelPlan
+      acceptPlan, declinePlan, hostPay, bookNow, changePlanHost, cancelPlan, updatePlanDetails, completePlan
     }}>
       {children}
     </PlansContext.Provider>
