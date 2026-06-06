@@ -152,12 +152,12 @@ function AppContent({
             {!userProfile ? (
               <OnboardingFlow onComplete={handleOnboardingComplete} />
             ) : (
-              <WalletProvider userId={userProfile.user_id}>
-                <CirclesProvider userId={userProfile.user_id}>
-                  <PlansProvider userId={userProfile.user_id}>
+              <WalletProvider userId={userProfile.dbUuid}>
+                <CirclesProvider userId={userProfile.dbUuid}>
+                  <PlansProvider userId={userProfile.dbUuid}>
                     <MainApp 
                       userProfile={userProfile} 
-                      activeUserId={userProfile.user_id || "U001"} 
+                      activeUserId={userProfile.dbUuid || "U001"} 
                       onLogout={handleLogoutReset} 
                     />
                   </PlansProvider>

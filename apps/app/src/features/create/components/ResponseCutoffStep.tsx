@@ -1,12 +1,22 @@
 import React from "react";
 import { ArrowLeft, Clock } from "lucide-react";
 import { CreatePlanCTAButton } from "./active/CreatePlanCTAButton";
+import { PlanSummary } from "./active/PlanSummary";
 
 interface ResponseCutoffStepProps {
   responseCutoffHours: number;
   setResponseCutoffHours: (hours: number) => void;
   newPlanIsoDateTime: string;
   setCreateFlowStep: (step: any) => void;
+  summary?: {
+    title: string;
+    location?: string;
+    time?: string;
+    invitedCount: number;
+    cost: string;
+    waitlistEnabled?: boolean;
+    joinLimit?: number;
+  };
 }
 
 export const ResponseCutoffStep = ({
@@ -14,6 +24,7 @@ export const ResponseCutoffStep = ({
   setResponseCutoffHours,
   newPlanIsoDateTime,
   setCreateFlowStep,
+  summary,
 }: ResponseCutoffStepProps) => {
 
   const getDeadlineDisplay = (isoStr: string, cutoffHours: number) => {
@@ -69,6 +80,18 @@ export const ResponseCutoffStep = ({
           <span>Back to Circles</span>
         </button>
 
+        {summary && (
+          <PlanSummary
+            title={summary.title}
+            location={summary.location}
+            time={summary.time}
+            invitedCount={summary.invitedCount}
+            cost={summary.cost}
+            waitlistEnabled={summary.waitlistEnabled}
+            joinLimit={summary.joinLimit}
+          />
+        )}
+
         <div className="space-y-1">
           <h2 className="text-xl font-bold font-sans text-white">
             When should responses close?
@@ -81,48 +104,32 @@ export const ResponseCutoffStep = ({
           <span className="font-mono text-zinc-300 font-semibold">{planTimeStr}</span>
         </div>
 
-        {/* Input Box Section */}
-        <div className="space-y-3 pt-2">
-          <label className="text-[10px] font-mono uppercase tracking-wider text-brand-peach block font-bold">
-            Response Deadline
-          </label>
-          <div className="relative flex items-center">
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              placeholder="1"
-              value={responseCutoffHours || ""}
-              onChange={(e) => {
-                const val = e.target.value.replace(/[^0-9]/g, ""); // Keep only digits to prevent alphabet input
-                if (val === "") {
-                  setResponseCutoffHours(0);
-                  return;
-                }
-                const num = parseInt(val, 10);
-                setResponseCutoffHours(isNaN(num) ? 0 : num);
-              }}
-              className="w-full bg-zinc-950 border border-zinc-850 rounded-2xl pl-4 pr-28 py-3.5 text-lg text-zinc-100 font-mono font-bold focus:outline-none focus:border-brand-peach transition-all"
-              autoFocus
-            />
-            <span className="absolute right-4 pointer-events-none text-xs font-mono text-zinc-500">
-              Hours Before
-            </span>
+        {/* Slider Section */}
+        <div className="space-y-3 pt-2 text-left">
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-zinc-500 font-sans">Hours Before Start</span>
+            <span className="text-brand-peach font-mono font-bold text-sm">{responseCutoffHours || 1}h</span>
           </div>
-          {!isValid && responseCutoffHours !== 0 && (
-            <p className="text-[10px] text-red-400 font-mono">
-              Please enter an integer between 1 and 24.
-            </p>
-          )}
+          <input
+            type="range"
+            min={1}
+            max={24}
+            value={responseCutoffHours || 1}
+            onChange={(e) => setResponseCutoffHours(Number(e.target.value))}
+            className="w-full accent-[#ff8b66] cursor-pointer h-1.5"
+          />
+          <div className="flex justify-between text-[9px] font-mono text-zinc-650 leading-none">
+            <span>1h</span>
+            <span>24h</span>
+          </div>
         </div>
 
-        {/* Live Preview Display */}
-        <div className="bg-brand-peach/5 border border-brand-peach/10 rounded-2xl p-4 space-y-2.5">
-          <div className="flex items-center gap-2 text-[10px] font-mono text-brand-peach font-bold uppercase tracking-wider">
-            <Clock className="w-3.5 h-3.5" />
-            <span>Responses Close</span>
+        {/* Highlighted Card */}
+        <div className="bg-[#ff8b66]/10 border border-[#ff8b66]/20 rounded-2xl p-4 flex flex-col justify-center space-y-2 animate-fade-in">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-brand-peach/85 block font-bold">
+            Responses Close
           </div>
-          <div className="text-lg font-black text-zinc-100 tracking-tight font-sans">
+          <div className="text-2xl font-black text-white tracking-tight font-sans">
             {deadlineStr}
           </div>
         </div>
@@ -131,7 +138,7 @@ export const ResponseCutoffStep = ({
       <div className="pt-6">
         <CreatePlanCTAButton
           text="NEXT — BUDGET & COST →"
-          disabled={!isValid}
+          disabled={responseCutoffHours < 1 || responseCutoffHours > 24}
           onPress={() => setCreateFlowStep("COST")}
         />
       </div>

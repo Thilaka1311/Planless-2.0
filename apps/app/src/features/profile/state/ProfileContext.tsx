@@ -69,7 +69,7 @@ export const ProfileProvider = ({
   };
 
   return (
-    <ProfileContext.Provider value={{ userProfile, setUserProfile, activeUserId: userProfile?.user_id || "", activeUserUuid: userProfile?.dbUuid || "", dbUsers, setDbUsers, dbUserData, setDbUserData, updateProfile }}>
+    <ProfileContext.Provider value={{ userProfile, setUserProfile, activeUserId: userProfile?.dbUuid || "", activeUserUuid: userProfile?.dbUuid || "", dbUsers, setDbUsers, dbUserData, setDbUserData, updateProfile }}>
       {children}
     </ProfileContext.Provider>
   );

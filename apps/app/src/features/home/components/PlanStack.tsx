@@ -1,13 +1,11 @@
 import React from "react";
-import { UserProfile, Plan, NotificationItem } from "../../../core/types";
-import { EmptyState } from "../components/EmptyState";
-import { FeedHeader } from "../components/FeedHeader";
-import { FeedFilters } from "../components/FeedFilters";
-import { PlanStack } from "../components/PlanStack";
-import { useHomeFeed } from "../hooks/useHomeFeed";
+import { Plan, UserProfile, NotificationItem } from "../../../core/types";
+import { PlanCard } from "./PlanCard";
 
-export interface HomeScreenProps {
-  discoverablePlans: Plan[];
+interface PlanStackProps {
+  plansToRender: Plan[];
+  handleScrollLoop: (e: React.UIEvent<HTMLDivElement>) => void;
+  homeFeedRef: React.RefObject<HTMLDivElement | null>;
   userProfile: UserProfile;
   interestedPlanIds: string[];
   setSelectedPlan: (plan: Plan | null) => void;
@@ -22,11 +20,12 @@ export interface HomeScreenProps {
   setActiveCardId: (planId: string) => void;
   handleSnoozePlan: (planId: string) => void;
   handleWaitlistPlan?: (planId: string, userProfile: any) => void;
-  homeFeedRef: React.RefObject<HTMLDivElement | null>;
 }
 
-export const HomeScreen: React.FC<HomeScreenProps> = ({
-  discoverablePlans,
+export const PlanStack: React.FC<PlanStackProps> = ({
+  plansToRender,
+  handleScrollLoop,
+  homeFeedRef,
   userProfile,
   interestedPlanIds,
   setSelectedPlan,
@@ -41,22 +40,22 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   setActiveCardId,
   handleSnoozePlan,
   handleWaitlistPlan,
-  homeFeedRef,
 }) => {
-  const { plansToRender, handleScrollLoop } = useHomeFeed(discoverablePlans);
-
   return (
-    <div id="home_tab_pane" className="w-full h-full relative overflow-hidden bg-[#0C0C0E]">
-      <FeedHeader />
-      <FeedFilters />
-      
-      {discoverablePlans.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <PlanStack
-          plansToRender={plansToRender}
-          handleScrollLoop={handleScrollLoop}
-          homeFeedRef={homeFeedRef}
+    <div
+      id="home_swipe_feed"
+      ref={homeFeedRef}
+      className="h-full w-full overflow-y-scroll snap-y snap-mandatory no-scrollbar"
+      style={{
+        scrollSnapType: "y mandatory",
+        WebkitOverflowScrolling: "touch",
+      }}
+      onScroll={handleScrollLoop}
+    >
+      {plansToRender.map((plan) => (
+        <PlanCard
+          key={plan.id}
+          plan={plan}
           userProfile={userProfile}
           interestedPlanIds={interestedPlanIds}
           setSelectedPlan={setSelectedPlan}
@@ -68,11 +67,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           setNotifications={setNotifications}
           triggerToast={triggerToast}
           activeCardId={activeCardId}
-          setActiveCardId={setActiveCardId}
+          onSelectCard={(id) => {
+            setActiveCardId(id);
+            if (id) {
+              const selected = plansToRender.find((p) => p.id === id);
+              if (selected) {
+                setSelectedPlan(selected);
+              }
+            }
+          }}
           handleSnoozePlan={handleSnoozePlan}
-          handleWaitlistPlan={handleWaitlistPlan}
+          waitlistPlan={handleWaitlistPlan}
         />
-      )}
+      ))}
     </div>
   );
 };

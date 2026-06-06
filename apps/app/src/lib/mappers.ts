@@ -6,6 +6,7 @@ import {
   Plan, Circle, Transaction, User, NotificationItem,
   DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction 
 } from "../core/types";
+import { normalizeStatus } from "./participantStatus";
 
 // ── avatar helper ───────────────────────────────────────────────────────────
 
@@ -107,11 +108,11 @@ export const mapPlansToLegacyPlans = (
       }
 
       return {
-        userId: u.user_id,       // short sequential ID e.g. "U001" — used for all UI comparisons
+        userId: (u as any).id || u.user_id,       // UUID — used for all UI comparisons
         userUuid: (u as any).id, // UUID — stored for DB writes
         name: u.full_name,
         avatar: u.profile_photo,
-        joinState: ip.status as any,
+        joinState: normalizeStatus(ip.status),
         reminderState: "none" as const,
         joinedAt: ip.joined_at,
         checkedIn: ip.payment_status === "paid"
@@ -153,7 +154,8 @@ export const mapPlansToLegacyPlans = (
       timeVal = p.datetime ? String(p.datetime).split(" • ")[1] || String(p.datetime) : "";
     }
     
-    // Max spots: uses join_limit when waitlist is enabled, falls back to max_people or members count
+    // Max spots: join_limit = total going capacity INCLUDING host (canonical model).
+    // Falls back to max_people or participant count for plans without waitlist.
     const maxSpotsVal = p.waitlist_enabled && p.join_limit ? p.join_limit : (p.max_people || (p as any).max_spots || (members.length > 0 ? members.length : 10));
     
     // Cost: uses split_amount from exact database schema
@@ -245,7 +247,7 @@ export const mapCirclesToLegacyCircles = (
       const u = usersList.find(usr => (usr as any).id === cmr.user_id || usr.user_id === cmr.user_id);
       if (!u) return null;
       return {
-        userId: u.user_id,
+        userId: (u as any).id || u.user_id,
         name: u.full_name,
         phone: u.phone_number,
         avatar: u.profile_photo

@@ -4,6 +4,7 @@ import { useProfileStore } from "../../profile/state/ProfileContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
 import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats, createRazorpayOrder, verifyRazorpayPayment, insertTransaction } from "../../../lib/db";
 import { mapPlansToLegacyPlans } from "../../../lib/mappers";
+import { calculateParticipantBreakdown, parseTimeToMinutes, normalizeStatus } from "../../../lib/participantStatus";
 
 interface ParticipantCounts {
   host: number;
@@ -11,6 +12,7 @@ interface ParticipantCounts {
   waitlist: number;
   delivered: number;
   seen: number;
+  skipped: number;
   passed: number;
   pending: number;  // delivered + seen (invited but not yet responded)
   total: number;
@@ -35,12 +37,17 @@ interface PlansContextType {
   getHomeFeedPlans: (userId: string) => Plan[];
   getHubPlans: (userId: string) => Plan[];
   getParticipantCounts: (planId: string) => ParticipantCounts;
-  refreshPlans: () => Promise<void>;
+  refreshPlans: (targetTables?: string[]) => Promise<void>;
+  markPlanSeen: (planId: string, userId: string) => Promise<void>;
+  skipPlan: (planId: string, userId: string) => Promise<void>;
+  rejoinPlan: (planId: string, userProfile: any) => Promise<void>;
   // New acceptance / payment / booking actions
   acceptPlan: (planId: string, userProfile: any) => Promise<void>;
   declinePlan: (planId: string, userProfile: any) => Promise<void>;
   hostPay: (planId: string, hostProfile: any) => Promise<boolean>;
   bookNow: (planId: string, hostProfile: any) => Promise<{ success: boolean; status?: string; error?: string }>;
+  changePlanHost: (planId: string, newHostUuid: string, oldHostUuid: string) => Promise<void>;
+  cancelPlan: (planId: string) => Promise<void>;
 }
 
 const PlansContext = createContext<PlansContextType | undefined>(undefined);
@@ -61,18 +68,30 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const isUuid = (val: any) => typeof val === "string" && uuidRegex.test(val);
 
-  const refreshPlans = async () => {
+  const refreshPlans = async (targetTables?: string[]) => {
     try {
-      const res = await fetch("/api/db/fetch-all");
+      const url = targetTables ? `/api/db/fetch-all?tables=${targetTables.join(",")}` : "/api/db/fetch-all";
+      const res = await fetch(url);
       if (res.ok) {
         const json = await res.json();
-        if (json.configured && !json.tables_missing) {
+        if (json.configured && (!json.tables_missing || targetTables)) {
           const d = json.data || {};
-          setDbPlans(d.plans || []);
-          setDbPlanParticipants(d.plan_participants || []);
-          setDbMemories(d.memories || []);
-          setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], userId, d.circles || []));
-          console.log(`[PlansContext refreshPlans] Successfully refreshed plans state. Count: ${d.plans?.length}, Participants: ${d.plan_participants?.length}`);
+          
+          if (d.plans !== undefined) setDbPlans(d.plans);
+          if (d.plan_participants !== undefined) setDbPlanParticipants(d.plan_participants);
+          if (d.memories !== undefined) setDbMemories(d.memories);
+
+          // Trigger plans update with latest values combined from state and fetched subset
+          setDbPlans(currentPlans => {
+            const finalPlans = d.plans !== undefined ? d.plans : currentPlans;
+            setDbPlanParticipants(currentParticipants => {
+              const finalParticipants = d.plan_participants !== undefined ? d.plan_participants : currentParticipants;
+              setPlans(mapPlansToLegacyPlans(finalPlans, finalParticipants, dbUsers, userId, useCirclesStore().dbCircles));
+              return finalParticipants;
+            });
+            return finalPlans;
+          });
+          console.log(`[PlansContext refreshPlans] Successfully refreshed plans state (targeted: ${targetTables?.join(",") || "all"}).`);
         }
       }
     } catch (err) {
@@ -243,53 +262,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           console.error("[PlansContext] Failed to persist transaction record:", txErr);
         }
       }
-      await refreshPlans();
+      await refreshPlans(["plan_participants", "user_stats", "transactions"]);
       return;
     }
-
-    // 1. Update UI plans state locally for immediate response
-    setPlans(prevPlans => prevPlans.map(plan => {
-      if (plan.id === planId) {
-        const alreadyJoined = plan.members.some(u => u.userId === userProfile.user_id && (u.joinState === "going" || u.joinState === "host"));
-        if (alreadyJoined) {
-          console.log(`[PlansContext] User already joined or host. Skipping local UI update.`);
-          return plan;
-        }
-
-        const activeMembersCount = plan.members.filter(u => u.joinState === "going" || u.joinState === "host").length;
-        const targetJoinState = (plan.waitlistEnabled && activeMembersCount > (plan.joinLimit || 0)) ? "waitlist" : "going";
-
-        console.log(`[PlansContext Local UI Update]`);
-        console.log(`- Plan title: "${plan.title}"`);
-        console.log(`- waitlistEnabled: ${plan.waitlistEnabled}`);
-        console.log(`- joinLimit: ${plan.joinLimit}`);
-        console.log(`- active participant count (host + going): ${activeMembersCount}`);
-        console.log(`- waitlist decision result: ${targetJoinState}`);
-
-        const newMember: PlanMember = {
-          userId: userProfile.user_id || userId,
-          name: userProfile.name,
-          avatar: userProfile.avatar,
-          joinState: targetJoinState,
-          reminderState: "none",
-          joinedAt: new Date().toISOString(),
-          checkedIn: targetJoinState === "going" && matchedPlan && matchedPlan.cost > 0
-        };
-
-        const newMembersList = [...plan.members.filter(m => m.userId !== newMember.userId), newMember];
-        const newJoinedCount = newMembersList.filter(m => m.joinState === "going" || m.joinState === "host").length;
-        const currentCapacity = plan.waitlistEnabled && plan.joinLimit ? plan.joinLimit : (plan.capacity || 10);
-        const progressPct = currentCapacity > 0 ? Math.round((newJoinedCount / currentCapacity) * 100) : 0;
-
-        return {
-          ...plan,
-          members: newMembersList,
-          joinedUsers: newMembersList,
-          confirmedCount: newJoinedCount
-        };
-      }
-      return plan;
-    }));
 
     // 2. Database Persistence
     if (planUuid && userUuid) {
@@ -303,9 +278,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               (pp.status === "going" || pp.status === "host")
       ).length;
       
-      // If activeParticipants <= joinLimit, status is "going", else "waitlist"
+      // joinLimit = total going capacity (host-inclusive). Full when acceptedCount >= limit.
       const limit = matchedPlan?.joinLimit || 0;
-      const targetDbState = (matchedPlan?.waitlistEnabled && acceptedCount > limit) ? "waitlist" : "going";
+      const targetDbState = (matchedPlan?.waitlistEnabled && acceptedCount >= limit) ? "waitlist" : "going";
 
       console.log(`[PlansContext DB Write Audit]`);
       console.log(`- joinLimit: ${limit}`);
@@ -329,7 +304,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // 3. Sync state from DB
-    await refreshPlans();
+    await refreshPlans(["plan_participants", "user_stats"]);
 
     // Logging: status after action
     const refSnapshot = await fetch("/api/db/fetch-all").then(r => r.json()).catch(() => null);
@@ -351,33 +326,6 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     console.log(`[PlansContext] WAITLIST ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userProfile.name}`);
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none");
 
-    // 1. Update UI plans state locally
-    setPlans(prevPlans => prevPlans.map(plan => {
-      if (plan.id === planId) {
-        const alreadyWaitlisted = plan.members.some(u => u.userId === userProfile.user_id && u.joinState === "waitlist");
-        if (alreadyWaitlisted) return plan;
-
-        const newMember: PlanMember = {
-          userId: userProfile.user_id || userId,
-          name: userProfile.name,
-          avatar: userProfile.avatar,
-          joinState: "waitlist",
-          reminderState: "none",
-          joinedAt: new Date().toISOString()
-        };
-
-        const newMembersList = [...plan.members.filter(m => m.userId !== newMember.userId), newMember];
-
-        return {
-          ...plan,
-          members: newMembersList,
-          joinedUsers: newMembersList,
-          waitlistUsers: newMembersList.filter(m => m.joinState === "waitlist")
-        };
-      }
-      return plan;
-    }));
-
     // 2. Database Persistence
     if (planUuid && userUuid) {
       if (existingBefore && existingBefore.id) {
@@ -394,7 +342,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // 3. Sync state from DB
-    await refreshPlans();
+    await refreshPlans(["plan_participants"]);
 
     // Logging: status after action
     const refSnapshot = await fetch("/api/db/fetch-all").then(r => r.json()).catch(() => null);
@@ -409,38 +357,28 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     if (!userUuid || !isUuid(userUuid)) {
       console.error(`[PlansContext] Cannot leave plan: user UUID is missing or invalid:`, userUuid);
-      return;
+      throw new Error("Invalid user UUID");
     }
 
     const existingBefore = dbPlanParticipants.find(p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === leaverId));
     console.log(`[PlansContext] LEAVE ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${leaverId}`);
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none");
 
-    // 1. Update UI plans state locally
-    setPlans(prevPlans => prevPlans.map(plan => {
-      if (plan.id === planId) {
-        const newMembersList = plan.members.filter(u => u.userId !== leaverId);
-        return {
-          ...plan,
-          members: newMembersList,
-          joinedUsers: newMembersList,
-          confirmedCount: newMembersList.filter(m => m.joinState === "going").length
-        };
+    // 2. Database Persistence - update status to 'skipped' instead of deleting
+    if (existingBefore && existingBefore.id) {
+      try {
+        await updateParticipantStatus(existingBefore.id, "skipped", existingBefore.payment_status);
+        console.log(`[leavePlan] Updated participant row ${existingBefore.id} status to 'skipped'`);
+      } catch (err) {
+        console.error(`[PlansContext] leavePlan DB write failed:`, err);
+        throw err;
       }
-      return plan;
-    }));
-
-    // 2. Database Persistence
-    if (planUuid && userUuid && existingBefore && existingBefore.id) {
-      await fetch("/api/db/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: "plan_participants", match: { id: existingBefore.id } })
-      }).catch(err => console.error("Failed to delete participant:", err));
+    } else {
+      throw new Error("Participant record not found");
     }
 
     // 3. Sync state from DB
-    await refreshPlans();
+    await refreshPlans(["plan_participants"]);
 
     // Logging: status after action
     const refSnapshot = await fetch("/api/db/fetch-all").then(r => r.json()).catch(() => null);
@@ -462,22 +400,6 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     console.log(`[PlansContext] PASS ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${passerId}`);
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none");
 
-    // 1. Update UI plans state locally
-    setPlans(prevPlans => prevPlans.map(plan => {
-      if (plan.id === planId) {
-        const newMembersList = plan.members.map(u =>
-          u.userId === passerId ? { ...u, joinState: "skipped" as const } : u
-        );
-        return {
-          ...plan,
-          members: newMembersList,
-          joinedUsers: newMembersList.filter(m => m.joinState !== "passed" && m.joinState !== "skipped"),
-          confirmedCount: newMembersList.filter(m => m.joinState === "going").length
-        };
-      }
-      return plan;
-    }));
-
     // 2. Database Persistence
     if (planUuid && userUuid) {
       if (existingBefore && existingBefore.id) {
@@ -494,12 +416,282 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // 3. Sync state from DB
-    await refreshPlans();
+    await refreshPlans(["plan_participants"]);
 
     // Logging: status after action
     const refSnapshot = await fetch("/api/db/fetch-all").then(r => r.json()).catch(() => null);
     const existingAfter = refSnapshot?.data?.plan_participants?.find((p: any) => p.plan_id === planUuid && p.user_id === userUuid);
     console.log(`[PlansContext] Participant status AFTER action & DB refresh:`, existingAfter ? existingAfter.status : "none");
+  };
+
+  const markPlanSeen = async (planId: string, userId: string) => {
+    const matchedPlan = plans.find(p => p.id === planId);
+    const planUuid = matchedPlan?.dbUuid || planId;
+    const userUuid = resolveUserUuid(userId);
+
+    if (!userUuid || !isUuid(userUuid)) {
+      console.error(`[PlansContext] Cannot mark plan seen: user UUID is missing or invalid:`, userUuid);
+      return;
+    }
+
+    const existingBefore = dbPlanParticipants.find(
+      p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userId)
+    );
+
+    if (!existingBefore) {
+      console.log(`[PlansContext] markPlanSeen: No participant record found for plan ${planId} / user ${userId}`);
+      return;
+    }
+
+    if (existingBefore.status !== "delivered") {
+      return;
+    }
+
+    console.log(`[PlansContext] MARK SEEN ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userId}`);
+
+    if (existingBefore.id) {
+      await updateParticipantStatus(existingBefore.id, "seen", existingBefore.payment_status);
+      console.log(`[PlansContext] markPlanSeen: Updated DB status of participant row ${existingBefore.id} to 'seen'`);
+    }
+
+    await refreshPlans(["plan_participants"]);
+  };
+
+  const skipPlan = async (planId: string, userId: string) => {
+    console.log(`[DetailedPlanModal] SKIP_CLICKED: for Plan: ${planId}, User: ${userId}`);
+    const matchedPlan = plans.find(p => p.id === planId);
+    const planUuid = matchedPlan?.dbUuid || planId;
+    const userUuid = resolveUserUuid(userId);
+
+    if (!userUuid || !isUuid(userUuid)) {
+      console.error(`[PlansContext] Cannot skip plan: user UUID is missing or invalid:`, userUuid);
+      console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_FAILED: invalid userUuid`);
+      return;
+    }
+
+    const existingBefore = dbPlanParticipants.find(
+      p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userId)
+    );
+
+    if (!existingBefore) {
+      console.log(`[PlansContext] skipPlan: No participant record found for plan ${planId} / user ${userId}`);
+      console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_FAILED: participant record missing`);
+      return;
+    }
+
+    if (existingBefore.status === "host") {
+      console.log(`[PlansContext] User is host. Skip transition aborted.`);
+      console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_FAILED: user is host`);
+      return;
+    }
+
+    const skippableStatuses = ["delivered", "seen", "waitlist", "new", "going"];
+    if (!skippableStatuses.includes(existingBefore.status)) {
+      console.log(`[PlansContext] skipPlan: Status is '${existingBefore.status}', which is not skippable. Aborting skip.`);
+      console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_FAILED: status is not skippable`);
+      return;
+    }
+
+    console.log(`[PlansContext] SKIP ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userId}`);
+
+    try {
+      if (existingBefore.id) {
+        const result = await updateParticipantStatus(existingBefore.id, "skipped", existingBefore.payment_status);
+        if (result && normalizeStatus(result.status) === "skipped") {
+          console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_SUCCESS: status updated to skipped`);
+        } else {
+          throw new Error("Update returned invalid row or status wasn't skipped");
+        }
+      } else {
+        throw new Error("Participant ID is missing");
+      }
+
+      console.log(`[DetailedPlanModal] SKIP_STATE_UPDATED: database updated successfully`);
+      await refreshPlans(["plan_participants"]);
+    } catch (error) {
+      console.error(`[PlansContext] skipPlan DB write failed:`, error);
+      console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_FAILED: database exception`);
+      throw error;
+    }
+  };
+
+  const rejoinPlan = async (planId: string, userProfile: any) => {
+    const matchedPlan = plans.find(p => p.id === planId);
+    const planUuid = matchedPlan?.dbUuid || planId;
+    const userUuid = userProfile.dbUuid || resolveUserUuid(userProfile.user_id || userId);
+
+    if (!userUuid || !isUuid(userUuid)) {
+      console.error(`[PlansContext] Cannot rejoin plan: user UUID is missing or invalid:`, userUuid);
+      return;
+    }
+
+    const existingBefore = dbPlanParticipants.find(
+      p => (p.plan_id === planUuid || p.plan_id === planId) && (p.user_id === userUuid || p.user_id === userProfile.user_id)
+    );
+
+    if (!existingBefore) {
+      console.log(`[PlansContext] rejoinPlan: No participant record found for plan ${planId}`);
+      return;
+    }
+
+    if (existingBefore.status === "host") {
+      console.log(`[PlansContext] User is host. Rejoin transition aborted.`);
+      return;
+    }
+
+    if (existingBefore.status !== "skipped" && existingBefore.status !== "passed") {
+      console.log(`[PlansContext] rejoinPlan: Status is '${existingBefore.status}', not 'skipped' or 'passed'. Aborting rejoin.`);
+      return;
+    }
+
+    console.log(`[PlansContext] REJOIN ACTION START (skipped -> seen) for Plan: ${matchedPlan?.title || planId}, User: ${userProfile.name}`);
+
+    if (existingBefore.id) {
+      // 1. Transition skipped -> seen
+      await updateParticipantStatus(existingBefore.id, "seen", existingBefore.payment_status);
+      console.log(`[PlansContext] rejoinPlan: Transitioned row ${existingBefore.id} from 'skipped' to 'seen'`);
+
+      // 2. Use existing attendance routing logic
+      const acceptedCount = dbPlanParticipants.filter(
+        pp => (pp.plan_id === planUuid || pp.plan_id === planId) &&
+              (pp.status === "going" || pp.status === "host")
+      ).length;
+      
+      const limit = matchedPlan?.joinLimit || 0;
+      const targetDbState = (matchedPlan?.waitlistEnabled && acceptedCount >= limit) ? "waitlist" : "going";
+
+      console.log(`[PlansContext] rejoinPlan routing: decided status is '${targetDbState}' (limit: ${limit}, accepted: ${acceptedCount})`);
+
+      // 3. Update existing participant row to target status
+      await updateParticipantStatus(
+        existingBefore.id,
+        targetDbState,
+        targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid"
+      );
+      
+      await syncUserStats(userUuid, "join_plan");
+    }
+
+    await refreshPlans(["plan_participants", "user_stats"]);
+  };
+
+  const changePlanHost = async (planId: string, newHostUuid: string, oldHostUuid: string) => {
+    console.log(`[changePlanHost] Payload before database write:`, { planId, newHostUuid, oldHostUuid });
+
+    const matchedPlan = plans.find(p => p.id === planId || p.dbUuid === planId);
+    const planUuid = matchedPlan?.dbUuid || planId;
+
+    const resolvedNewHostUuid = resolveUserUuid(newHostUuid);
+    const resolvedOldHostUuid = resolveUserUuid(oldHostUuid);
+
+    console.log(`[changePlanHost] Payload after mapper/sync transformation:`, { planUuid, resolvedNewHostUuid, resolvedOldHostUuid });
+
+    if (!isUuid(resolvedNewHostUuid) || !isUuid(resolvedOldHostUuid)) {
+      console.error("[PlansContext] changePlanHost: invalid UUID detected");
+      throw new Error("Invalid host UUID");
+    }
+
+    const planUpdate = {
+      id: planUuid,
+      created_by: resolvedNewHostUuid
+    };
+
+    const oldHostPp = dbPlanParticipants.find(pp => pp.plan_id === planUuid && pp.user_id === resolvedOldHostUuid);
+    const newHostPp = dbPlanParticipants.find(pp => pp.plan_id === planUuid && pp.user_id === resolvedNewHostUuid);
+
+    console.log(`- oldHostPp:`, oldHostPp);
+    console.log(`- newHostPp:`, newHostPp);
+
+    const participantUpdates = [];
+    if (oldHostPp) {
+      participantUpdates.push({
+        id: oldHostPp.id,
+        status: "going"
+      });
+    }
+
+    if (newHostPp) {
+      participantUpdates.push({
+        id: newHostPp.id,
+        status: "host"
+      });
+    } else {
+      console.log(`- inserting new host participant record`);
+      const recordToInsert = {
+        plan_id: planUuid,
+        user_id: resolvedNewHostUuid,
+        status: "host",
+        payment_status: "unpaid",
+        joined_at: new Date().toISOString()
+      };
+      console.log(`[changePlanHost] Final Supabase query payload (insert participant):`, { table: "plan_participants", records: [recordToInsert] });
+      const insertRes = await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table: "plan_participants",
+          records: [recordToInsert]
+        })
+      });
+      if (!insertRes.ok) {
+        throw new Error("Failed to insert new host participant record in database");
+      }
+    }
+
+    console.log(`[changePlanHost] Final Supabase query payload (update plan):`, { table: "plans", records: [planUpdate] });
+    // Update plans table
+    const plansRes = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "plans", records: [planUpdate] })
+    });
+    if (!plansRes.ok) {
+      throw new Error("Failed to update plan created_by in database");
+    }
+
+    // Update participant statuses
+    if (participantUpdates.length > 0) {
+      console.log(`[changePlanHost] Final Supabase query payload (update participant statuses):`, { table: "plan_participants", records: participantUpdates });
+      const ppRes = await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "plan_participants", records: participantUpdates })
+      });
+      if (!ppRes.ok) {
+        throw new Error("Failed to update participant statuses in database");
+      }
+    }
+
+    console.log(`[PlansContext] CHANGE HOST SUCCESS. Refreshing plans state.`);
+    await refreshPlans(["plans", "plan_participants"]);
+  };
+
+  const cancelPlan = async (planId: string) => {
+    console.log(`[cancelPlan] Payload before database write:`, { planId });
+
+    const matchedPlan = plans.find(p => p.id === planId || p.dbUuid === planId);
+    const planUuid = matchedPlan?.dbUuid || planId;
+
+    console.log(`[cancelPlan] Payload after mapper/sync transformation:`, { planUuid });
+
+    const planUpdate = {
+      id: planUuid,
+      status: "cancelled"
+    };
+
+    console.log(`[cancelPlan] Final Supabase query payload (cancel plan):`, { table: "plans", records: [planUpdate] });
+
+    const res = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "plans", records: [planUpdate] })
+    });
+    if (!res.ok) {
+      throw new Error("Failed to cancel plan in database");
+    }
+
+    console.log(`[PlansContext] CANCEL PLAN SUCCESS. Refreshing plans state.`);
+    await refreshPlans(["plans"]);
   };
 
   // Reminder System
@@ -549,26 +741,34 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    // 1. Update participant status → "accepted"
+    // 1. Resolve capacity decision
+    const acceptedCount = dbPlanParticipants.filter(
+      pp => (pp.plan_id === planUuid || pp.plan_id === planId) &&
+            (pp.status === "going" || pp.status === "host")
+    ).length;
+    const limit = matchedPlan?.joinLimit || 0;
+    const targetDbState = (matchedPlan?.waitlistEnabled && acceptedCount >= limit) ? "waitlist" : "going";
+
     const existing = dbPlanParticipants.find(
       (p) => (p.plan_id === planUuid || p.plan_id === planId) && p.user_id === userUuid
     );
+
     if (existing && existing.id) {
-      await updateParticipantStatus(existing.id, "accepted", "unpaid");
+      await updateParticipantStatus(existing.id, targetDbState, targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid");
     } else {
       await insertParticipant({
         plan_id: planUuid,
         user_id: userUuid,
-        status: "accepted",
-        payment_status: "unpaid",
+        status: targetDbState,
+        payment_status: targetDbState === "going" && matchedPlan && matchedPlan.cost > 0 ? "paid" : "unpaid",
         joined_at: new Date().toISOString(),
       });
     }
 
-    console.log(`[acceptPlan] User ${userUuid} accepted plan ${planUuid}`);
+    console.log(`[acceptPlan] User ${userUuid} joined plan ${planUuid} with status ${targetDbState}`);
 
     // 2. Refresh and check if all non-host participants have accepted
-    await refreshPlans();
+    await refreshPlans(["plan_participants", "plans"]);
 
     const freshRes = await fetch("/api/db/fetch-all");
     const freshJson = await freshRes.json();
@@ -577,11 +777,14 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       (pp: any) => pp.plan_id === planUuid
     );
     const nonHostParticipants = planParticipants.filter(
-      (pp: any) => pp.status !== "host"
+      (pp: any) => normalizeStatus(pp.status) !== "host"
     );
     const allAccepted =
       nonHostParticipants.length > 0 &&
-      nonHostParticipants.every((pp: any) => pp.status === "accepted");
+      nonHostParticipants.every((pp: any) => {
+        const norm = normalizeStatus(pp.status);
+        return norm === "going" || norm === "waitlist";
+      });
 
     console.log(
       `[acceptPlan] Non-host participants: ${nonHostParticipants.length}, all accepted: ${allAccepted}`
@@ -595,13 +798,16 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         body: JSON.stringify({ plan_id: planUuid, acceptance_status: "confirmed" }),
       });
       console.log(`[acceptPlan] Plan ${planUuid} is now CONFIRMED — host can pay!`);
-      await refreshPlans();
+      await refreshPlans(["plans"]);
     }
 
     // Check sports threshold transition
     if (matchedPlan && (matchedPlan.category === "sports" || (matchedPlan as any).sports_type || (matchedPlan as any).venue_id)) {
       const confirmedParticipants = planParticipants.filter(
-        (pp: any) => pp.status === "accepted" || pp.status === "going" || pp.status === "host"
+        (pp: any) => {
+          const norm = normalizeStatus(pp.status);
+          return norm === "going" || norm === "host";
+        }
       );
       const confirmedCount = confirmedParticipants.length;
       const required = (matchedPlan as any).required_confirmations || matchedPlan.min_participants || 0;
@@ -616,12 +822,12 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           })
         });
         console.log(`[acceptPlan] Sports Plan ${planUuid} -> BOOKING_READY`);
-        await refreshPlans();
+        await refreshPlans(["plans"]);
       }
     }
   };
 
-  // ─── Decline Plan ─────────────────────────────────────────────────────────
+  // ─── Decline Plan (Skip Plan) ──────────────────────────────────────────────
   const declinePlan = async (planId: string, userProfile: any) => {
     const matchedPlan = plans.find((p) => p.id === planId);
     const planUuid = matchedPlan?.dbUuid || planId;
@@ -636,22 +842,10 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       (p) => (p.plan_id === planUuid || p.plan_id === planId) && p.user_id === userUuid
     );
     if (existing && existing.id) {
-      await updateParticipantStatus(existing.id, "declined", "unpaid");
+      await updateParticipantStatus(existing.id, "skipped", "unpaid");
     }
 
-    // Optimistic UI update
-    setPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id === planId) {
-          const newMembers = plan.members.map((m) =>
-            m.userUuid === userUuid ? { ...m, joinState: "passed" as const } : m
-          );
-          return { ...plan, members: newMembers, joinedUsers: newMembers };
-        }
-        return plan;
-      })
-    );
-    await refreshPlans();
+    await refreshPlans(["plan_participants"]);
   };
 
   // ─── Host Pay ─────────────────────────────────────────────────────────────
@@ -688,7 +882,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const result = await res.json();
     console.log(`[hostPay] Success! Total: ₹${result.total_cost}, split: ${result.split_count} people`);
-    await refreshPlans();
+    await refreshPlans(["plan_participants", "plans", "transactions"]);
     return true;
   };
 
@@ -713,7 +907,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
 
       const data = await res.json();
-      await refreshPlans();
+      await refreshPlans(["plans", "transactions", "users"]);
       return data;
     } catch (err: any) {
       console.error("[PlansContext] bookNow exception:", err);
@@ -731,33 +925,37 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pp => pp.plan_id === planUuid || (pp as any).id === planUuid
     );
 
-    const host      = rows.filter(r => r.status === "host").length;
-    const going     = rows.filter(r => r.status === "going").length;
-    const waitlist  = rows.filter(r => r.status === "waitlist").length;
-    const delivered = rows.filter(r => r.status === "delivered").length;
-    const seen      = rows.filter(r => r.status === "seen").length;
-    const passed    = rows.filter(r => r.status === "passed" || r.status === "skipped").length;
-    const pending   = delivered + seen;
-    const total     = rows.length;
+    const breakdown = calculateParticipantBreakdown(rows);
+    const { host, going, waitlist, delivered, seen, skipped, passed, pending, total } = breakdown;
 
     const joinedCountVal = host + going;
     console.log(`[getParticipantCounts] PlanUuid: ${planUuid}`);
     console.log(`[getParticipantCounts] DB raw participants count: ${rows.length}`);
-    console.log(`[getParticipantCounts] breakdown - host: ${host}, going: ${going}, waitlist: ${waitlist}, delivered: ${delivered}, seen: ${seen}, passed: ${passed}, pending: ${pending}`);
+    console.log(`[getParticipantCounts] breakdown - host: ${host}, going: ${going}, waitlist: ${waitlist}, delivered: ${delivered}, seen: ${seen}, skipped: ${skipped}, pending: ${pending}`);
     console.log(`[getParticipantCounts] Joined count calculation (host + going): ${joinedCountVal}`);
 
-    return { host, going, waitlist, delivered, seen, passed, pending, total };
+    return { host, going, waitlist, delivered, seen, skipped, passed, pending, total };
   };
 
   const getHomeFeedPlans = (userIdStr: string) => {
     const userUuid = resolveUserUuid(userIdStr);
     const myParticipantRecords = dbPlanParticipants.filter(pp => pp.user_id === userUuid);
-
     const filtered = plans.filter(plan => {
+      if (plan.status === "cancelled") return false;
       const planUuid = plan.dbUuid || plan.id;
       const ppRecord = myParticipantRecords.find(pp => pp.plan_id === planUuid);
-      const isIncluded = ppRecord && ["delivered", "seen", "new"].includes(ppRecord.status);
-      return !!isIncluded;
+      const isIncluded = ppRecord && ["delivered", "seen", "new", "waitlist"].includes(ppRecord.status);
+      if (!isIncluded) return false;
+
+      if (plan.response_deadline_at) {
+        const deadline = new Date(plan.response_deadline_at).getTime();
+        const now = new Date().getTime();
+        if (now > deadline) {
+          return false;
+        }
+      }
+
+      return true;
     });
 
     console.log(`[PlansContext getHomeFeedPlans] Current User: ${userId}, Visible Count: ${filtered.length}, Plans:`, filtered.map(p => p.title));
@@ -781,17 +979,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return 8;
     };
 
-    const parseTimeToMinutesValue = (timeStr: string) => {
-      if (!timeStr) return 0;
-      const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
-      if (!match) return 0;
-      let hours = parseInt(match[1]);
-      const minutes = parseInt(match[2]);
-      const ampm = match[3].toUpperCase();
-      if (ampm === "PM" && hours < 12) hours += 12;
-      if (ampm === "AM" && hours === 12) hours = 0;
-      return hours * 60 + minutes;
-    };
+
 
     return filtered.sort((a, b) => {
       const secA = getTimelineSectionValue(a);
@@ -802,13 +990,14 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const dayB = getDayIndexValue(b.date);
       if (dayA !== dayB) return dayA - dayB;
 
-      return parseTimeToMinutesValue(a.time) - parseTimeToMinutesValue(b.time);
+      return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
     });
   };
 
   const getHubPlans = (userIdStr: string) => {
     // Show all plans where user is a participant (host or going) — for the Plans hub tab
     return plans.filter(plan => {
+      if (plan.status === "cancelled") return false;
       if (plan.hostId === "u_self") return true; // hosted by logged-in user
       const member = plan.members.find(
          m => m.userId === userIdStr || (m as any).userUuid === userIdStr
@@ -823,8 +1012,8 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dbPlans, setDbPlans, 
       dbPlanParticipants, setDbPlanParticipants,
       dbMemories, setDbMemories,
-      joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans, getParticipantCounts, refreshPlans,
-      acceptPlan, declinePlan, hostPay, bookNow
+      joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans, getParticipantCounts, refreshPlans, markPlanSeen, skipPlan, rejoinPlan,
+      acceptPlan, declinePlan, hostPay, bookNow, changePlanHost, cancelPlan
     }}>
       {children}
     </PlansContext.Provider>

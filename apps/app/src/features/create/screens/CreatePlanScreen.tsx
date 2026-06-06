@@ -13,6 +13,7 @@ import { InviteRecipientsStep } from "../components/active/InviteRecipientsStep"
 import { ResponseCutoffStep } from "../components/ResponseCutoffStep";
 import { CostStep } from "../components/CostStep";
 import { PlanPreviewStep } from "../components/PlanPreviewStep";
+import { calculateAttendanceSummary } from "../components/active/AttendanceSummaryCard";
 
 export function parseSpontaneousDateTimeToIso(displayString: string): string {
   const normalized = displayString.toUpperCase().trim();
@@ -82,7 +83,7 @@ export const CreatePlanScreen = ({
   const [newPlanTime, setNewPlanTime] = useState("");
   const [newPlanIsoDateTime, setNewPlanIsoDateTime] = useState("");
   const [newPlanCost, setNewPlanCost] = useState("0");
-  const [responseCutoffHours, setResponseCutoffHours] = useState<number>(2);
+  const [responseCutoffHours, setResponseCutoffHours] = useState<number>(0);
   const [customPlanNotes, setCustomPlanNotes] = useState("");
   const [newPlanUploadedImage, setNewPlanUploadedImage] = useState<string | null>(null);
 
@@ -92,7 +93,7 @@ export const CreatePlanScreen = ({
   const [selectedCircleIds, setSelectedCircleIds] = useState<string[]>([]);
   const [selectedFriendIds, setSelectedFriendIds] = useState<string[]>([]);
   const [waitlistEnabled, setWaitlistEnabled] = useState(false);
-  const [joinLimit, setJoinLimit] = useState(10);
+  const [joinLimit, setJoinLimit] = useState(3); // total going capacity INCLUDING host (min 2)
 
   // ── Experience (category metadata for submit) ─────────────
   const [selectedExperience, setSelectedExperience] = useState<{
@@ -154,12 +155,19 @@ export const CreatePlanScreen = ({
     const coverUrl = newPlanUploadedImage || selectedExperience.image || categoryCovers[selectedExperience.category] || categoryCovers.custom;
 
     const matchedCircleObj = circles.find((c) => c.id === selectedCircleIds[0]);
-    const circleUuid = audienceType === "circle" ? (matchedCircleObj?.dbUuid || null) : null;
+    const circleUuid = matchedCircleObj?.dbUuid || null;
     const parsedIsoDateTime = newPlanIsoDateTime || parseSpontaneousDateTimeToIso(timeToUse);
 
     const deadlineDate = new Date(parsedIsoDateTime);
     deadlineDate.setHours(deadlineDate.getHours() - responseCutoffHours);
     const responseDeadlineAt = deadlineDate.toISOString();
+
+    const { splitCount } = calculateAttendanceSummary({
+      invitedParticipants: invitedCount,
+      waitlistEnabled,
+      joinLimit,
+    });
+    const perPerson = costToUse > 0 ? Math.ceil(costToUse / splitCount) : 0;
 
     const created: Plan = {
       id: planId,
@@ -168,7 +176,7 @@ export const CreatePlanScreen = ({
       date: "TODAY",
       time: timeToUse,
       location: locationToUse,
-      cost: costToUse,
+      cost: perPerson,
       confirmedCount: 1,
       coverImage: coverUrl,
       creatorId: activeUserId,
@@ -198,10 +206,10 @@ export const CreatePlanScreen = ({
       ],
       timeline: "today",
       description: customPlanNotes.trim() || `Spontaneous coordination thread for ${titleToUse}`,
-      circleId: audienceType === "circle" ? selectedCircleIds[0] || null : null,
+      circleId: selectedCircleIds[0] || null,
       hostId: activeUserId,
-      groupId: audienceType === "circle" ? selectedCircleIds[0] || null : null,
-      paymentAmount: costToUse,
+      groupId: selectedCircleIds[0] || null,
+      paymentAmount: perPerson,
       status: "active",
       createdAt: new Date().toISOString(),
       waitlistEnabled,
@@ -222,8 +230,8 @@ export const CreatePlanScreen = ({
       activity_type: created.category,
       location: created.location,
       datetime: parsedIsoDateTime,
-      split_amount: created.cost,
-      payment_required: created.cost > 0,
+      split_amount: perPerson,
+      payment_required: perPerson > 0,
       status: "active" as const,
       created_at: new Date().toISOString(),
       cover_image: created.coverImage,
@@ -266,63 +274,55 @@ export const CreatePlanScreen = ({
       const participantRecords: any[] = [];
       const hostJoinedAt = new Date().toISOString();
 
-      if ((audienceType === "circle" || audienceType === "multiple") && selectedCircleIds.length > 0) {
+      const uniqueInviteeUuids = new Set<string>();
+
+      // 1. Gather members from selected circles
+      if (selectedCircleIds.length > 0) {
         const circleUuids = selectedCircleIds.map((cid) => {
           const c = freshCircles.find((x: any) => x.circle_id === cid || x.id === cid);
           return c?.id || cid;
         });
         const targetMembers = freshCircleMembers.filter((m: any) => circleUuids.includes(m.circle_id));
-        const uniqueMembersMap = new Map();
-        targetMembers.forEach((m: any) => uniqueMembersMap.set(m.user_id, m));
-        if (userProfile.dbUuid) {
-          uniqueMembersMap.set(userProfile.dbUuid, { circle_id: circleUuids[0], user_id: userProfile.dbUuid, role: "admin" });
-        }
-        Array.from(uniqueMembersMap.values()).forEach((m: any, idx) => {
-          const isHost = m.user_id === userProfile.dbUuid;
-          participantRecords.push({
-            participant_id: `PP_${Date.now()}_member_${idx}`,
-            plan_id: insertedPlanUuid,
-            user_id: m.user_id,
-            status: isHost ? "host" : "delivered",
-            payment_status: "unpaid",
-            joined_at: isHost ? hostJoinedAt : new Date().toISOString(),
-          });
-          if (!isHost) inviteeUuids.push(m.user_id);
-        });
-      } else if (audienceType === "friends" && selectedFriendIds.length > 0) {
-        participantRecords.push({
-          participant_id: `PP_${Date.now()}_self`,
-          plan_id: insertedPlanUuid,
-          user_id: userProfile.dbUuid,
-          status: "host",
-          payment_status: "paid",
-          joined_at: hostJoinedAt,
-        });
-        selectedFriendIds.forEach((fid, idx) => {
-          const freshFriendRow = freshUsers.find((u: any) => u.user_id === fid || u.id === fid);
-          const friendUuid = freshFriendRow?.id || null;
-          if (friendUuid && friendUuid !== userProfile.dbUuid && !inviteeUuids.includes(friendUuid)) {
-            inviteeUuids.push(friendUuid);
-            participantRecords.push({
-              participant_id: `PP_${Date.now()}_invitee_${idx}`,
-              plan_id: insertedPlanUuid,
-              user_id: friendUuid,
-              status: "delivered",
-              payment_status: "unpaid",
-              joined_at: new Date().toISOString(),
-            });
+        targetMembers.forEach((m: any) => {
+          if (m.user_id && m.user_id !== userProfile.dbUuid) {
+            uniqueInviteeUuids.add(m.user_id);
           }
         });
-      } else {
-        participantRecords.push({
-          participant_id: `PP_${Date.now()}_self`,
-          plan_id: insertedPlanUuid,
-          user_id: userProfile.dbUuid,
-          status: "host",
-          payment_status: "paid",
-          joined_at: hostJoinedAt,
+      }
+
+      // 2. Gather selected friends
+      if (selectedFriendIds.length > 0) {
+        selectedFriendIds.forEach((fid) => {
+          const freshFriendRow = freshUsers.find((u: any) => u.user_id === fid || u.id === fid);
+          const friendUuid = freshFriendRow?.id || null;
+          if (friendUuid && friendUuid !== userProfile.dbUuid) {
+            uniqueInviteeUuids.add(friendUuid);
+          }
         });
       }
+
+      // 3. Add host self-participant record
+      participantRecords.push({
+        participant_id: `PP_${Date.now()}_self`,
+        plan_id: insertedPlanUuid,
+        user_id: userProfile.dbUuid,
+        status: "host",
+        payment_status: "paid",
+        joined_at: hostJoinedAt,
+      });
+
+      // 4. Add all unique invitees
+      Array.from(uniqueInviteeUuids).forEach((inviteeUuid, idx) => {
+        inviteeUuids.push(inviteeUuid);
+        participantRecords.push({
+          participant_id: `PP_${Date.now()}_invitee_${idx}`,
+          plan_id: insertedPlanUuid,
+          user_id: inviteeUuid,
+          status: "delivered",
+          payment_status: "unpaid",
+          joined_at: new Date().toISOString(),
+        });
+      });
 
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const validParticipantRecords = participantRecords.filter(
@@ -399,7 +399,7 @@ export const CreatePlanScreen = ({
       setDbPlans((prev) => [dbPlanRow, ...prev]);
       if (dbPartRow) setDbPlanParticipants((prev) => [dbPartRow, ...prev]);
 
-      const matchedCircleId = audienceType === "circle" ? selectedCircleIds[0] : null;
+      const matchedCircleId = selectedCircleIds[0] || null;
       if (matchedCircleId) {
         setCircles((prev) => prev.map((c) => c.id === matchedCircleId ? { ...c, lastSpontaneousActivity: `Spawned ${titleToUse} just now` } : c));
       }
@@ -438,6 +438,46 @@ export const CreatePlanScreen = ({
     }
   };
 
+  const invitedCount = React.useMemo(() => {
+    const set = new Set<string>();
+
+    selectedCircleIds.forEach((cid) => {
+      const c = circles.find((x) => x.id === cid);
+      if (c) {
+        if (c.membersList) {
+          c.membersList.forEach((m) => {
+            if (m.userId && m.userId !== activeUserId) {
+              set.add(m.userId);
+            }
+          });
+        } else {
+          const countWithoutHost = Math.max(0, c.membersCount - 1);
+          for (let i = 0; i < countWithoutHost; i++) {
+            set.add(`fallback_member_${cid}_${i}`);
+          }
+        }
+      }
+    });
+
+    selectedFriendIds.forEach((fid) => {
+      if (fid !== activeUserId) {
+        set.add(fid);
+      }
+    });
+
+    return set.size;
+  }, [selectedCircleIds, selectedFriendIds, circles, activeUserId]);
+
+  const summaryProps = {
+    title: newPlanTitle || selectedExperience?.title || "Untitled Plan",
+    location: newPlanLocation,
+    time: newPlanTime,
+    invitedCount,
+    cost: newPlanCost,
+    waitlistEnabled,
+    joinLimit,
+  };
+
   return (
     <div id="create_tab_pane" className="space-y-5 animate-fade-in max-w-sm mx-auto">
 
@@ -459,6 +499,7 @@ export const CreatePlanScreen = ({
           selectedLocation={selectedLocation}
           setSelectedLocation={setSelectedLocation}
           setCreateFlowStep={setCreateFlowStep}
+          summary={summaryProps}
         />
       )}
 
@@ -469,6 +510,7 @@ export const CreatePlanScreen = ({
           setNewPlanTime={setNewPlanTime}
           setNewPlanIsoDateTime={setNewPlanIsoDateTime}
           setCreateFlowStep={setCreateFlowStep}
+          summary={summaryProps}
         />
       )}
 
@@ -495,7 +537,8 @@ export const CreatePlanScreen = ({
           setJoinLimit={setJoinLimit}
           onBack={() => setCreateFlowStep("DATETIME")}
           onNext={() => setCreateFlowStep("RESPONSE_CUTOFF")}
-          hideWaitlist={true}
+          hideWaitlist={false}
+          summary={summaryProps}
         />
       )}
 
@@ -506,6 +549,7 @@ export const CreatePlanScreen = ({
           setResponseCutoffHours={setResponseCutoffHours}
           newPlanIsoDateTime={newPlanIsoDateTime}
           setCreateFlowStep={setCreateFlowStep}
+          summary={summaryProps}
         />
       )}
 
@@ -521,6 +565,10 @@ export const CreatePlanScreen = ({
           selectedCircleIds={selectedCircleIds}
           selectedFriendIds={selectedFriendIds}
           circles={circles}
+          waitlistEnabled={waitlistEnabled}
+          joinLimit={joinLimit}
+          activeUserId={activeUserId}
+          summary={summaryProps}
         />
       )}
 
@@ -547,6 +595,10 @@ export const CreatePlanScreen = ({
           onBack={() => setCreateFlowStep("COST")}
           responseCutoffHours={responseCutoffHours}
           newPlanIsoDateTime={newPlanIsoDateTime}
+          waitlistEnabled={waitlistEnabled}
+          joinLimit={joinLimit}
+          activeUserId={activeUserId}
+          summary={summaryProps}
         />
       )}
     </div>

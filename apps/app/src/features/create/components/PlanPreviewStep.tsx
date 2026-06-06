@@ -1,6 +1,8 @@
 import React from "react";
 import { ArrowLeft, ChevronRight, MapPin, Clock, Users, IndianRupee, Sparkles } from "lucide-react";
 import { CreatePlanCTAButton } from "./active/CreatePlanCTAButton";
+import { PlanSummary } from "./active/PlanSummary";
+import { calculateAttendanceSummary } from "./active/AttendanceSummaryCard";
 
 type CreateStep = "WHAT" | "LOCATION" | "DATETIME" | "WHO" | "RESPONSE_CUTOFF" | "COST" | "REVIEW";
 
@@ -9,6 +11,7 @@ interface CircleItem {
   name: string;
   membersCount: number;
   avatars: string[];
+  membersList?: { userId: string }[];
 }
 
 interface PlanPreviewStepProps {
@@ -32,6 +35,18 @@ interface PlanPreviewStepProps {
   onBack?: () => void;
   responseCutoffHours?: number;
   newPlanIsoDateTime?: string;
+  waitlistEnabled?: boolean;
+  joinLimit?: number;
+  activeUserId?: string | null;
+  summary?: {
+    title: string;
+    location?: string;
+    time?: string;
+    invitedCount: number;
+    cost: string;
+    waitlistEnabled?: boolean;
+    joinLimit?: number;
+  };
 }
 
 const CATEGORY_EMOJI: Record<string, string> = {
@@ -76,6 +91,10 @@ export const PlanPreviewStep = ({
   onBack,
   responseCutoffHours = 2,
   newPlanIsoDateTime,
+  waitlistEnabled = false,
+  joinLimit = 0,
+  activeUserId = null,
+  summary,
 }: PlanPreviewStepProps) => {
   const category = selectedExperience?.category ?? "custom";
   const emoji = CATEGORY_EMOJI[category] ?? "✨";
@@ -88,34 +107,60 @@ export const PlanPreviewStep = ({
 
   // Build people summary
   const invitedCount = React.useMemo(() => {
-    if (audienceType === "friends") return selectedFriendIds.length;
-    return selectedCircleIds.reduce((sum, cid) => {
+    const set = new Set<string>();
+
+    selectedCircleIds.forEach((cid) => {
       const c = circles.find((x) => x.id === cid);
-      return sum + (c ? c.membersCount : 0);
-    }, 0);
-  }, [audienceType, selectedFriendIds, selectedCircleIds, circles]);
+      if (c) {
+        if (c.membersList) {
+          c.membersList.forEach((m) => {
+            if (m.userId && m.userId !== activeUserId) {
+              set.add(m.userId);
+            }
+          });
+        } else {
+          const countWithoutHost = Math.max(0, c.membersCount - 1);
+          for (let i = 0; i < countWithoutHost; i++) {
+            set.add(`fallback_member_${cid}_${i}`);
+          }
+        }
+      }
+    });
+
+    selectedFriendIds.forEach((fid) => {
+      if (fid !== activeUserId) {
+        set.add(fid);
+      }
+    });
+
+    return set.size;
+  }, [selectedCircleIds, selectedFriendIds, circles, activeUserId]);
 
   const peopleSummary = React.useMemo(() => {
-    if (audienceType === "friends" && selectedFriendIds.length > 0) {
-      const names = selectedFriendIds
-        .slice(0, 3)
-        .map((fid) => dbUsers.find((u) => u.user_id === fid)?.full_name ?? fid)
-        .join(", ");
-      return selectedFriendIds.length > 3 ? `${names} +${selectedFriendIds.length - 3} more` : names;
-    }
-    if ((audienceType === "circle" || audienceType === "multiple") && selectedCircleIds.length > 0) {
+    const parts: string[] = [];
+    if (selectedCircleIds.length > 0) {
       const names = selectedCircleIds
-        .slice(0, 2)
-        .map((cid) => circles.find((c) => c.id === cid)?.name ?? cid)
-        .join(", ");
-      return selectedCircleIds.length > 2 ? `${names} +${selectedCircleIds.length - 2} more` : names;
+        .map((cid) => circles.find((c) => c.id === cid)?.name ?? cid);
+      parts.push(...names);
     }
-    return "No one added yet";
-  }, [audienceType, selectedFriendIds, selectedCircleIds, circles, dbUsers]);
+    if (selectedFriendIds.length > 0) {
+      const names = selectedFriendIds
+        .map((fid) => dbUsers.find((u) => u.user_id === fid)?.full_name ?? fid);
+      parts.push(...names);
+    }
+    if (parts.length === 0) return "No one added yet";
+    const sliceCount = 3;
+    const sliced = parts.slice(0, sliceCount).join(", ");
+    return parts.length > sliceCount ? `${sliced} +${parts.length - sliceCount} more` : sliced;
+  }, [selectedFriendIds, selectedCircleIds, circles, dbUsers]);
 
   const totalCost = parseFloat(newPlanCost) || 0;
-  const denominator = invitedCount > 0 ? invitedCount + 1 : 1;
-  const perPerson = totalCost > 0 ? Math.ceil(totalCost / denominator) : 0;
+  const { splitCount } = calculateAttendanceSummary({
+    invitedParticipants: invitedCount,
+    waitlistEnabled,
+    joinLimit,
+  });
+  const perPerson = totalCost > 0 ? Math.ceil(totalCost / splitCount) : 0;
 
   // Calculate deadline date and format
   const deadlineStr = React.useMemo(() => {
@@ -157,19 +202,19 @@ export const PlanPreviewStep = ({
     },
     {
       icon: <Users className="w-3.5 h-3.5" />,
-      label: "People",
+      label: "Invited People",
       value: peopleSummary,
       step: "WHO",
     },
     {
       icon: <Clock className="w-3.5 h-3.5 text-amber-500" />,
-      label: `Responses Close (${responseCutoffHours}h before plan)`,
+      label: "Response Deadline",
       value: deadlineStr,
       step: "RESPONSE_CUTOFF",
     },
     {
       icon: <IndianRupee className="w-3.5 h-3.5" />,
-      label: totalCost > 0 ? `₹${totalCost} total  ·  ₹${perPerson}/person` : "Cost",
+      label: totalCost > 0 ? `₹${totalCost} total  ·  ₹${perPerson} each` : "Cost",
       value: totalCost > 0 ? "" : "Free hang",
       step: "COST",
       highlight: totalCost > 0,
@@ -188,94 +233,78 @@ export const PlanPreviewStep = ({
         <span>Back</span>
       </button>
 
+      {summary && (
+        <PlanSummary
+          title={summary.title}
+          location={summary.location}
+          time={summary.time}
+          invitedCount={summary.invitedCount}
+          cost={summary.cost}
+          waitlistEnabled={summary.waitlistEnabled}
+          joinLimit={summary.joinLimit}
+        />
+      )}
+
       <div className="space-y-1">
         <h2 className="text-xl font-bold font-sans text-white flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-brand-peach" /> Review Plan
         </h2>
       </div>
 
-      {/* Plan Title Input */}
-      <div className="space-y-2 bg-zinc-950/40 border border-zinc-900/60 rounded-2xl p-4">
-        <label className="text-[10px] font-mono uppercase tracking-wider text-brand-peach block font-bold">
-          Plan Title
-        </label>
-        <input
-          type="text"
-          placeholder={placeholder}
-          value={newPlanTitle}
-          onChange={(e) => setNewPlanTitle(e.target.value)}
-          className="w-full bg-transparent border-b border-zinc-850 focus:border-brand-peach py-2 text-base text-zinc-100 placeholder-zinc-700 focus:outline-none transition-colors"
-          autoFocus={!newPlanTitle}
-        />
-        <p className="text-[10px] text-zinc-500 font-sans">
-          Give your plan a clear name.
-        </p>
-      </div>
-
-      {/* Cover art */}
-      <div className="relative w-full h-24 rounded-2xl overflow-hidden border border-zinc-900">
-        <img src={coverImage} alt="cover" className="w-full h-full object-cover opacity-55" referrerPolicy="no-referrer" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-        <div className="absolute bottom-2.5 left-3.5 flex items-center gap-2">
-          <span className="text-lg">{emoji}</span>
-          <span className="text-sm font-bold text-white uppercase tracking-wider">{newPlanTitle || "Untitled"}</span>
-        </div>
-        <label className="absolute top-2.5 right-2.5 text-[8px] font-mono text-brand-peach cursor-pointer bg-black/50 border border-brand-peach/30 px-2 py-1 rounded-lg">
+      {/* Unified Plan Preview Card */}
+      <div className="bg-zinc-950/60 border border-zinc-900 rounded-3xl overflow-hidden divide-y divide-zinc-900/40">
+        {/* Plan Title Input */}
+        <div className="space-y-1 p-4 bg-zinc-950/20">
+          <label className="text-[9px] font-mono uppercase tracking-wider text-brand-peach/80 block font-bold">
+            Plan Title
+          </label>
           <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                const reader = new FileReader();
-                reader.onload = () => {
-                  if (typeof reader.result === "string") setNewPlanUploadedImage(reader.result);
-                };
-                reader.readAsDataURL(file);
-              }
-            }}
+            type="text"
+            placeholder={placeholder}
+            value={newPlanTitle}
+            onChange={(e) => setNewPlanTitle(e.target.value)}
+            className="w-full bg-transparent border-b border-zinc-850/80 focus:border-brand-peach py-1 text-lg font-bold text-zinc-100 placeholder-zinc-700 focus:outline-none transition-colors"
+            autoFocus={!newPlanTitle}
           />
-          📷 Cover
-        </label>
-      </div>
-
-      {/* Editable summary rows */}
-      <div className="bg-zinc-950/60 border border-zinc-900 rounded-3xl overflow-hidden divide-y divide-zinc-900/60">
-        {rows.map((row, idx) => (
-          <button
-            key={idx}
-            type="button"
-            onClick={() => setCreateFlowStep(row.step)}
-            className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-zinc-900/40 transition-colors group"
-          >
-            <span className={`shrink-0 ${row.highlight ? "text-brand-peach" : "text-zinc-500"}`}>
-              {row.icon}
-            </span>
-            <div className="flex-1 min-w-0">
-              <span className={`block text-xs font-semibold truncate ${row.highlight ? "text-brand-peach" : "text-zinc-200"}`}>
-                {row.label}
-              </span>
-              {row.value && (
-                <span className="block text-[10px] text-zinc-500 font-mono truncate mt-0.5">{row.value}</span>
-              )}
-            </div>
-            <ChevronRight className="w-3.5 h-3.5 text-zinc-700 group-hover:text-zinc-400 shrink-0 transition-colors" />
-          </button>
-        ))}
-      </div>
-
-      {/* Notes preview */}
-      {customPlanNotes.trim() && (
-        <div className="bg-zinc-950/60 border border-zinc-900 rounded-2xl px-4 py-3">
-          <span className="text-[8px] font-mono text-zinc-600 uppercase tracking-wider block mb-1">Note</span>
-          <p className="text-[11px] text-zinc-400 italic font-serif leading-relaxed">"{customPlanNotes.trim()}"</p>
         </div>
-      )}
+
+        {/* Editable summary rows */}
+        <div className="divide-y divide-zinc-900/40">
+          {rows.map((row, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setCreateFlowStep(row.step)}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-zinc-900/40 transition-colors group"
+            >
+              <span className={`shrink-0 ${row.highlight ? "text-brand-peach" : "text-zinc-500"}`}>
+                {row.icon}
+              </span>
+              <div className="flex-1 min-w-0">
+                <span className={`block text-xs font-semibold truncate ${row.highlight ? "text-brand-peach" : "text-zinc-200"}`}>
+                  {row.label}
+                </span>
+                {row.value && (
+                  <span className="block text-[10px] text-zinc-550 font-mono truncate mt-0.5">{row.value}</span>
+                )}
+              </div>
+              <ChevronRight className="w-3.5 h-3.5 text-zinc-700 group-hover:text-zinc-400 shrink-0 transition-colors" />
+            </button>
+          ))}
+        </div>
+
+        {/* Notes preview */}
+        {customPlanNotes.trim() && (
+          <div className="px-4 py-3 bg-zinc-950/20">
+            <span className="text-[8px] font-mono text-zinc-600 uppercase tracking-wider block mb-1">Note</span>
+            <p className="text-[11px] text-zinc-400 italic font-serif leading-relaxed">"{customPlanNotes.trim()}"</p>
+          </div>
+        )}
+      </div>
 
       <CreatePlanCTAButton
         id="host_plan_submit_btn"
-        text={isSubmitting ? "POSTING..." : "POST PLAN →"}
+        text={isSubmitting ? "POSTING..." : "POST PLAN"}
         onPress={handleHostPlanSubmit}
         disabled={isSubmitting || newPlanTitle.trim().length === 0}
         loading={isSubmitting}
@@ -284,3 +313,4 @@ export const PlanPreviewStep = ({
     </div>
   );
 };
+

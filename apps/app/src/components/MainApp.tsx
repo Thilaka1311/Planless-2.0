@@ -31,7 +31,7 @@ interface MainAppProps {
 
 export default function MainApp({ userProfile, onLogout, activeUserId }: MainAppProps) {
   // --- Decoupled Context Stores ---
-  const { plans, setPlans, dbPlans, setDbPlans, dbPlanParticipants, setDbPlanParticipants, dbMemories, setDbMemories, joinPlan, waitlistPlan } = usePlansStore();
+  const { plans, setPlans, dbPlans, setDbPlans, dbPlanParticipants, setDbPlanParticipants, dbMemories, setDbMemories, joinPlan, waitlistPlan, passPlan } = usePlansStore();
   const { dbUsers, setDbUsers, setDbUserData, updateProfile, activeUserUuid } = useProfileStore();
   const { circles, setCircles, dbCircles, setDbCircles, dbCircleMembers, setDbCircleMembers } = useCirclesStore();
   const { walletBalance, setWalletBalance, transactions, setTransactions, dbTransactions, setDbTransactions, refreshTransactions } = useWalletStore();
@@ -416,7 +416,7 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   };
 
   // Syncing countdown timers
-  const upcomingCirclePlans = plans.filter(p => !p.isHappened);
+  const upcomingCirclePlans = plans.filter(p => !p.isHappened && p.status !== "cancelled");
 
   // Resolve current user's UUID
   const meUserObj = dbUsers.find(u => u.user_id === activeUserId);
@@ -436,6 +436,7 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   })));
 
   const discoverablePlans = plans.filter(p => {
+    if (p.status === "cancelled") return false;
     const planUuid = p.dbUuid || p.id;
     const ppRecord = myParticipantRecords.find(pp => pp.plan_id === planUuid);
 
@@ -445,15 +446,24 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
     }
 
     const status = ppRecord.status;
-    const isIncluded = ["delivered", "seen", "new"].includes(status);
+    const isIncluded = ["delivered", "seen", "new", "waitlist"].includes(status);
 
-    if (isIncluded) {
-      console.log(`[Home Screen Filter] Plan returned to Home - Plan ID: ${planUuid} ("${p.title}")`);
-    } else {
-      console.log(`[Home Screen Filter] Filtered out Plan ID: ${planUuid} ("${p.title}") - Reason: status is "${status}" (not delivered/seen/new)`);
+    if (!isIncluded) {
+      console.log(`[Home Screen Filter] Filtered out Plan ID: ${planUuid} ("${p.title}") - Reason: status is "${status}" (not delivered/seen/new/waitlist - host excluded)`);
+      return false;
     }
 
-    return isIncluded;
+    if (p.response_deadline_at) {
+      const deadline = new Date(p.response_deadline_at).getTime();
+      const now = new Date().getTime();
+      if (now > deadline) {
+        console.log(`[Home Screen Filter] Filtered out Plan ID: ${planUuid} ("${p.title}") - Reason: Deadline has passed (${p.response_deadline_at})`);
+        return false;
+      }
+    }
+
+    console.log(`[Home Screen Filter] Plan returned to Home - Plan ID: ${planUuid} ("${p.title}")`);
+    return true;
   });
 
   // Log visible plans
@@ -651,11 +661,8 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
           selectedPlan={selectedPlan}
           onClose={() => setSelectedPlan(null)}
           userProfile={userProfile}
-          reminderSentPlanIds={reminderSentPlanIds}
-          passedByPlanId={passedByPlanId}
-          setReminderSentPlanIds={setReminderSentPlanIds}
-          setPassedByPlanId={setPassedByPlanId}
           triggerToast={triggerToast}
+          activeUserId={activeUserId}
         />
       )}
 

@@ -3,6 +3,7 @@ import { ChevronRight, Check, X, CreditCard } from "lucide-react";
 import { motion } from "motion/react";
 import { Plan } from "../../../core/types";
 import { getDeadlineText } from "../../../lib/mappers";
+import { normalizeStatus, parseTimeToMinutes } from "../../../lib/participantStatus";
 import { usePlansStore } from "../state/PlansContext";
 import { useProfileStore } from "../../profile/state/ProfileContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
@@ -19,7 +20,7 @@ export const PlansScreen = ({
   const { plans, dbPlans, dbPlanParticipants, acceptPlan, declinePlan, hostPay, bookNow, getParticipantCounts } = usePlansStore();
   const { userProfile, activeUserId } = useProfileStore();
   const { circles } = useCirclesStore();
-  const [pendingAction, setPendingAction] = useState<Record<string, "accepting" | "declining" | "paying">>({});
+  const [pendingAction, setPendingAction] = useState<Record<string, "joining" | "skipping" | "paying">>({});
 
   const [plansFilter, setPlansFilter] = useState<"all" | "going" | "waitlist" | "passed" | "hosted">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -45,17 +46,7 @@ export const PlansScreen = ({
     return "This Week";
   };
 
-  const parseTimeToMinutes = (timeStr: string) => {
-    if (!timeStr) return 0;
-    const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
-    if (!match) return 0;
-    let hours = parseInt(match[1]);
-    const minutes = parseInt(match[2]);
-    const ampm = match[3].toUpperCase();
-    if (ampm === "PM" && hours < 12) hours += 12;
-    if (ampm === "AM" && hours === 12) hours = 0;
-    return hours * 60 + minutes;
-  };
+
 
   const getDayIndex = (dateStr: string) => {
     const d = dateStr.toUpperCase();
@@ -73,6 +64,7 @@ export const PlansScreen = ({
   console.log(`[PlansScreen Visibility Filter] Current user UUID: "${userUuid}"`);
 
   const involvedPlans = plans.filter(p => {
+    if (p.status === "cancelled") return false;
     // A user is involved if they are in the plan's members list matching by UUID
     const isParticipant = p.members.some(
       m => m.userUuid && m.userUuid === userUuid
@@ -103,26 +95,26 @@ export const PlansScreen = ({
     const myParticipant = dbPlanParticipants.find(
       (pp) => pp.plan_id === p.id && pp.user_id === userUuid
     );
-    const isGoing = myParticipant?.status === "going";
-    const isWaitlisted =
-      myParticipant?.status === "waitlist" ||
-      (p.waitlistUsers || []).some((u) => u.name === userProfile.name) ||
-      (p.interestedUsers || []).some((u) => u.name === userProfile.name);
+    const myStatus = normalizeStatus(myParticipant?.status);
+    const isSkipped = myStatus === "skipped";
+    const isGoing = myStatus === "going";
+    const isWaitlisted = myStatus === "waitlist";
     const isHosted = p.creatorId === "u_self" || p.creatorName === userProfile.name;
     const autoPassed = (passedByPlanId[p.id] || []).includes(userProfile.name);
 
     let match = false;
-    if (plansFilter === "going") match = isGoing && !p.isHappened && !autoPassed;
-    else if (plansFilter === "waitlist") match = isWaitlisted && !p.isHappened;
+    if (plansFilter === "going") match = isGoing && !p.isHappened && !autoPassed && !isSkipped;
+    else if (plansFilter === "waitlist") match = isWaitlisted && !p.isHappened && !isSkipped;
     else if (plansFilter === "passed") {
+      // Passed = explicitly skipped by user OR auto-passed OR historically joined
       const historicallyJoined = p.isHappened && (isGoing || isWaitlisted);
-      match = autoPassed || historicallyJoined;
+      match = isSkipped || autoPassed || historicallyJoined;
     }
     else if (plansFilter === "hosted") match = isHosted;
 
     console.log(`[PlansScreen Tab Classification] Plan: "${p.title}"`);
-    console.log(`- Participant status from DB: ${myParticipant?.status || "none"}`);
-    console.log(`- Flags: isGoing=${isGoing}, isWaitlisted=${isWaitlisted}, isHosted=${isHosted}, isHappened=${p.isHappened}`);
+    console.log(`- Participant status from DB: ${myStatus || "none"}`);
+    console.log(`- Flags: isSkipped=${isSkipped}, isGoing=${isGoing}, isWaitlisted=${isWaitlisted}, isHosted=${isHosted}, isHappened=${p.isHappened}`);
     console.log(`- Tab Filter: "${plansFilter}" -> Classification Result: ${match}`);
 
     return match;
@@ -237,14 +229,12 @@ export const PlansScreen = ({
     let badge = getStatusBadge(plansFilter);
     if (!badge) {
       const myPp = dbPlanParticipants.find((pp) => pp.plan_id === plan.id && pp.user_id === activeUserId);
-      const isGoing = myPp?.status === "going";
-      const isWait =
-        myPp?.status === "waitlist" ||
-        (plan.waitlistUsers || []).some((u) => u.name === userProfile.name) ||
-        (plan.interestedUsers || []).some((u) => u.name === userProfile.name);
+      const myNormalizedStatus = normalizeStatus(myPp?.status);
+      const isGoing = myNormalizedStatus === "going";
+      const isWait = myNormalizedStatus === "waitlist";
       const isHosted = plan.creatorId === "u_self" || plan.creatorName === userProfile.name;
       const isPassed =
-        (passedByPlanId[plan.id] || []).includes(userProfile.name) || (plan.isHappened && (isGoing || isWait));
+        (passedByPlanId[plan.id] || []).includes(userProfile.name) || (plan.isHappened && (isGoing || isWait)) || myNormalizedStatus === "skipped";
       if (isPassed) badge = getStatusBadge("passed");
       else if (isHosted) badge = getStatusBadge("hosted");
       else if (isGoing) badge = getStatusBadge("going");
@@ -368,7 +358,7 @@ export const PlansScreen = ({
             )}
             {isAccepted && !isConfirmed && !isPaid && (
               <span className="text-[8px] font-mono font-black uppercase tracking-wider px-2 py-0.5 rounded-full border bg-emerald-500/15 border-emerald-500/40 text-emerald-300">
-                Accepted ✓
+                Joined ✓
               </span>
             )}
             {isConfirmed && !isPaid && (
@@ -405,16 +395,16 @@ export const PlansScreen = ({
           </div>
         </div>
 
-        {/* ── Accept / Decline action row (for delivered/pending invitations) ── */}
+        {/* ── Join / Skip action row (for delivered/pending invitations) ── */}
         {isDelivered && !isAccepted && (
           isDeadlinePassed ? (
             <div className="flex flex-col items-center gap-1.5 px-3.5 pb-3.5 w-full">
               <div className="flex gap-2 w-full">
                 <button disabled className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-zinc-900/50 border border-zinc-800/60 text-zinc-600 text-[10px] font-black font-mono uppercase tracking-widest opacity-50 cursor-not-allowed">
-                  <Check className="w-3.5 h-3.5" /> Accept
+                  <Check className="w-3.5 h-3.5" /> Join
                 </button>
                 <button disabled className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-zinc-900/50 border border-zinc-800/60 text-zinc-600 text-[10px] font-black font-mono uppercase tracking-widest opacity-50 cursor-not-allowed">
-                  <X className="w-3.5 h-3.5" /> Decline
+                  <X className="w-3.5 h-3.5" /> Skip
                 </button>
               </div>
               <span className="text-[9px] font-mono text-amber-500 uppercase tracking-widest font-extrabold pt-1">
@@ -427,42 +417,54 @@ export const PlansScreen = ({
               className="flex gap-2 px-3.5 pb-3.5 animate-fade-in w-full"
             >
               <button
-                id={`accept_btn_${plan.id}`}
+                id={`join_btn_${plan.id}`}
                 onClick={async (e) => {
                   e.stopPropagation();
                   if (isBusy || !userProfile) return;
-                  setPendingAction((p) => ({ ...p, [actionKey]: "accepting" }));
-                  await acceptPlan(plan.id, userProfile);
-                  setPendingAction((p) => { const n = { ...p }; delete n[actionKey]; return n; });
+                  setPendingAction((p) => ({ ...p, [actionKey]: "joining" }));
+                  try {
+                    await acceptPlan(plan.id, userProfile);
+                  } catch (err) {
+                    console.error("Failed to join plan:", err);
+                    alert("Failed to join plan. Please try again.");
+                  } finally {
+                    setPendingAction((p) => { const n = { ...p }; delete n[actionKey]; return n; });
+                  }
                 }}
                 disabled={isBusy}
                 className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-500/12 border border-emerald-500/25 hover:bg-emerald-500/20 active:scale-[0.97] transition-all text-emerald-400 text-[10px] font-black font-mono uppercase tracking-widest cursor-pointer disabled:opacity-50"
               >
-                {pendingAction[actionKey] === "accepting" ? (
+                {pendingAction[actionKey] === "joining" ? (
                   <span className="animate-spin text-xs">⟳</span>
                 ) : (
                   <Check className="w-3.5 h-3.5" />
                 )}
-                Accept
+                Join
               </button>
               <button
-                id={`decline_btn_${plan.id}`}
+                id={`skip_btn_${plan.id}`}
                 onClick={async (e) => {
                   e.stopPropagation();
                   if (isBusy || !userProfile) return;
-                  setPendingAction((p) => ({ ...p, [actionKey]: "declining" }));
-                  await declinePlan(plan.id, userProfile);
-                  setPendingAction((p) => { const n = { ...p }; delete n[actionKey]; return n; });
+                  setPendingAction((p) => ({ ...p, [actionKey]: "skipping" }));
+                  try {
+                    await declinePlan(plan.id, userProfile);
+                  } catch (err) {
+                    console.error("Failed to skip plan:", err);
+                    alert("Failed to skip plan. Please try again.");
+                  } finally {
+                    setPendingAction((p) => { const n = { ...p }; delete n[actionKey]; return n; });
+                  }
                 }}
                 disabled={isBusy}
                 className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-rose-500/12 border border-rose-500/25 hover:bg-rose-500/20 active:scale-[0.97] transition-all text-rose-400 text-[10px] font-black font-mono uppercase tracking-widest cursor-pointer disabled:opacity-50"
               >
-                {pendingAction[actionKey] === "declining" ? (
+                {pendingAction[actionKey] === "skipping" ? (
                   <span className="animate-spin text-xs">⟳</span>
                 ) : (
                   <X className="w-3.5 h-3.5" />
                 )}
-                Decline
+                Skip
               </button>
             </div>
           )
@@ -492,7 +494,7 @@ export const PlansScreen = ({
               ) : (
                 <CreditCard className="w-3 h-3" />
               )}
-              PAY NOW — Split with all {plan.members.filter(m => m.joinState !== "host").length} people
+              PAY NOW — Split with all {plan.members.filter(m => m.joinState === "going").length} people
             </button>
           </div>
         )}
@@ -573,19 +575,18 @@ export const PlansScreen = ({
               const myParticipant = dbPlanParticipants.find(
                 (pp) => pp.plan_id === p.id && pp.user_id === userUuid
               );
-              const isGoing = myParticipant?.status === "going";
-              const isWaitlisted =
-                myParticipant?.status === "waitlist" ||
-                (p.waitlistUsers || []).some((u) => u.name === userProfile.name) ||
-                (p.interestedUsers || []).some((u) => u.name === userProfile.name);
+              const segStatus = normalizeStatus(myParticipant?.status);
+              const isSkipped = segStatus === "skipped";
+              const isGoing = segStatus === "going";
+              const isWaitlisted = segStatus === "waitlist";
               const isHosted = p.creatorId === "u_self" || p.creatorName === userProfile.name;
               const autoPassed = (passedByPlanId[p.id] || []).includes(userProfile.name);
 
-              if (seg.key === "going") return isGoing && !p.isHappened && !autoPassed;
-              if (seg.key === "waitlist") return isWaitlisted && !p.isHappened;
+              if (seg.key === "going") return isGoing && !p.isHappened && !autoPassed && !isSkipped;
+              if (seg.key === "waitlist") return isWaitlisted && !p.isHappened && !isSkipped;
               if (seg.key === "passed") {
                 const historicallyJoined = p.isHappened && (isGoing || isWaitlisted);
-                return autoPassed || historicallyJoined;
+                return isSkipped || autoPassed || historicallyJoined;
               }
               if (seg.key === "hosted") return isHosted;
               return false;

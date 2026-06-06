@@ -275,7 +275,7 @@ export const ProfileScreen = ({
             <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
               <span className="text-[16px]">👥</span>
               <h3 className="text-base font-display font-black text-white leading-none">
-                {plans.filter(p => p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).length}
+                {plans.filter(p => p.status !== "cancelled" && p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).length}
               </h3>
               <p className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">Plans Join</p>
             </div>
@@ -313,13 +313,13 @@ export const ProfileScreen = ({
               </span>
             </div>
 
-            {plans.filter(p => p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).length === 0 ? (
+            {plans.filter(p => p.status !== "cancelled" && p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).length === 0 ? (
               <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-5 text-center text-zinc-500 text-xs font-sans">
                 Your completed spontaneous meets will stack here. Go to plans to archive!
               </div>
             ) : (
               <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1 snap-x">
-                {plans.filter(p => p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).map(p => (
+                {plans.filter(p => p.status !== "cancelled" && p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).map(p => (
                   <div
                     key={p.id}
                     onClick={() => setSelectedPlan(p)}
@@ -719,7 +719,7 @@ export const ProfileScreen = ({
             </h3>
 
             {(() => {
-              const activePaidPlans = plans.filter(p => p.cost > 0 && p.joinedUsers.some(u => u.name === userProfile.name));
+              const activePaidPlans = plans.filter(p => p.status !== "cancelled" && p.cost > 0 && p.joinedUsers.some(u => u.name === userProfile.name));
               if (activePaidPlans.length === 0) {
                 return (
                   <p className="text-[10px] text-zinc-500 italic p-3 text-center bg-zinc-950 rounded-2xl border border-zinc-900">

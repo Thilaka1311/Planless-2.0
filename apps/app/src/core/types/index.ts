@@ -96,7 +96,7 @@ export interface DbPlanParticipant {
   participant_id: string; // text unique
   plan_id: string; // uuid referencing plans.id
   user_id: string; // uuid referencing users.id
-  status: "new" | "going" | "waitlist" | "passed" | string;
+  status: "new" | "going" | "waitlist" | "passed" | "seen" | "skipped" | string;
   payment_status: "paid" | "unpaid" | string;
   joined_at: string;
 }

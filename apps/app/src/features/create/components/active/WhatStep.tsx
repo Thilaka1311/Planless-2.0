@@ -3,7 +3,7 @@ import { CreatePlanCTAButton } from "./CreatePlanCTAButton";
 
 interface WhatStepProps {
   selectedActivity: string | null;
-  setSelectedActivity: (activity: string) => void;
+  setSelectedActivity: (activity: string | null) => void;
   setCreateFlowStep: (step: any) => void;
   setSelectedExperience: (exp: any) => void;
 }
@@ -25,7 +25,7 @@ const ACTIVITIES: ActivityOption[] = [
     id: "Sports",
     label: "Sports & Games",
     emoji: "⚽",
-    description: "Football, badminton, basketball — coordinate a match",
+    description: "Coordinate a Match",
     gradient: "from-emerald-950/60 to-emerald-900/20",
     accentColor: "border-emerald-700/50 text-emerald-300",
     defaultTitle: "Sports Match",
@@ -36,7 +36,7 @@ const ACTIVITIES: ActivityOption[] = [
     id: "Movies",
     label: "Movies & Shows",
     emoji: "🎬",
-    description: "Cinema trips and watch parties",
+    description: "For those Late Night Shows",
     gradient: "from-violet-950/60 to-violet-900/20",
     accentColor: "border-violet-700/50 text-violet-300",
     defaultTitle: "Movie Night",
@@ -47,7 +47,7 @@ const ACTIVITIES: ActivityOption[] = [
     id: "Dining",
     label: "Dining & Drinks",
     emoji: "🍽️",
-    description: "Cafes, restaurants, pub crawls",
+    description: "Good Food, Great Mood",
     gradient: "from-amber-950/60 to-amber-900/20",
     accentColor: "border-amber-700/50 text-amber-300",
     defaultTitle: "Dinner Plans",
@@ -58,7 +58,7 @@ const ACTIVITIES: ActivityOption[] = [
     id: "Custom",
     label: "Custom Plan",
     emoji: "✨",
-    description: "Create anything from scratch",
+    description: "Literally just GO OUT!",
     gradient: "from-zinc-950/60 to-zinc-900/20",
     accentColor: "border-zinc-700/50 text-zinc-300",
     defaultTitle: "Custom Hangout",
@@ -74,29 +74,33 @@ export const WhatStep = ({
   setSelectedExperience,
 }: WhatStepProps) => {
   const handleSelect = (activity: ActivityOption) => {
-    setSelectedActivity(activity.id);
-    setSelectedExperience({
-      id: `exp_${activity.id.toLowerCase()}`,
-      title: activity.defaultTitle,
-      category: activity.category,
-      tag: activity.id.toUpperCase(),
-      description: activity.description,
-      time: "TODAY • 8:30 PM",
-      venue: "",
-      price: 0,
-      image: activity.defaultImage,
-    });
+    if (selectedActivity === activity.id) {
+      setSelectedActivity(null);
+      setSelectedExperience(null);
+    } else {
+      setSelectedActivity(activity.id);
+      setSelectedExperience({
+        id: `exp_${activity.id.toLowerCase()}`,
+        title: activity.defaultTitle,
+        category: activity.category,
+        tag: activity.id.toUpperCase(),
+        description: activity.description,
+        time: "TODAY • 8:30 PM",
+        venue: "",
+        price: 0,
+        image: activity.defaultImage,
+      });
+    }
   };
 
   return (
-    <div className="space-y-6 animate-fade-in text-left flex flex-col justify-between min-h-[520px]">
-      <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in text-left flex flex-col justify-between h-[550px]">
+      <div className="space-y-5">
         <div>
           <h2 className="text-xl font-bold font-sans text-white">What are you doing?</h2>
-          <p className="text-xs text-zinc-500 font-mono mt-1">SELECT AN ACTIVITY</p>
         </div>
 
-        <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
           {ACTIVITIES.map((activity) => {
             const isSelected = selectedActivity === activity.id;
             return (
@@ -104,29 +108,25 @@ export const WhatStep = ({
                 key={activity.id}
                 type="button"
                 onClick={() => handleSelect(activity)}
-                className={`w-full p-4 rounded-xl border text-left transition-all duration-300 relative group overflow-hidden bg-gradient-to-br ${
-                  activity.gradient
-                } ${
-                  isSelected
-                    ? `${activity.accentColor} shadow-lg scale-[1.01]`
-                    : "border-zinc-800 hover:border-zinc-700 bg-zinc-950/40 hover:bg-zinc-900/20"
-                }`}
+                className={`p-3.5 rounded-2xl border text-center transition-all duration-300 relative group overflow-hidden bg-gradient-to-br ${activity.gradient
+                  } ${isSelected
+                    ? "border-[#ff5e3a] bg-[#ff5e3a]/10 shadow-[0_0_12px_rgba(255,94,58,0.15)] scale-[1.01]"
+                    : "border-zinc-850 hover:border-zinc-800 bg-zinc-950/40 hover:bg-zinc-900/10"
+                  } flex flex-col items-center justify-center gap-2.5 aspect-square cursor-pointer`}
               >
                 {isSelected && (
-                  <div className="absolute top-4 right-4 w-5 h-5 bg-[#ff5e3a] rounded-full flex items-center justify-center animate-fade-in shadow-md">
+                  <div className="absolute top-2 right-2 w-4.5 h-4.5 bg-[#ff5e3a] rounded-full flex items-center justify-center animate-scale-in shadow-sm">
                     <svg viewBox="0 0 10 10" fill="none" className="w-2.5 h-2.5">
-                      <path d="M2 5l2 2 4-4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M2 5l2 2 4-4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </div>
                 )}
-                <div className="flex items-center gap-4">
-                  <span className="text-3xl transition-transform duration-200 group-hover:scale-105">
-                    {activity.emoji}
-                  </span>
-                  <div className="space-y-0.5">
-                    <span className="block text-base font-bold text-white leading-none">{activity.label}</span>
-                    <span className="block text-xs text-zinc-500 font-mono mt-1">{activity.description}</span>
-                  </div>
+                <span className="text-3xl transition-transform duration-200 group-hover:scale-105 select-none">
+                  {activity.emoji}
+                </span>
+                <div className="text-center space-y-0.5">
+                  <span className="block text-xs font-bold text-white leading-tight">{activity.label}</span>
+                  <span className="block text-[9px] text-zinc-550 font-mono leading-tight">{activity.description}</span>
                 </div>
               </button>
             );
@@ -134,10 +134,11 @@ export const WhatStep = ({
         </div>
       </div>
 
-      <div className="pt-2">
+      <div className="pt-6 pb-2">
         <CreatePlanCTAButton
-          text={selectedActivity ? "NEXT — WHERE? →" : "SELECT AN ACTIVITY"}
+          text={selectedActivity ? "Continue" : "SELECT AN ACTIVITY"}
           disabled={!selectedActivity}
+          hideArrow={true}
           onPress={() => setCreateFlowStep("LOCATION")}
         />
       </div>

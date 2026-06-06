@@ -92,7 +92,7 @@ export const CirclesScreen = (props: any) => {
 
             <div id="circles_list" className="space-y-3 pb-8">
               {circles.map((circle: any) => {
-                const circleActivePlans = plans.filter((p: any) => p.circleId === circle.id && !p.isHappened);
+                const circleActivePlans = plans.filter((p: any) => p.circleId === circle.id && !p.isHappened && p.status !== "cancelled");
                 return (
                   <div key={circle.id} className="bg-zinc-900/40 border border-zinc-900 hover:bg-zinc-850/50 hover:border-zinc-800/80 rounded-3xl overflow-hidden transition-all duration-300">
                     <button

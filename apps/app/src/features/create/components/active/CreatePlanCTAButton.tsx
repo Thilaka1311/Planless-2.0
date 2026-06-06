@@ -23,6 +23,8 @@ interface CreatePlanCTAButtonProps {
   variant?: "default" | "final";
   /** Optional id for test/accessibility targeting */
   id?: string;
+  /** Set to true to hide the right arrow icon */
+  hideArrow?: boolean;
 }
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
@@ -84,6 +86,7 @@ export const CreatePlanCTAButton = ({
   loading = false,
   variant = "default",
   id,
+  hideArrow = true,
 }: CreatePlanCTAButtonProps) => {
   const isFinal   = variant === "final";
   const isInert   = disabled || loading;
@@ -185,7 +188,6 @@ export const CreatePlanCTAButton = ({
             fontWeight: "inherit", letterSpacing: "inherit" }}>
             {text}
           </span>
-          <ArrowRight />
         </>
       )}
     </button>

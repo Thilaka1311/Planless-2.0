@@ -48,7 +48,7 @@ export interface DbParticipant {
   participant_id: string; // sequential public ID e.g. "PP001"
   plan_id: string;       // UUID → plans.id
   user_id: string;       // UUID → users.id
-  status: "going" | "delivered" | "waitlist" | "passed" | "host" | "accepted" | "declined" | "seen" | string;
+  status: "going" | "delivered" | "waitlist" | "passed" | "host" | "accepted" | "declined" | "seen" | "skipped" | string;
   payment_status: "paid" | "unpaid";
   joined_at: string;
 }
@@ -194,6 +194,10 @@ export async function insertPlan(plan: Omit<DbPlan, "id" | "plan_id">): Promise<
 export async function insertParticipant(
   p: Omit<DbParticipant, "id" | "participant_id">
 ): Promise<DbParticipant | null> {
+  if (!p.plan_id || !p.user_id) {
+    console.warn("[DB] insertParticipant: missing plan_id or user_id.");
+    return null;
+  }
   const rows = await upsert("plan_participants", [p]);
   return rows?.[0] ?? null;
 }
@@ -204,6 +208,10 @@ export async function updateParticipantStatus(
   status: DbParticipant["status"],
   paymentStatus?: DbParticipant["payment_status"]
 ): Promise<DbParticipant | null> {
+  if (!participantId) {
+    console.warn("[DB] updateParticipantStatus: missing participantId.");
+    return null;
+  }
   const update: any = { id: participantId, status };
   if (paymentStatus !== undefined) update.payment_status = paymentStatus;
   const rows = await upsert("plan_participants", [update]);
@@ -215,7 +223,21 @@ export async function insertParticipants(
   rows: Omit<DbParticipant, "id" | "participant_id">[]
 ): Promise<DbParticipant[]> {
   if (rows.length === 0) return [];
-  const result = await upsert("plan_participants", rows);
+  
+  // Guard: filter out duplicates within the input array
+  const uniqueRows: typeof rows = [];
+  const seenKeys = new Set<string>();
+  for (const row of rows) {
+    if (!row.plan_id || !row.user_id) continue;
+    const key = `${row.plan_id}_${row.user_id}`;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      uniqueRows.push(row);
+    }
+  }
+
+  if (uniqueRows.length === 0) return [];
+  const result = await upsert("plan_participants", uniqueRows);
   return result ?? [];
 }
 

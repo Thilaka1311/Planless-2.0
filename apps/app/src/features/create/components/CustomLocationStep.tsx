@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { ArrowLeft, MapPin } from "lucide-react";
 import { CreatePlanCTAButton } from "./active/CreatePlanCTAButton";
 import { fetchLocationSuggestions, LocationSuggestion } from "../services/locationService";
+import { PlanSummary } from "./active/PlanSummary";
 
 interface CustomLocationStepProps {
   newPlanLocation: string;
@@ -23,7 +24,23 @@ interface CustomLocationStepProps {
     placeId: string;
   } | null) => void;
   setCreateFlowStep: (step: any) => void;
+  summary?: {
+    title: string;
+    location?: string;
+    time?: string;
+    invitedCount: number;
+    cost: string;
+    waitlistEnabled?: boolean;
+    joinLimit?: number;
+  };
 }
+
+const RECENT_LOCATIONS = [
+  "Play Arena HSR",
+  "Koramangala",
+  "Toit Indiranagar",
+  "Nexus Mall",
+];
 
 export const CustomLocationStep = ({
   newPlanLocation,
@@ -31,6 +48,7 @@ export const CustomLocationStep = ({
   selectedLocation,
   setSelectedLocation,
   setCreateFlowStep,
+  summary,
 }: CustomLocationStepProps) => {
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -107,6 +125,18 @@ export const CustomLocationStep = ({
           <span>Back to activity</span>
         </button>
 
+        {summary && (
+          <PlanSummary
+            title={summary.title}
+            location={summary.location}
+            time={summary.time}
+            invitedCount={summary.invitedCount}
+            cost={summary.cost}
+            waitlistEnabled={summary.waitlistEnabled}
+            joinLimit={summary.joinLimit}
+          />
+        )}
+
         <div className="space-y-2">
           <h2 className="text-3xl font-display font-black text-zinc-100 tracking-tight leading-tight">
             Where?
@@ -132,6 +162,36 @@ export const CustomLocationStep = ({
                 <div className="animate-spin rounded-full h-4 w-4 border-2 border-brand-peach border-t-transparent"></div>
               </span>
             )}
+          </div>
+
+          {/* Recent Locations */}
+          <div className="space-y-2 pt-1">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-550 block font-bold px-1">
+              Recent Locations
+            </span>
+            <div className="flex flex-col gap-1">
+              {RECENT_LOCATIONS.map((loc) => (
+                <button
+                  key={loc}
+                  type="button"
+                  onClick={() => {
+                    setNewPlanLocation(loc);
+                    setSelectedLocation({
+                      name: loc,
+                      address: "Recent Location",
+                      fullAddress: loc,
+                      latitude: 12.9716,
+                      longitude: 77.5946,
+                      placeId: `mock_${loc}`
+                    });
+                  }}
+                  className="w-full text-left py-2 px-3 hover:bg-zinc-900/40 rounded-xl transition-all text-xs text-zinc-400 hover:text-zinc-200 border border-transparent hover:border-zinc-900 flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="text-brand-peach/80 text-xs">•</span>
+                  <span>{loc}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Autocomplete Dropdown List */}
@@ -166,25 +226,14 @@ export const CustomLocationStep = ({
               </div>
             </div>
           )}
-
-          {/* Helper text examples */}
-          <div className="text-xs text-zinc-550 space-y-1">
-            <span className="font-mono text-[9px] uppercase tracking-wider text-zinc-650 block font-bold">
-              EXAMPLES
-            </span>
-            <p className="font-sans leading-relaxed">
-              Koramangala Turf, PVR Nexus, Toit Indiranagar, Home, Cubbon Park
-            </p>
+          <div className="pt-6">
+            <CreatePlanCTAButton
+              text="Continue"
+              disabled={newPlanLocation.trim().length === 0}
+              onPress={() => setCreateFlowStep("DATETIME")}
+            />
           </div>
         </div>
-      </div>
-
-      <div className="pt-6">
-        <CreatePlanCTAButton
-          text="NEXT — WHEN? →"
-          disabled={newPlanLocation.trim().length === 0}
-          onPress={() => setCreateFlowStep("DATETIME")}
-        />
       </div>
     </div>
   );

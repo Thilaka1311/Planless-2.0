@@ -55,8 +55,9 @@ export const CustomExtraSettingsStep = ({
   const selectedCount = getSelectedParticipantsCount();
 
   React.useEffect(() => {
-    if (waitlistEnabled && joinLimit > selectedCount) {
-      setJoinLimit(selectedCount > 0 ? selectedCount : 1);
+    // joinLimit = total going capacity including host. Max = selectedCount + 1.
+    if (waitlistEnabled && joinLimit > selectedCount + 1) {
+      setJoinLimit(selectedCount > 0 ? selectedCount + 1 : 2);
     }
   }, [selectedCount, waitlistEnabled, joinLimit, setJoinLimit]);
 
@@ -153,8 +154,8 @@ export const CustomExtraSettingsStep = ({
                 onChange={(e) => {
                   const enabled = e.target.checked;
                   setWaitlistEnabled(enabled);
-                  if (enabled && joinLimit > selectedCount) {
-                    setJoinLimit(selectedCount > 0 ? selectedCount : 1);
+                  if (enabled && joinLimit > selectedCount + 1) {
+                    setJoinLimit(selectedCount > 0 ? selectedCount + 1 : 2);
                   }
                 }}
                 className="accent-[#ff8b66] w-4.5 h-4.5 cursor-pointer"
@@ -164,20 +165,20 @@ export const CustomExtraSettingsStep = ({
             {waitlistEnabled && (
               <div className="bg-zinc-950 border border-zinc-850 rounded-2xl p-3.5 space-y-2">
                 <div className="flex justify-between items-center text-[10px]">
-                  <span className="text-zinc-400 font-sans">Spots limit</span>
+                  <span className="text-zinc-400 font-sans">Going Capacity (incl. host)</span>
                   <span className="text-brand-peach font-mono font-bold">{joinLimit}</span>
                 </div>
                 <input
                   type="range"
-                  min={1}
-                  max={selectedCount > 0 ? selectedCount : 1}
+                  min={2}
+                  max={selectedCount > 0 ? selectedCount + 1 : 2}
                   value={joinLimit}
                   onChange={(e) => setJoinLimit(Number(e.target.value))}
                   className="w-full accent-[#ff8b66] cursor-pointer"
                 />
                 <div className="flex justify-between text-[8px] font-mono text-zinc-650">
-                  <span>1 spot</span>
-                  <span>{selectedCount > 0 ? selectedCount : 1} max</span>
+                  <span>2 (host only)</span>
+                  <span>{selectedCount > 0 ? selectedCount + 1 : 2} (all)</span>
                 </div>
               </div>
             )}
