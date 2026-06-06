@@ -1,6 +1,181 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Settings, Users, Calendar, MapPin, ChevronRight, Plus } from "lucide-react";
 import { mapPlansToLegacyPlans } from "../../../lib/mappers";
+import { usePlansStore } from "../../../features/plans/state/PlansContext";
+
+interface CirclePlanCardBubbleProps {
+  key?: any;
+  plan: any;
+  activeUserId: string;
+  isCurrentUser: boolean;
+  isCompleted: boolean;
+  isAlreadyJoined: boolean;
+  setSelectedPlan: (plan: any) => void;
+  setPaymentConfirmationPlan: (plan: any) => void;
+  handleToggleJoin: (plan: any) => void;
+  triggerToast: (msg: string) => void;
+}
+
+const CirclePlanCardBubble = ({
+  plan,
+  activeUserId,
+  isCurrentUser,
+  isCompleted,
+  isAlreadyJoined,
+  setSelectedPlan,
+  setPaymentConfirmationPlan,
+  handleToggleJoin,
+  triggerToast
+}: CirclePlanCardBubbleProps) => {
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const { markPlanSeen, dbPlanParticipants, dbUsers } = usePlansStore();
+
+  React.useEffect(() => {
+    if (!cardRef.current || !activeUserId) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          const planUuid = plan.dbUuid || plan.id;
+          const meUser = dbUsers.find((u: any) => u.user_id === activeUserId || u.id === activeUserId);
+          const meUuid = meUser?.id || activeUserId;
+          const myPp = dbPlanParticipants.find(
+            (pp: any) => pp.plan_id === planUuid && pp.user_id === meUuid
+          );
+          if (myPp && myPp.status === "delivered") {
+            console.log(`[Circle View Trigger] Transitioning delivered -> seen for plan: ${plan.title}`);
+            markPlanSeen(planUuid, meUuid).catch(err => console.error("Failed to mark plan seen in circle chat:", err));
+          }
+        }
+      },
+      { threshold: 0.6 }
+    );
+
+    observer.observe(cardRef.current);
+    return () => observer.disconnect();
+  }, [plan.id, activeUserId, plan.title, markPlanSeen, dbPlanParticipants, dbUsers]);
+
+  return (
+    <div
+      ref={cardRef}
+      className={`flex flex-col max-w-[85%] ${
+        isCurrentUser ? "ml-auto items-end" : "mr-auto items-start"
+      }`}
+    >
+      {/* Creator label */}
+      <span className="text-[9px] font-bold text-zinc-500 mb-0.5 px-1">
+        {plan.creatorName || (isCurrentUser ? "You" : "Member")}
+      </span>
+
+      {/* Bubble card */}
+      <div
+        onClick={() => setSelectedPlan(plan)}
+        className={`group w-full border p-3 flex flex-col cursor-pointer transition-all duration-200 ${
+          isCurrentUser
+            ? "rounded-2xl rounded-tr-none bg-zinc-900 border-[#ff8b66]/20 hover:border-[#ff8b66]/40"
+            : "rounded-2xl rounded-tl-none bg-zinc-900 border-zinc-850 hover:border-zinc-750"
+        }`}
+      >
+        {/* Title + cost */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h4
+              className={`text-[11px] font-sans font-black uppercase tracking-wide truncate ${
+                isCompleted ? "text-zinc-550" : "text-white"
+              }`}
+            >
+              {plan.title}
+            </h4>
+            <div className="text-[9px] font-mono mt-1 space-y-0.5 text-zinc-500">
+              <div className="flex items-center gap-1.5">
+                <Calendar className="w-2.5 h-2.5 text-[#ff8b66]" />
+                <span className={isCompleted ? "" : "text-zinc-300"}>
+                  {plan.date} • {plan.time}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <MapPin className="w-2.5 h-2.5 text-zinc-650" />
+                <span className="truncate">{plan.location}</span>
+              </div>
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <span
+              className={`text-[10px] font-black font-mono block ${
+                isCompleted ? "text-zinc-550" : "text-zinc-200"
+              }`}
+            >
+              ₹{plan.cost}
+            </span>
+            <span className="text-[7px] font-mono text-zinc-600 uppercase tracking-wider">
+              Split/Head
+            </span>
+          </div>
+        </div>
+
+        {/* Footer: avatars + action */}
+        <div className="flex items-center justify-between pt-2 mt-2 border-t border-zinc-950/50">
+          <div className="flex items-center gap-1">
+            <div className="flex -space-x-1">
+              {plan.joinedUsers
+                ?.filter(
+                  (u: any) =>
+                    u.joinState === "going"
+                )
+                .slice(0, 3)
+                .map((u: any, ui: number) => (
+                  <img
+                    key={ui}
+                    src={u.avatar}
+                    className="w-4 h-4 rounded-full object-cover border border-zinc-950"
+                    alt=""
+                    referrerPolicy="no-referrer"
+                  />
+                ))}
+            </div>
+            <span className="text-[8px] font-mono text-zinc-500">
+              {plan.confirmedCount || 0} joined
+              {plan.maxSpots
+                ? ` (${plan.maxSpots - (plan.confirmedCount || 0)} left)`
+                : ""}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {!isCompleted ? (
+              !isAlreadyJoined ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (plan.cost > 0) {
+                      setPaymentConfirmationPlan(plan);
+                    } else {
+                      handleToggleJoin(plan);
+                      triggerToast("Joined active coordination! ⚡");
+                    }
+                  }}
+                  className="px-2 py-0.5 bg-[#ff8b66] hover:bg-[#ff9a7c] text-black text-[8px] font-black uppercase tracking-wider rounded transition-all cursor-pointer shadow"
+                >
+                  Join
+                </button>
+              ) : (
+                <span className="text-[8px] font-mono font-bold text-emerald-400 bg-emerald-950/20 px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-0.5">
+                  Joined
+                </span>
+              )
+            ) : (
+              <span className="text-[8px] font-mono font-bold text-zinc-500 bg-zinc-950 border border-zinc-900 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                Past
+              </span>
+            )}
+            <ChevronRight className="w-3 h-3 text-zinc-650 group-hover:text-zinc-400 transition-colors" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const CircleChatScreen = (props: any) => {
   const {
@@ -24,6 +199,7 @@ export const CircleChatScreen = (props: any) => {
 
   const [circlePlans, setCirclePlans] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { markPlanSeen } = usePlansStore();
 
   useEffect(() => {
     async function loadCirclePlans() {
@@ -176,124 +352,18 @@ export const CircleChatScreen = (props: any) => {
               );
 
               return (
-                <div
+                <CirclePlanCardBubble
                   key={plan.id}
-                  className={`flex flex-col max-w-[85%] ${
-                    isCurrentUser ? "ml-auto items-end" : "mr-auto items-start"
-                  }`}
-                >
-                  {/* Creator label */}
-                  <span className="text-[9px] font-bold text-zinc-500 mb-0.5 px-1">
-                    {plan.creatorName || (isCurrentUser ? "You" : "Member")}
-                  </span>
-
-                  {/* Bubble card */}
-                  <div
-                    onClick={() => setSelectedPlan(plan)}
-                    className={`group w-full border p-3 flex flex-col cursor-pointer transition-all duration-200 ${
-                      isCurrentUser
-                        ? "rounded-2xl rounded-tr-none bg-zinc-900 border-[#ff8b66]/20 hover:border-[#ff8b66]/40"
-                        : "rounded-2xl rounded-tl-none bg-zinc-900 border-zinc-850 hover:border-zinc-750"
-                    }`}
-                  >
-                    {/* Title + cost */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <h4
-                          className={`text-[11px] font-sans font-black uppercase tracking-wide truncate ${
-                            isCompleted ? "text-zinc-550" : "text-white"
-                          }`}
-                        >
-                          {plan.title}
-                        </h4>
-                        <div className="text-[9px] font-mono mt-1 space-y-0.5 text-zinc-500">
-                          <div className="flex items-center gap-1.5">
-                            <Calendar className="w-2.5 h-2.5 text-[#ff8b66]" />
-                            <span className={isCompleted ? "" : "text-zinc-300"}>
-                              {plan.date} • {plan.time}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <MapPin className="w-2.5 h-2.5 text-zinc-650" />
-                            <span className="truncate">{plan.location}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span
-                          className={`text-[10px] font-black font-mono block ${
-                            isCompleted ? "text-zinc-550" : "text-zinc-200"
-                          }`}
-                        >
-                          ₹{plan.cost}
-                        </span>
-                        <span className="text-[7px] font-mono text-zinc-600 uppercase tracking-wider">
-                          Split/Head
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Footer: avatars + action */}
-                    <div className="flex items-center justify-between pt-2 mt-2 border-t border-zinc-950/50">
-                      <div className="flex items-center gap-1">
-                        <div className="flex -space-x-1">
-                          {plan.joinedUsers
-                            ?.filter(
-                              (u: any) =>
-                                u.joinState === "going" || u.joinState === "host"
-                            )
-                            .slice(0, 3)
-                            .map((u: any, ui: number) => (
-                              <img
-                                key={ui}
-                                src={u.avatar}
-                                className="w-4 h-4 rounded-full object-cover border border-zinc-950"
-                                alt=""
-                                referrerPolicy="no-referrer"
-                              />
-                            ))}
-                        </div>
-                        <span className="text-[8px] font-mono text-zinc-500">
-                          {plan.confirmedCount || 0} joined
-                          {plan.maxSpots
-                            ? ` (${plan.maxSpots - (plan.confirmedCount || 0)} left)`
-                            : ""}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        {!isCompleted ? (
-                          !isAlreadyJoined ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (plan.cost > 0) {
-                                  setPaymentConfirmationPlan(plan);
-                                } else {
-                                  handleToggleJoin(plan);
-                                  triggerToast("Joined active coordination! ⚡");
-                                }
-                              }}
-                              className="px-2 py-0.5 bg-[#ff8b66] hover:bg-[#ff9a7c] text-black text-[8px] font-black uppercase tracking-wider rounded transition-all cursor-pointer shadow"
-                            >
-                              Join
-                            </button>
-                          ) : (
-                            <span className="text-[8px] font-mono font-bold text-emerald-400 bg-emerald-950/20 px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-0.5">
-                              Joined
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-[8px] font-mono font-bold text-zinc-500 bg-zinc-950 border border-zinc-900 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                            Past
-                          </span>
-                        )}
-                        <ChevronRight className="w-3 h-3 text-zinc-650 group-hover:text-zinc-400 transition-colors" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  plan={plan}
+                  activeUserId={activeUserId}
+                  isCurrentUser={isCurrentUser}
+                  isCompleted={isCompleted}
+                  isAlreadyJoined={isAlreadyJoined}
+                  setSelectedPlan={setSelectedPlan}
+                  setPaymentConfirmationPlan={setPaymentConfirmationPlan}
+                  handleToggleJoin={handleToggleJoin}
+                  triggerToast={triggerToast}
+                />
               );
             })}
           </div>

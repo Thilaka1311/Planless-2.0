@@ -1,183 +1,468 @@
-# WALLET & PAYMENT RULES
+# WALLET & PAYMENT LIFECYCLE
+
+## Purpose
+
+The Wallet & Payment system exists to reduce coordination friction inside plans.
+
+Payments are not the product.
+
+Plans are the product.
+
+Payments exist only to make plans easier to organize, commit to, and execute.
+
+The Wallet system should always feel secondary to participation.
 
 ---
 
-# Ⅰ. PAYMENT PHILOSOPHY
+# Core Philosophy
 
-1. Payments exist only to reduce coordination friction inside plans.
+Payments should feel:
 
-2. The wallet system is NOT a standalone fintech product.
+* lightweight
+* fast
+* social
+* invisible
+* trustworthy
 
-3. Payments should feel:
-- lightweight
-- fast
-- invisible
-- socially natural
+The system should never feel:
 
-4. The purpose of payments is:
-- split costs
-- reserve spots
-- simplify coordination
-- reduce drop-offs
+* like a banking application
+* like a fintech product
+* like accounting software
+* like debt-tracking software
 
-5. Financial interactions should support plans rather than dominate the experience.
+The purpose of payments is:
 
----
-
-# Ⅱ. PAYMENT EXPERIENCE RULES
-
-6. Payment flows should remain:
-- simple
-- fast
-- low-friction
-- mobile-first
-
-7. Users should understand:
-- amount
-- purpose
-- participants
-- plan connection
-
-immediately.
-
-8. Payment screens should prioritize:
-- clarity
-- trust
-- confirmation
-- simplicity
-
-9. Avoid:
-- complex finance terminology
-- analytics-heavy interfaces
-- detailed accounting systems
-- banking-style dashboards
-
-10. The wallet experience should feel:
-- social
-- coordination-focused
-- easy to use
-
-not:
-- corporate
-- technical
-- finance-heavy
+* split costs
+* reserve participation
+* improve commitment
+* reduce drop-offs
 
 ---
 
-# Ⅲ. SPLIT PAYMENT RULES
+# Payment States
 
-11. Split payments should remain optional.
+## UNPAID
 
-12. Plans should still work without payments.
+Meaning:
 
-13. Split amounts should remain visually secondary to the actual plan.
+* Payment is required.
+* User has not completed payment.
 
-14. Payments should never overpower:
-- activity
-- people
-- coordination
-- participation
+User may:
 
-15. Users should be able to:
-- view split amount
-- confirm payment
-- reserve participation
-- see payment status
-
-16. Payment confirmation should feel:
-- quick
-- reassuring
-- frictionless
-
-17. Avoid:
-- multi-step banking flows
-- complex settlement systems
-- debt-tracking systems
-- heavy bookkeeping UX
+* View payment details.
+* Pay now.
 
 ---
 
-# Ⅳ. WALLET RULES
+## PAID
 
-18. The wallet should remain:
-- lightweight
-- minimal
-- utility-focused
+Meaning:
 
-19. Wallet screens should prioritize:
-- pending payments
-- completed payments
-- active plan payments
+* Payment completed successfully.
+* Participation is confirmed.
 
-20. Transaction history should remain:
-- clean
-- easy to scan
-- plan-linked
+User may:
 
-21. Every transaction should clearly show:
-- plan
-- amount
-- status
-- participants involved
-
-22. Avoid:
-- investment features
-- rewards systems
-- trading systems
-- financial gamification
+* View payment receipt.
+* Participate normally.
 
 ---
 
-# Ⅴ. PAYMENT UI RULES
+# Plan Payment Types
 
-23. Payment UI should visually match the rest of Planless:
-- soft dark surfaces
-- rounded layouts
-- minimal hierarchy
-- lightweight cards
+## No Payment Required
 
-24. CTA buttons should remain:
-- clean
-- text-first
-- minimal
+Default state.
 
-Examples:
-- Pay Now
-- Confirm Payment
-- Split Amount
+Meaning:
 
-25. Avoid:
-- glowing fintech buttons
-- aggressive payment prompts
-- flashy financial animations
+* Plan participation is free.
+* No transaction required.
 
-26. Payment interactions should feel:
-- subtle
-- responsive
-- trustworthy
+Users may:
 
-27. Motion should remain:
-- functional
-- smooth
-- lightweight
+* Join
+* Skip
+* Waitlist
+
+without payment.
 
 ---
 
-# Ⅵ. SOCIAL PAYMENT RULES
+## Split Payment Required
 
-28. Payments should support:
-- commitment
-- coordination
-- participation reliability
+Host specifies:
 
-29. Payment systems should not create:
-- social pressure
-- public financial comparison
-- competitive behavior
+* split_amount
 
-30. Payment status visibility should remain lightweight and contextual.
+Meaning:
 
-31. Financial interactions should always feel secondary to the social experience.
+* Participation requires payment.
+* Cost is shared among attendees.
 
-32. The emotional feeling of payments in Planless should be:
-“This makes the plan easier to happen.”
+---
+
+# Plan Creation Payment Flow
+
+Host creates a plan.
+
+### Payment Disabled
+
+payment_required = false
+
+Result:
+
+* Plan published normally.
+* Users may join immediately.
+
+---
+
+### Payment Enabled
+
+payment_required = true
+
+split_amount > 0
+
+Result:
+
+* Plan published.
+* Payment requirement attached.
+* Participants must pay before participation is confirmed.
+
+---
+
+# Join With Payment Flow
+
+## Trigger
+
+User selects JOIN.
+
+Conditions:
+
+* payment_required = true
+
+### Result
+
+User enters payment flow.
+
+---
+
+## Successful Payment
+
+Transaction:
+
+CREATED
+
+↓
+
+COMPLETED
+
+Participant Status:
+
+JOIN
+
+Payment Status:
+
+PAID
+
+### Effects
+
+* User added to Going.
+* User counted as attendee.
+* Transaction recorded.
+* Wallet updated.
+
+---
+
+## Failed Payment
+
+Participant Status:
+
+Remains unchanged.
+
+Payment Status:
+
+UNPAID
+
+### Effects
+
+* User not added to Going.
+* No attendee slot reserved.
+* No transaction recorded.
+
+---
+
+# Waitlist Payment Rules
+
+Users on the waitlist should never be charged.
+
+Participant Status:
+
+WAITLIST
+
+### Meaning
+
+* User has not secured a spot.
+* User is not yet participating.
+
+### Rules
+
+Do NOT collect payment while waitlisted.
+
+Payment should occur only after promotion.
+
+---
+
+# Waitlist Promotion Flow
+
+Trigger:
+
+WAITLIST
+
+↓
+
+JOIN
+
+### If Payment Required
+
+User receives payment request.
+
+Participant Status:
+
+Pending JOIN
+
+Payment Status:
+
+UNPAID
+
+### Successful Payment
+
+Payment Status:
+
+PAID
+
+Participant Status:
+
+JOIN
+
+### Failed Payment
+
+Participant remains:
+
+WAITLIST
+
+The attendee slot should move to the next eligible waitlisted participant.
+
+---
+
+# Transaction Creation Flow
+
+Every successful payment creates:
+
+Transaction Record
+
+Stored in:
+
+transactions
+
+Required Fields:
+
+* sender_id
+* receiver_id
+* plan_id
+* amount
+* status
+* created_at
+
+---
+
+# Wallet Balance Rules
+
+Wallet balance is a convenience layer.
+
+The source of truth remains:
+
+transactions
+
+Wallet balances should always be derivable from transaction history.
+
+---
+
+# Transaction History Rules
+
+Every transaction should display:
+
+* Plan
+* Amount
+* Status
+* Date
+* Participants involved
+
+Transaction history should remain:
+
+* simple
+* readable
+* plan-focused
+
+---
+
+# Refund Flow
+
+## Trigger
+
+Plan Status:
+
+ACTIVE
+
+↓
+
+CANCELLED
+
+### Conditions
+
+* Payment was previously completed.
+
+### Result
+
+Refund transaction created.
+
+Transaction Status:
+
+REFUNDED
+
+Wallet balance updated.
+
+---
+
+# Circle Payment Rules
+
+Payments belong to plans.
+
+Payments do not belong to circles.
+
+Circles are simply distribution mechanisms.
+
+All payment relationships should ultimately resolve to:
+
+Plan
+
+↓
+
+Transaction
+
+↓
+
+Participant
+
+---
+
+# Attendance Rules
+
+Only users with:
+
+Participant Status:
+
+JOIN
+
+should be counted as attendees.
+
+Do not count:
+
+* DELIVERED
+* SEEN
+* SKIP
+* WAITLIST
+
+Payment status does not affect attendee counting once JOIN is confirmed.
+
+---
+
+# State Transitions
+
+No Payment Required
+
+↓
+
+JOIN
+
+Payment Required
+
+↓
+
+UNPAID
+
+UNPAID
+
+↓
+
+PAID
+
+PAID
+
+↓
+
+JOIN
+
+WAITLIST
+
+↓
+
+PROMOTED
+
+PROMOTED
+
+↓
+
+UNPAID
+
+UNPAID
+
+↓
+
+PAID
+
+PAID
+
+↓
+
+JOIN
+
+ACTIVE PLAN
+
+↓
+
+CANCELLED
+
+CANCELLED
+
+↓
+
+REFUND
+
+---
+
+# Non-Negotiable Rules
+
+1. Payments exist to support plans.
+
+2. Payments must never dominate the user experience.
+
+3. Waitlisted users must never be charged.
+
+4. Payment should occur only after a participant secures a spot.
+
+5. Transactions are the source of truth for wallet balances.
+
+6. All successful payments must create transaction records.
+
+7. Refunds must be transaction-based.
+
+8. Wallets should remain lightweight and utility-focused.
+
+9. Transaction history should always be linked to plans.
+
+10. The emotional feeling of payments should be:
+
+"This makes the plan easier to happen."

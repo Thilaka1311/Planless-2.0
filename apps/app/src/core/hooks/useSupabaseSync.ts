@@ -58,16 +58,16 @@ export function useSupabaseSync(myUuid: string, userProfile: UserProfile, setPla
         if (existingIds.has(notifId)) return;
         const plan = snap.plans.find((p: any) => p.id === pp.plan_id);
         if (!plan) return;
-        const creator = snap.users.find((u: DbUser) => u.id === plan.created_by);
+        const hostUser = snap.users.find((u: DbUser) => u.id === (plan.host_id || plan.created_by));
         newNotifs.push({
           id:           notifId,
           type:         "invitation",
-          title:        `${creator?.full_name ?? "Someone"} invited you to "${plan.title}"`,
+          title:        `${hostUser?.full_name ?? "Someone"} invited you to "${plan.title}"`,
           relativeTime: "just now",
           actionText:   "Accept & Join",
           planId:       plan.plan_id, // public ID used by UI for lookup
           cost:         Number(plan.split_amount ?? 0),
-          creatorId:    plan.created_by,
+          creatorId:    plan.host_id || plan.created_by,
         });
       });
       if (newNotifs.length === 0) return prev;

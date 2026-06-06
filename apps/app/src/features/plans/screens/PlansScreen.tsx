@@ -247,7 +247,7 @@ export const PlansScreen = ({
     const myStatus = myParticipant?.status || "";
     const isDelivered = myStatus === "delivered" || myStatus === "seen";
     const isAccepted = myStatus === "accepted";
-    const isHostOfPlan = myStatus === "host";
+    const isHostOfPlan = plan.hostId === "u_self";
 
     const isDeadlinePassed = plan.response_deadline_at
       ? new Date().getTime() > new Date(plan.response_deadline_at).getTime()

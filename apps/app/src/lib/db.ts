@@ -30,6 +30,7 @@ export interface DbPlan {
   title: string;
   description: string;
   created_by: string;   // UUID → users.id
+  host_id?: string;      // UUID → users.id (mutable host reference)
   circle_id: string | null; // UUID → circles.id
   activity_type: string; // "movies" | "sports" | "restaurants" | "custom"
   location: string;

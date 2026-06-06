@@ -123,8 +123,8 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
             const allCircles = d.circles || [];
             const allCircleMembers = d.circle_members || [];
             const allDbUsers = d.users || [];
-            const meUser = allDbUsers.find((u: any) => u.user_id === activeUserId);
-            const meUuid = meUser ? meUser.id : null;
+            const meUser = allDbUsers.find((u: any) => u.id === activeUserId || u.user_id === activeUserId);
+            const meUuid = meUser ? meUser.id : activeUserId;
             const myCircleIds = meUuid
               ? allCircleMembers.filter((cm: any) => cm.user_id === meUuid).map((cm: any) => cm.circle_id)
               : [];

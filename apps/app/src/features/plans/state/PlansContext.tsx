@@ -114,7 +114,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     console.log(`[PlansContext] JOIN ACTION START for Plan: ${matchedPlan?.title || planId}, User: ${userProfile.name}`);
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none (not invited/joined)");
 
-    const isHost = existingBefore?.status === "host" || matchedPlan?.creatorId === userUuid || matchedPlan?.creatorId === "u_self";
+    const isHost = matchedPlan?.hostId === "u_self" || matchedPlan?.creatorId === userUuid || matchedPlan?.creatorId === "u_self" || existingBefore?.status === "host";
     if (matchedPlan && matchedPlan.payment_required && !isHost) {
       // 1. Create Razorpay Order
       const amount = matchedPlan.cost;
@@ -268,7 +268,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // 2. Database Persistence
     if (planUuid && userUuid) {
-      if (existingBefore && existingBefore.status === "host") {
+      if (existingBefore && (existingBefore.status === "host" || isHost)) {
         console.log(`[PlansContext] User is host. Skipping database participant status overwrite.`);
         return;
       }
@@ -479,7 +479,8 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    if (existingBefore.status === "host") {
+    const isHost = matchedPlan?.hostId === "u_self" || matchedPlan?.creatorId === userUuid || matchedPlan?.creatorId === "u_self";
+    if (existingBefore.status === "host" || isHost) {
       console.log(`[PlansContext] User is host. Skip transition aborted.`);
       console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_FAILED: user is host`);
       return;
@@ -534,7 +535,8 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    if (existingBefore.status === "host") {
+    const isHost = matchedPlan?.hostId === "u_self" || matchedPlan?.creatorId === userUuid || matchedPlan?.creatorId === "u_self";
+    if (existingBefore.status === "host" || isHost) {
       console.log(`[PlansContext] User is host. Rejoin transition aborted.`);
       return;
     }
@@ -593,7 +595,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const planUpdate = {
       id: planUuid,
-      created_by: resolvedNewHostUuid
+      host_id: resolvedNewHostUuid
     };
 
     const oldHostPp = dbPlanParticipants.find(pp => pp.plan_id === planUuid && pp.user_id === resolvedOldHostUuid);
@@ -613,14 +615,14 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (newHostPp) {
       participantUpdates.push({
         id: newHostPp.id,
-        status: "host"
+        status: "going"
       });
     } else {
       console.log(`- inserting new host participant record`);
       const recordToInsert = {
         plan_id: planUuid,
         user_id: resolvedNewHostUuid,
-        status: "host",
+        status: "going",
         payment_status: "unpaid",
         joined_at: new Date().toISOString()
       };
@@ -646,7 +648,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       body: JSON.stringify({ table: "plans", records: [planUpdate] })
     });
     if (!plansRes.ok) {
-      throw new Error("Failed to update plan created_by in database");
+      throw new Error("Failed to update plan host_id in database");
     }
 
     // Update participant statuses
@@ -776,8 +778,10 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const planParticipants = freshParticipants.filter(
       (pp: any) => pp.plan_id === planUuid
     );
+    const dbPlanObj = dbPlans.find(dp => dp.id === planUuid || dp.plan_id === planId);
+    const hostUuid = matchedPlan?.creatorId || dbPlanObj?.host_id || dbPlanObj?.created_by;
     const nonHostParticipants = planParticipants.filter(
-      (pp: any) => normalizeStatus(pp.status) !== "host"
+      (pp: any) => pp.user_id !== hostUuid
     );
     const allAccepted =
       nonHostParticipants.length > 0 &&
@@ -806,7 +810,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const confirmedParticipants = planParticipants.filter(
         (pp: any) => {
           const norm = normalizeStatus(pp.status);
-          return norm === "going" || norm === "host";
+          return norm === "going";
         }
       );
       const confirmedCount = confirmedParticipants.length;
@@ -925,8 +929,14 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pp => pp.plan_id === planUuid || (pp as any).id === planUuid
     );
 
+    const plan = dbPlans.find(p => p.id === planUuid || p.plan_id === planUuid);
+    const hostUuid = plan?.host_id || plan?.created_by;
+
     const breakdown = calculateParticipantBreakdown(rows);
-    const { host, going, waitlist, delivered, seen, skipped, passed, pending, total } = breakdown;
+    const { waitlist, delivered, seen, skipped, passed, pending, total } = breakdown;
+
+    const host = rows.some(r => r.user_id === hostUuid && normalizeStatus(r.status) === "going") ? 1 : 0;
+    const going = rows.filter(r => normalizeStatus(r.status) === "going" && r.user_id !== hostUuid).length;
 
     const joinedCountVal = host + going;
     console.log(`[getParticipantCounts] PlanUuid: ${planUuid}`);

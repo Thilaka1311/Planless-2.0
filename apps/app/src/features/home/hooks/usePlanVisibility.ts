@@ -9,7 +9,7 @@ export function usePlanVisibility(plan: Plan, userProfile: UserProfile) {
     (userProfile.dbUuid && m.userUuid === userProfile.dbUuid)
   );
 
-  const isJoined = myMemberEntry ? (myMemberEntry.joinState === "going" || myMemberEntry.joinState === "host") : false;
+  const isJoined = myMemberEntry ? (myMemberEntry.joinState === "going") : false;
   const isWaitlisted = myMemberEntry ? (myMemberEntry.joinState === "waitlist") : false;
 
   const isDeadlinePassed = React.useMemo(() => {
@@ -46,8 +46,9 @@ export function usePlanVisibility(plan: Plan, userProfile: UserProfile) {
     // Always put host first in going
     going.push({ name: hostName, avatar: hostAvatar, status: "Going", isHost: true });
 
+    const hostUuid = plan.creatorId || plan.hostId;
     for (const m of plan.members) {
-      if (m.joinState === "host") continue;
+      if (m.userUuid === hostUuid || m.userId === hostUuid) continue;
 
       const entry = {
         name: m.name,
@@ -114,7 +115,7 @@ export function usePlanVisibility(plan: Plan, userProfile: UserProfile) {
     : plan.coverImage;
 
   const maxSpots = plan.maxSpots || (plan.category === "movies" ? 10 : plan.category === "sports" ? 14 : 8);
-  const goingMembers = plan.members.filter(m => m.joinState === "going" || m.joinState === "host");
+  const goingMembers = plan.members.filter(m => m.joinState === "going");
   const currentCount = goingMembers.length;
   const isFull = currentCount >= maxSpots;
 

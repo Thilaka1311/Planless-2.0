@@ -515,7 +515,7 @@ router.post("/book-now", async (req, res) => {
     }
 
     const confirmedParticipants = (participants || []).filter(
-      (p: any) => p.status === "accepted" || p.status === "going" || p.status === "host"
+      (p: any) => p.status === "accepted" || p.status === "going"
     );
     const confirmedCount = confirmedParticipants.length;
 

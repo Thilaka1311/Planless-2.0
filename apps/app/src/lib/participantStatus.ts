@@ -16,7 +16,7 @@ export function normalizeStatus(status: string | undefined): PlanState {
     return "skipped";
   }
   
-  const validStatuses: PlanState[] = ["going", "waitlist", "delivered", "seen", "skipped", "host"];
+  const validStatuses: PlanState[] = ["going", "waitlist", "delivered", "seen", "skipped"];
   if (validStatuses.includes(status as PlanState)) {
     return status as PlanState;
   }
@@ -42,7 +42,7 @@ export interface ParticipantBreakdown {
 export function calculateParticipantBreakdown(rows: DbPlanParticipant[]): ParticipantBreakdown {
   const normalized = rows.map(r => ({ ...r, status: normalizeStatus(r.status) }));
 
-  const host      = normalized.filter(r => r.status === "host").length;
+  const host      = 0;
   const going     = normalized.filter(r => r.status === "going").length;
   const waitlist  = normalized.filter(r => r.status === "waitlist").length;
   const delivered = normalized.filter(r => r.status === "delivered").length;

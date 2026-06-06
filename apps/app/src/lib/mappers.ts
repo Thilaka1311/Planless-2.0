@@ -70,9 +70,10 @@ export const mapPlansToLegacyPlans = (
     console.log(`- circle_id: ${p.circle_id}`);
     console.log(`- resolved circle name: ${circleNameVal}`);
 
-    const isOwner = p.created_by === activeUserId || p.created_by === activeUuid || p.created_by === activeShortId;
-    const creator = usersList.find(u => (u as any).id === p.created_by || u.user_id === p.created_by) || {
-      user_id: p.created_by,
+    const hostIdVal = p.host_id || p.created_by;
+    const isOwner = hostIdVal === activeUserId || hostIdVal === activeUuid || hostIdVal === activeShortId;
+    const creator = usersList.find(u => (u as any).id === hostIdVal || u.user_id === hostIdVal) || {
+      user_id: hostIdVal,
       username: "host",
       full_name: "Anonymous Host",
       phone_number: "",
@@ -164,7 +165,7 @@ export const mapPlansToLegacyPlans = (
     // Cover image: new schema uses "cover_image", old code used "coverImage"
     const coverImageVal = p.cover_image || (p as any).coverImage || (p as any).coverimage || "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&q=80&w=600";
     
-    const goingCount = members.filter(m => m.joinState === "going" || m.joinState === "host").length;
+    const goingCount = members.filter(m => m.joinState === "going").length;
     const seatsLeftVal = p.seatsLeft !== undefined ? p.seatsLeft : ((p as any).seatsleft !== undefined ? (p as any).seatsleft : ((p as any).seats_left !== undefined ? (p as any).seats_left : (maxSpotsVal - goingCount)));
 
     console.log(`[mappers mapPlansToLegacyPlans] Plan: "${p.title}"`);
@@ -183,7 +184,7 @@ export const mapPlansToLegacyPlans = (
       dbUuid: p.id || p.plan_id || "",
       title: p.title,
       groupId: p.circle_id,
-      hostId: isOwner ? "u_self" : p.created_by,
+      hostId: isOwner ? "u_self" : hostIdVal,
       members: members,
       capacity: maxSpotsVal,
       date: dateVal,
@@ -203,7 +204,7 @@ export const mapPlansToLegacyPlans = (
       confirmedCount: goingCount,
       maxSpots: maxSpotsVal,
       coverImage: coverImageVal,
-      creatorId: isOwner ? "u_self" : p.created_by,
+      creatorId: p.created_by,
       creatorName: creator.full_name,
       creatorAvatar: creator.profile_photo,
       joinedUsers: members,

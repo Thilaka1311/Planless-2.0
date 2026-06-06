@@ -1,253 +1,395 @@
-# CREATE PLAN RULES
+# CREATE PLAN LIFECYCLE
+
+## Purpose
+
+The Create Plan flow is one of the core experiences of Planless.
+
+Creating a plan is the act of creating a real-world opportunity for people to coordinate, participate, and create memories together.
+
+Every plan created should eventually move through:
+
+Discovery
+
+→ Participation
+
+→ Experience
+
+→ Memory
+
+The Create Plan flow exists to make that process effortless.
 
 ---
 
-# Ⅰ. CREATE PLAN PHILOSOPHY
+# Core Philosophy
 
-1. The Create Plan flow is one of the core experiences of Planless.
+Creating a plan should feel:
 
-2. Creating a plan should feel:
-- fast
-- lightweight
-- social
-- exciting
-- effortless
+* fast
+* lightweight
+* social
+* exciting
+* effortless
 
-3. The Create Plan experience should never feel:
-- administrative
-- corporate
-- form-heavy
-- overwhelming
-- like event management software
+The Create Plan experience should never feel:
 
-4. A user should be able to create and publish a plan in under 30 seconds whenever possible.
+* administrative
+* corporate
+* form-heavy
+* overwhelming
+* like event management software
 
-5. The Create Plan experience should feel:
-“Let’s do something.”
-not:
-“Configure an event.”
+A user should be able to create and publish a plan in under 30 seconds whenever possible.
+
+The Create Plan experience should feel:
+
+> "Let's do something."
+
+not
+
+> "Configure an event."
 
 ---
 
-# Ⅱ. SPEED & SIMPLICITY RULES
+# Create Plan Outcome
 
-6. The Create Plan flow should minimize:
-- typing
-- setup friction
-- unnecessary fields
-- excessive decision making
+Publishing a plan creates:
 
-7. The flow should prioritize:
-- speed
-- clarity
-- social coordination
-- emotional excitement
+* a Plan record
+* participant records
+* plan visibility records
+
+The database becomes the source of truth immediately.
+
+---
+
+# Plan Creation State
+
+When a plan is successfully published:
+
+Plan Status:
+
+ACTIVE
+
+Host:
+
+Current user becomes Host.
+
+Participant Status:
+
+Host receives:
+
+JOIN
+
+Invited users receive:
+
+DELIVERED
+
+The plan immediately becomes eligible for distribution.
+
+---
+
+# Speed & Simplicity Rules
+
+The Create Plan flow should minimize:
+
+* typing
+* setup friction
+* unnecessary fields
+* excessive decision making
+
+The flow should prioritize:
+
+* speed
+* clarity
+* social coordination
+* emotional excitement
 
 over:
-- customization depth
-- advanced settings
-- feature complexity
 
-8. Every screen in the flow should reduce cognitive load.
+* customization depth
+* advanced settings
+* feature complexity
 
-9. The Create Plan flow should optimize for:
-- spontaneity
-- coordination
-- participation
-- fast publishing
-
-10. Most actions should be achievable within very few taps.
+Every screen in the flow should reduce cognitive load.
 
 ---
 
-# Ⅲ. CREATE PLAN SCREEN RULES
+# Plan Creation Flow
 
-11. The Create Plan screen should always focus on:
-- one primary action
-- one clear flow
-- one dominant interaction path
+## Step 1: Select Experience
 
-12. The first screen of Create Plan should prioritize:
-- suggested experiences
-- quick selection
-- visual discovery
-- low-friction interaction
+The first step should prioritize:
 
-13. Suggested experiences should feel:
-- visually clear
-- easy to scan
-- lightweight
-- socially relevant
+* suggested experiences
+* visual discovery
+* low-friction interaction
+* quick selection
 
-14. Suggested categories should ONLY include:
-- Movies
-- Sports
-- Table Booking
+Suggested categories:
 
-15. Custom Plans should always exist as a separate first-class option.
+* Movies
+* Sports
+* Table Booking
 
-16. Suggested experiences should help reduce planning friction.
+Custom Plans must always exist as a first-class option.
+
+Users should never be forced into predefined templates.
 
 ---
 
-# Ⅳ. EXPERIENCE SELECTION RULES
+## Step 2: Configure Plan
 
-17. Experience selection should feel:
-- fast
-- visual
-- swipeable
-- modern
+Required Fields:
 
-18. Experience cards should communicate:
-- activity type
-- atmosphere
-- timing
-- venue relevance
+* Activity
+* Date
+* Time
+* Venue
+* Circle or People
 
-quickly and visually.
+Optional Fields:
 
-19. Experience browsing should remain:
-- simple
-- immersive
-- mobile-first
+* Notes
+* Description
+* Split Amount
+* Cover Image
 
-20. Avoid:
-- overcrowded category systems
-- excessive filtering
-- nested discovery flows
-- marketplace-style browsing
+Optional fields must never block publishing.
 
 ---
 
-# Ⅴ. PLAN DETAILS RULES
+## Step 3: Select Audience
 
-21. Required information should remain lightweight.
+Plans may be distributed to:
 
-Core fields:
-- Activity
-- Time
-- Venue
-- People/Circle
+* Circles
+* Friends
+* Mixed Groups
 
-22. Optional fields may include:
-- Notes
-- Split amount
-- Plan description
+The selection experience should prioritize:
 
-23. Avoid forcing users to complete optional metadata before publishing a plan.
+* circles
+* recurring groups
+* trusted social connections
 
-24. Inputs should remain:
-- minimal
-- clear
-- fast to complete
+Avoid:
 
-25. The Create Plan flow should avoid:
-- long forms
-- nested settings
-- advanced configuration panels
-- enterprise scheduling systems
+* permissions systems
+* approval workflows
+* complex invite management
 
 ---
 
-# Ⅵ. SOCIAL SELECTION RULES
+## Step 4: Capacity Settings
 
-26. The Create Plan flow should prioritize:
-- circles
-- friends
-- recurring groups
-- trusted social connections
+Capacity is optional.
 
-27. Selecting people for a plan should feel:
-- simple
-- lightweight
-- socially intuitive
+Hosts may choose:
 
-28. Avoid:
-- enterprise invite systems
-- complicated permissions
-- multi-level participant management
+### Unlimited Capacity
 
-29. The flow should support:
-- spontaneous plans
-- recurring plans
-- scheduled plans
-- cultural/event-based plans
+Anyone invited may join.
 
 ---
 
-# Ⅶ. PAYMENT RULES
+### Limited Capacity
 
-30. Split payments should remain:
-- lightweight
-- secondary
-- optional
+Host specifies:
 
-31. Payments should never dominate the Create Plan experience.
+max_people
 
-32. Financial flows should support coordination rather than becoming a separate product layer.
+If capacity is reached:
 
----
+Users may enter WAITLIST when:
 
-# Ⅷ. INTERACTION & MOTION RULES
+waitlist_enabled = true
 
-33. The Create Plan flow should feel:
-- mobile-first
-- thumb-friendly
-- responsive
-- native-feeling
+Users may not join when:
 
-34. Motion should remain:
-- subtle
-- responsive
-- smooth
-- functional
-
-35. Avoid:
-- excessive animation
-- cinematic transitions
-- distracting motion systems
-
-36. The Create Plan flow should use:
-- progressive disclosure
-- step-by-step interaction
-- lightweight transitions
-
-instead of:
-- crowded multi-section forms
+waitlist_enabled = false
 
 ---
 
-# Ⅸ. CTA RULES
+## Step 5: Publish Plan
 
-37. CTA buttons should remain:
-- clean
-- text-first
-- minimal
+Publishing creates:
 
-38. Preferred CTA examples:
-- Continue
-- Host Plan
-- Create Plan
+Plan Record
 
-39. Avoid:
-- emoji CTAs
-- fintech-style buttons
-- oversized glowing actions
+↓
+
+Participant Records
+
+↓
+
+Visibility Distribution
+
+↓
+
+Home Feed Eligibility
+
+The plan becomes immediately available to eligible participants.
 
 ---
 
-# Ⅹ. VISUAL & EMOTIONAL RULES
+# Circle Integration Rules
 
-40. The Create Plan flow should visually feel:
-- socially alive
-- warm
-- approachable
-- exciting
+Circles are first-class planning units.
+
+Creating a plan inside a circle:
+
+* distributes the plan to circle members
+* creates participant records
+* assigns DELIVERED status to eligible members
+
+Circle membership determines future plan visibility.
+
+---
+
+# Distribution Rules
+
+Publishing a plan distributes it to eligible participants.
+
+Participant Status:
+
+DELIVERED
+
+Meaning:
+
+* Plan has been delivered
+* User has not viewed it
+* User has not responded
+
+The plan enters the Home Feed discovery system.
+
+---
+
+# Waitlist Rules
+
+If:
+
+* max_people is reached
+* waitlist_enabled = true
+
+Users may join the waitlist.
+
+Participant Status:
+
+WAITLIST
+
+Waitlisted users:
+
+* are not attendees
+* are not counted toward capacity
+* may be automatically promoted
+
+Promotion order:
+
+joined_at ASC
+
+First Come, First Served.
+
+---
+
+# Payment Rules
+
+Split payments remain:
+
+* optional
+* lightweight
+* secondary
+
+Payments should never dominate plan creation.
+
+The plan is more important than the payment.
+
+---
+
+# Interaction & Motion Rules
+
+The Create Plan flow should feel:
+
+* mobile-first
+* thumb-friendly
+* responsive
+* native-feeling
+
+Motion should remain:
+
+* subtle
+* smooth
+* functional
+
+Avoid:
+
+* excessive animation
+* cinematic transitions
+* distracting motion systems
+
+---
+
+# CTA Rules
+
+CTA buttons should remain:
+
+* clean
+* text-first
+* minimal
+
+Preferred examples:
+
+* Continue
+* Next
+* Publish Plan
+* Host Plan
+
+Avoid:
+
+* emoji buttons
+* flashy fintech actions
+* oversized glowing CTAs
+
+---
+
+# Visual & Emotional Rules
+
+The Create Plan flow should feel:
+
+* socially alive
+* warm
+* approachable
+* exciting
 
 not:
-- intimidating
-- over-designed
-- operationally heavy
 
-41. The final emotional feeling of the Create Plan flow should be:
-“This is easy. Let’s make it happen.”
+* intimidating
+* over-designed
+* operationally heavy
+
+The final emotional feeling should be:
+
+> "This is easy. Let's make it happen."
+
+---
+
+# Non-Negotiable Rules
+
+1. Plan creation must be completable in under 30 seconds whenever possible.
+
+2. Publishing a plan must create database records immediately.
+
+3. Database becomes the source of truth after publishing.
+
+4. Host receives JOIN status automatically.
+
+5. Invited users receive DELIVERED status automatically.
+
+6. Circles are first-class planning units.
+
+7. Optional fields must never block publishing.
+
+8. Waitlists must respect joined_at ASC ordering.
+
+9. Home Feed distribution begins immediately after publishing.
+
+10. The Create Plan flow should always optimize for speed over complexity.

@@ -53,6 +53,7 @@ export interface DbPlan {
   title: string;
   description: string;
   created_by: string; // uuid referencing users.id
+  host_id?: string; // uuid referencing users.id (mutable host reference)
   circle_id: string | null; // uuid referencing circles.id
   activity_type?: string; // e.g. "movies", "sports", "restaurants", "custom"
   location: string;
@@ -129,7 +130,7 @@ export interface DbMemory {
 // COMPATIBLE FRONTEND INTERACTIVES VIEW MODELS
 // ---------------------------------------------
 
-export type PlanState = "going" | "passed" | "waitlist" | "unanswered" | "delivered" | "seen" | "skipped" | "host";
+export type PlanState = "going" | "passed" | "waitlist" | "unanswered" | "delivered" | "seen" | "skipped";
 
 export interface PlanMember {
   userId: string;

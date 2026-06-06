@@ -6,6 +6,7 @@ import { getDeadlineText } from "../../../lib/mappers";
 import { usePlanVisibility } from "../hooks/usePlanVisibility";
 import { useHoldToAccept } from "../hooks/useHoldToAccept";
 import { HoldToAcceptOverlay } from "./HoldToAcceptOverlay";
+import { usePlansStore } from "../../plans/state/PlansContext";
 
 export interface PlanCardProps {
   plan: Plan;
@@ -61,6 +62,34 @@ export const PlanCard: React.FC<PlanCardProps> = ({
     groupColor,
   } = usePlanVisibility(plan, userProfile);
 
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const { markPlanSeen } = usePlansStore();
+
+  React.useEffect(() => {
+    if (!cardRef.current || !userProfile.user_id) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          const rawId = plan.dbUuid || plan.id;
+          const cleanId = rawId.replace("-loop-prev-dup", "").replace("-loop-next-dup", "");
+          const myParticipant = plan.members.find(
+            m => m.userId === userProfile.user_id || m.userUuid === userProfile.dbUuid
+          );
+          if (myParticipant && myParticipant.joinState === "delivered") {
+            console.log(`[Home Feed Visibility Trigger] Transitioning delivered -> seen for plan: ${plan.title}`);
+            const resolvedUserUuid = userProfile.dbUuid || userProfile.user_id;
+            markPlanSeen(cleanId, resolvedUserUuid).catch(console.error);
+          }
+        }
+      },
+      { threshold: 0.6 }
+    );
+
+    observer.observe(cardRef.current);
+    return () => observer.disconnect();
+  }, [plan.id, userProfile.user_id, plan.members, markPlanSeen]);
+
   const {
     holdProgress,
     isHolding,
@@ -110,6 +139,7 @@ export const PlanCard: React.FC<PlanCardProps> = ({
 
   return (
     <div
+      ref={cardRef}
       className="w-full h-full snap-start shrink-0 relative flex flex-col justify-end p-6 select-none overflow-hidden cursor-pointer touch-none"
       style={{
         scrollSnapAlign: "start",
