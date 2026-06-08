@@ -214,6 +214,8 @@ Circle membership determines visibility.
 
 Only current members should receive future plans.
 
+# Multi-Circle Rule
+Multi-circle plans are shared plans, not duplicated plans. Selected circles contribute members into one unified participant pool. All memories, results, attendance, and MVP voting are shared across the combined participant set.
 ---
 
 # Circle Plan Visibility Tracking

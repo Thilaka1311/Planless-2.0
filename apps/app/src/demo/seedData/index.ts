@@ -619,10 +619,7 @@ export const initialMemories: DbMemory[] = [
     status: "completed",
     created_at: "2026-05-23T16:45:00Z",
     locked_at: "2026-05-24T16:45:00Z",
-    editable_until: "2026-05-24T16:45:00Z",
-    team_a_score: 4,
-    team_b_score: 2,
-    mvp_user_id: "U003"
+    editable_until: "2026-05-24T16:45:00Z"
   },
   {
     id: "M002",

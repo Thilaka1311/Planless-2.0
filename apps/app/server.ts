@@ -11,7 +11,7 @@ import aiRouter from "./backend/ai";
 import paymentsRouter from "./backend/payments";
 import discoveryRouter from "./backend/discovery";
 
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config({ path: path.resolve(import.meta.dirname || "", '../../.env') });
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 

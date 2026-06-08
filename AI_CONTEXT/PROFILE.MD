@@ -365,3 +365,81 @@ Historical Plan Appears
 not
 
 "How popular is this person?"
+
+# Future Design For Profile
+
+The Profile page is NOT a wallet page.
+
+The Profile page is the user's story inside Planless.
+
+Planless core loop:
+
+Create Plan
+→ Attend Plan
+→ Create Memory
+→ Build Personal History
+
+The Profile should surface memories and participation first.
+
+## MVP Sections
+
+### Stats
+
+* Plans Hosted
+* Plans Attended
+* Circles Joined
+* Memories Created
+
+### Movies
+
+* Loved It count
+* Good count
+* Not For Me count
+
+### Dining
+
+* Would Return count
+* Maybe count
+* No count
+
+### Football
+
+* Matches Played
+* MVP Awards Won
+
+### Badminton
+
+* Total Wins
+* Total Losses
+* MVP Awards Won
+
+### Recent Memories
+
+Examples:
+
+Movie Night
+Loved It
+
+Dinner at XYZ
+Would Return
+
+Football
+Won 4–2
+MVP: Alex
+
+Badminton
+4W • 2L
+
+## Principle
+
+Profile should answer:
+
+"What have I done on Planless?"
+
+not
+
+"What is my wallet balance?"
+
+Wallet can come later.
+
+Memories and personal history come first.

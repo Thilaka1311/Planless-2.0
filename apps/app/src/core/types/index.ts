@@ -55,7 +55,8 @@ export interface DbPlan {
   created_by: string; // uuid referencing users.id
   host_id?: string; // uuid referencing users.id (mutable host reference)
   circle_id: string | null; // uuid referencing circles.id
-  activity_type?: string; // e.g. "movies", "sports", "restaurants", "custom"
+  activity_type?: string | null; // e.g. "movies", "sports", "restaurants", "custom"
+  category?: string;
   location: string;
   datetime?: string; // combined e.g. "TODAY • 8:00 PM"
   max_people?: number;
@@ -74,7 +75,6 @@ export interface DbPlan {
   userReaction?: string;
   isHappened?: boolean;
   // UI compatibility mapping fields
-  category?: string;
   date?: string;
   time?: string;
   max_spots?: number;
@@ -125,9 +125,6 @@ export interface DbMemory {
   created_at: string;
   locked_at: string | null;
   editable_until: string;
-  team_a_score?: number | null;
-  team_b_score?: number | null;
-  mvp_user_id?: string | null;
 }
 
 export interface DbMemoryAttendee {
@@ -137,22 +134,47 @@ export interface DbMemoryAttendee {
   created_at: string;
 }
 
-export interface DbMemoryRating {
+export interface DbMemoryMovieVerdict {
   id: string;
   memory_id: string;
   user_id: string;
-  rating: number;
+  verdict: "loved_it" | "good" | "not_for_me";
   created_at: string;
 }
 
-export interface DbMemoryMatch {
+export interface DbMemoryRestaurantVote {
   id: string;
   memory_id: string;
-  match_number: number;
+  user_id: string;
+  vote: "yes" | "maybe" | "no";
+  created_at: string;
+}
+
+export interface DbMemoryMatchResult {
+  id: string;
+  memory_id: string;
   team_a_score: number;
   team_b_score: number;
-  created_by: string;
+  recorded_by: string;
   created_at: string;
+}
+
+export interface DbMemoryMvpVote {
+  id: string;
+  memory_id: string;
+  voter_user_id: string;
+  mvp_user_id: string;
+  created_at: string;
+}
+
+export interface DbMemoryBadmintonResult {
+  id: string;
+  memory_id: string;
+  user_id: string;
+  wins: number;
+  losses: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DbFriendship {

@@ -8,11 +8,13 @@ import { useCirclesStore } from "../../circles/state/CirclesContext";
 import { useWalletStore } from "../../wallet/state/WalletContext";
 import { UserProfile } from "../../../core/types";
 import { isMemoryVisibleToUser } from "../../../lib/memoryVisibility";
+import { getMemoryContribution } from "../../../lib/memoryContribution";
 
 interface ProfileScreenProps {
   onLogout: () => void;
   triggerToast: (msg: string) => void;
   setSelectedPlan: (plan: any | null) => void;
+  setSelectedMemoryPlan: (plan: any | null) => void;
   setShowDbExplorer: (show: boolean) => void;
   setShowDepositModal: (show: boolean) => void;
 }
@@ -21,11 +23,22 @@ export const ProfileScreen = ({
   onLogout,
   triggerToast,
   setSelectedPlan,
+  setSelectedMemoryPlan,
   setShowDbExplorer,
   setShowDepositModal
 }: ProfileScreenProps) => {
   const { userProfile, activeUserId, activeUserUuid, updateProfile } = useProfileStore();
-  const { plans, dbMemories, dbMemoryAttendees, dbPlans } = usePlansStore();
+  const {
+    plans,
+    dbMemories,
+    dbMemoryAttendees,
+    dbPlans,
+    dbMemoryMovieVerdicts,
+    dbMemoryRestaurantVotes,
+    dbMemoryMatchResults,
+    dbMemoryMvpVotes,
+    dbMemoryBadmintonResults
+  } = usePlansStore();
   const { circles, dbCircleMembers } = useCirclesStore();
   const { walletBalance, transactions } = useWalletStore();
 
@@ -67,14 +80,6 @@ export const ProfileScreen = ({
                 Profile Space
               </h2>
             </div>
-            <button
-              id="profile_settings_gear_btn"
-              onClick={() => setActiveProfileSubView("settings")}
-              className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-all cursor-pointer"
-              title="Access Preferences & Settings"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
           </div>
 
           {/* Profile Identity Card */}
@@ -133,19 +138,10 @@ export const ProfileScreen = ({
                   setEditProfileAvatar(userProfile.avatar || "");
                   setIsEditingProfile(true);
                 }}
-                className="flex-1 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 text-zinc-200 font-sans text-xs font-semibold tracking-wide transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                className="w-full py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 text-zinc-200 font-sans text-xs font-semibold tracking-wide transition-all cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <UserIcon className="w-3.5 h-3.5" />
                 <span>Edit Profile</span>
-              </button>
-
-              <button
-                id="direct_wallet_jump_btn"
-                onClick={() => setActiveProfileSubView("payments")}
-                className="py-2.5 px-4 rounded-xl bg-zinc-950 border border-zinc-900 hover:border-zinc-800 text-zinc-355 font-mono text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5"
-              >
-                <Wallet className="w-3.5 h-3.5 text-[#ff8b66]" />
-                <span>₹{walletBalance.toFixed(0)}</span>
               </button>
             </div>
           </div>
@@ -271,56 +267,41 @@ export const ProfileScreen = ({
             </form>
           )}
 
-          {/* Stats Grid */}
-          <div id="spontaneous_stats_grid" className="grid grid-cols-3 gap-3">
+          {/* SECTION 1 – STATS */}
+          <div id="profile_stats_grid" className="grid grid-cols-4 gap-2.5">
             <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
-              <span className="text-[16px]">👥</span>
-              <h3 className="text-base font-display font-black text-white leading-none">
-                {plans.filter(p => p.status !== "cancelled" && p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).length}
-              </h3>
-              <p className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">Plans Join</p>
+              <h3 className="text-base font-display font-black text-white leading-none">27</h3>
+              <p className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Hosted</p>
             </div>
-
             <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
-              <span className="text-[16px]">🕸️</span>
-              <h3 className="text-base font-display font-black text-white leading-none">
-                {circles.filter(c => c.membersList.some(m => m.name === userProfile.name)).length}
-              </h3>
-              <p className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">Active Cells</p>
+              <h3 className="text-base font-display font-black text-white leading-none">84</h3>
+              <p className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Attended</p>
             </div>
-
-            <button
-              onClick={() => setActiveProfileSubView("payments")}
-              className="bg-zinc-900/60 border border-zinc-900/80 hover:bg-zinc-900 hover:border-zinc-800 rounded-2xl p-3 text-center space-y-1 cursor-pointer transition-all active:scale-95 text-left"
-            >
-              <div className="text-center space-y-1">
-                <span className="text-[16px]">💳</span>
-                <h3 className="text-base font-display font-black text-brand-peach leading-none">
-                  ₹{walletBalance.toFixed(0)}
-                </h3>
-                <p className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">Wallet Net</p>
-              </div>
-            </button>
+            <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
+              <h3 className="text-base font-display font-black text-white leading-none">12</h3>
+              <p className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Circles</p>
+            </div>
+            <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
+              <h3 className="text-base font-display font-black text-white leading-none">31</h3>
+              <p className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Memories</p>
+            </div>
           </div>
 
-          {/* Spontaneous History Row */}
-          <div id="recently_attended_segment" className="space-y-2.5 text-left">
+          {/* SECTION 2 – UPCOMING PLANS */}
+          <div id="upcoming_plans_segment" className="space-y-2.5 text-left">
             <div className="flex items-center justify-between px-1">
               <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
-                Spontaneous History
+                Upcoming Plans
               </h4>
-              <span className="text-[8.5px] font-mono text-zinc-650">
-                Completed Adventures
-              </span>
             </div>
 
-            {plans.filter(p => p.status !== "cancelled" && p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).length === 0 ? (
+            {plans.filter(p => !p.isHappened && p.status !== "cancelled" && p.joinedUsers.some(u => u.name === userProfile.name)).length === 0 ? (
               <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-5 text-center text-zinc-500 text-xs font-sans">
-                Your completed spontaneous meets will stack here. Go to plans to archive!
+                No upcoming plans scheduled.
               </div>
             ) : (
               <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1 snap-x">
-                {plans.filter(p => p.status !== "cancelled" && p.isHappened && p.joinedUsers.some(u => u.name === userProfile.name)).map(p => (
+                {plans.filter(p => !p.isHappened && p.status !== "cancelled" && p.joinedUsers.some(u => u.name === userProfile.name)).map(p => (
                   <div
                     key={p.id}
                     onClick={() => setSelectedPlan(p)}
@@ -333,16 +314,18 @@ export const ProfileScreen = ({
                         className="w-full h-full object-cover"
                         referrerPolicy="no-referrer"
                       />
-                      <div className="absolute top-1 right-1 bg-black/70 backdrop-blur-sm px-1 rounded">
-                        <span className="text-[7px] font-mono text-emerald-400 capitalize">{p.category}</span>
-                      </div>
+                      {p.isLive && (
+                        <div className="absolute top-1 right-1 bg-red-600 text-[6.5px] font-mono font-black text-white px-1.5 py-0.5 rounded tracking-wider uppercase animate-pulse">
+                          LIVE
+                        </div>
+                      )}
                     </div>
                     <div className="min-w-0">
                       <h5 className="text-[10px] font-display font-black text-zinc-200 truncate leading-snug">
                         {p.title}
                       </h5>
-                      <p className="text-[8px] font-sans text-zinc-500 truncate mt-0.5">
-                        📅 {p.date}
+                      <p className="text-[8px] font-sans text-zinc-400 truncate mt-0.5">
+                        📅 {p.date} • {p.time || "18:00"}
                       </p>
                     </div>
                   </div>
@@ -351,209 +334,199 @@ export const ProfileScreen = ({
             )}
           </div>
 
-          {/* Memories Gallery */}
-          <div id="memories_gallery_segment" className="space-y-3.5 text-left">
-            {(() => {
-              const visibleMemories = dbMemories.filter(mem =>
-                isMemoryVisibleToUser(
-                  mem,
-                  activeUserUuid || activeUserId,
-                  dbMemoryAttendees,
-                  dbPlans,
-                  dbCircleMembers
-                )
-              );
-
-              return (
-                <>
-                  <div className="flex items-center justify-between px-1 border-b border-zinc-950 pb-1.5">
-                    <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
-                      ⚡ Completed Memories
-                    </h4>
-                    <span className="text-[8.5px] font-mono text-zinc-600">
-                      {visibleMemories.length} memories saved
-                    </span>
+          {/* SECTION 3 – RECENT MEMORIES */}
+          <div id="recent_memories_segment" className="space-y-3 text-left">
+            <div className="flex items-center justify-between px-1">
+              <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
+                Recent Memories
+              </h4>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { title: "Interstellar", category: "movie", verdict: "Loved It", icon: "🎬" },
+                { title: "Toscano", category: "dining", verdict: "Would Return", icon: "🍽️" },
+                { title: "Sunday Match", category: "football", verdict: "MVP Voted", icon: "⚽" },
+                { title: "Badminton Night", category: "badminton", verdict: "4W • 2L", icon: "🏸" }
+              ].map((mem, idx) => (
+                <div
+                  key={idx}
+                  className="bg-zinc-900/60 border border-zinc-900 rounded-2xl p-3.5 space-y-1.5 hover:border-zinc-800 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg">{mem.icon}</span>
+                    <span className="text-[7.5px] font-mono text-zinc-500 uppercase tracking-wider">{mem.category}</span>
                   </div>
+                  <div>
+                    <h5 className="text-[11px] font-display font-black text-zinc-200 truncate">
+                      {mem.title}
+                    </h5>
+                    <p className="text-[9.5px] font-mono text-brand-peach font-bold mt-0.5">
+                      {mem.verdict}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
-                  {visibleMemories.length === 0 ? (
-                    <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-6 text-center text-zinc-500 text-xs font-sans">
-                      Completed plans will appear here as permanent historical memories.
+          {/* SECTION 4 – SPORTS SUMMARY */}
+          <div id="sports_summary_segment" className="space-y-3 text-left">
+            <div className="flex items-center justify-between px-1">
+              <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
+                Sports
+              </h4>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Football Card */}
+              <div className="bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-900 rounded-2xl p-3.5 space-y-2 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-12 h-12 bg-emerald-500/5 rounded-full blur-lg pointer-events-none" />
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">⚽</span>
+                  <h5 className="text-[10px] font-display font-black text-white uppercase tracking-wider">Football</h5>
+                </div>
+                <div className="space-y-1 font-mono">
+                  <div className="flex justify-between items-center text-[9px]">
+                    <span className="text-zinc-500">Matches Played</span>
+                    <span className="text-zinc-200 font-bold">12 Matches</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[9px]">
+                    <span className="text-zinc-500">MVP Awards</span>
+                    <span className="text-brand-peach font-bold">3 MVPs</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Badminton Card */}
+              <div className="bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-900 rounded-2xl p-3.5 space-y-2 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-12 h-12 bg-sky-500/5 rounded-full blur-lg pointer-events-none" />
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">🏸</span>
+                  <h5 className="text-[10px] font-display font-black text-white uppercase tracking-wider">Badminton</h5>
+                </div>
+                <div className="space-y-1 font-mono">
+                  <div className="flex justify-between items-center text-[9px]">
+                    <span className="text-zinc-500">Wins / Losses</span>
+                    <span className="text-zinc-200 font-bold">42W • 18L</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[9px]">
+                    <span className="text-zinc-500">MVP Awards</span>
+                    <span className="text-brand-peach font-bold">7 MVPs</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 5 – YOUR CIRCLES */}
+          <div id="your_circles_segment" className="space-y-3 text-left">
+            <div className="flex items-center justify-between px-1">
+              <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
+                Your Circles
+              </h4>
+              <span className="text-[8.5px] font-mono text-zinc-600">
+                {circles.filter(c => c.membersList?.some((m: any) => m.name === userProfile.name)).length} Joined
+              </span>
+            </div>
+
+            {circles.filter(c => c.membersList?.some((m: any) => m.name === userProfile.name)).length === 0 ? (
+              <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-5 text-center text-zinc-500 text-xs font-sans">
+                You haven't joined any circles yet.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-2.5">
+                {circles.filter(c => c.membersList?.some((m: any) => m.name === userProfile.name)).map((circle: any) => {
+                  const circleActivePlans = plans.filter((p: any) => p.circleId === circle.id && !p.isHappened && p.status !== "cancelled");
+                  return (
+                    <div key={circle.id} className="bg-zinc-900/40 border border-zinc-900 rounded-2xl p-3 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={circle.groupImage || circle.avatars?.[0] || "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=200"}
+                          className="w-8 h-8 rounded-xl object-cover border border-zinc-800"
+                          alt={circle.name}
+                        />
+                        <div>
+                          <h4 className="text-xs font-semibold text-zinc-200 uppercase tracking-wide">{circle.name}</h4>
+                          <p className="text-[9px] text-zinc-500 mt-0.5">
+                            {circleActivePlans.length > 0 ? `🔥 Next: ${circleActivePlans[0].title}` : "No active plans"}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-mono text-[#ff8b66] font-bold bg-[#ff8b66]/10 px-2.5 py-0.5 rounded border border-[#ff8b66]/15">
+                        {circleActivePlans.length} Active
+                      </span>
                     </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {visibleMemories.map(mem => {
-                        const plan = plans.find(p => p.id === mem.plan_id || p.dbUuid === mem.plan_id);
-                        return (
-                          <div
-                            key={mem.id}
-                            className="bg-zinc-900/40 border border-zinc-900 rounded-xl p-3 flex items-center justify-between"
-                          >
-                            <div>
-                              <div className="text-xs font-sans font-bold text-zinc-200">
-                                {plan?.title || "Meetup"}
-                              </div>
-                              <div className="text-[10px] font-mono text-zinc-550 mt-0.5">
-                                Type: {mem.memory_type} • Status: {mem.status}
-                              </div>
-                            </div>
-                            <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8px] font-mono uppercase px-1.5 py-0.5 rounded-full">
-                              Completed
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      )}
-
-      {/* SUB-VIEW 2: SETTINGS Preferences Directory */}
-      {activeProfileSubView === "settings" && (
-        <div id="settings_preferences_directory" className="space-y-5 animate-slide-up text-left">
-          <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
-            <button
-              onClick={() => setActiveProfileSubView("none")}
-              className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" /> Back
-            </button>
-            <span className="text-[9.5px] font-mono text-[#ff8b66] font-bold uppercase tracking-widest">Preferences Console</span>
-            <div className="w-8 shrink-0" />
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          <div className="space-y-1">
-            <h3 className="text-xs font-display font-black text-zinc-100 uppercase tracking-wider">
-              TRUST & ACCOUNT OPTIONS
-            </h3>
-            <p className="text-[10px] text-zinc-550 font-sans">
-              Configure your spontaneous presence, notification pings, ledger and split payment wallets.
-            </p>
-          </div>
+          {/* SECTION 6 – SETTINGS OPTIONS AT THE BOTTOM */}
+          <div id="profile_settings_bottom_segment" className="border-t border-zinc-900/80 pt-5 space-y-3 text-left">
+            <h4 className="text-[9px] font-mono text-zinc-500 uppercase tracking-[0.2em] font-bold px-1">
+              Settings & Preferences
+            </h4>
+            <div className="bg-zinc-950 border border-zinc-900 rounded-3xl p-1.5 divide-y divide-zinc-900">
+              <button
+                onClick={() => setActiveProfileSubView("account")}
+                className="w-full flex items-center justify-between p-3.5 hover:bg-zinc-900/40 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <UserIcon className="w-4 h-4 text-zinc-400" />
+                  <span className="text-xs font-semibold text-zinc-250">Account</span>
+                </div>
+                <ChevronRight className="w-4 h-4 text-zinc-500" />
+              </button>
 
-          <div id="settings_list_navigator" className="space-y-2 pt-1">
-            <button
-              onClick={() => setActiveProfileSubView("account")}
-              className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-[#ff5d41]/10 text-brand-peach flex items-center justify-center">
-                  <UserIcon className="w-4 h-4" />
+              <button
+                onClick={() => setActiveProfileSubView("notifications")}
+                className="w-full flex items-center justify-between p-3.5 hover:bg-zinc-900/40 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <Bell className="w-4 h-4 text-zinc-400" />
+                  <span className="text-xs font-semibold text-zinc-250">Notifications</span>
                 </div>
-                <div>
-                  <h4 className="text-xs font-semibold text-zinc-200">Profile & Verification Node</h4>
-                  <span className="text-[9px] font-mono text-zinc-500 uppercase">Verified identity status</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-zinc-500" />
-            </button>
+                <ChevronRight className="w-4 h-4 text-zinc-500" />
+              </button>
 
-            <button
-              onClick={() => setActiveProfileSubView("notifications")}
-              className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center">
-                  <Bell className="w-4 h-4" />
+              <button
+                onClick={() => setActiveProfileSubView("privacy")}
+                className="w-full flex items-center justify-between p-3.5 hover:bg-zinc-900/40 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <Shield className="w-4 h-4 text-zinc-400" />
+                  <span className="text-xs font-semibold text-zinc-250">Privacy</span>
                 </div>
-                <div>
-                  <h4 className="text-xs font-semibold text-zinc-200">Alerts & Spontaneous Pings</h4>
-                  <span className="text-[9px] font-mono text-zinc-500 uppercase">Manage invite & scheduling push</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-zinc-500" />
-            </button>
+                <ChevronRight className="w-4 h-4 text-zinc-500" />
+              </button>
 
-            <button
-              onClick={() => setActiveProfileSubView("payments")}
-              className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                  <CreditCard className="w-4 h-4" />
+              <button
+                onClick={() => setActiveProfileSubView("help")}
+                className="w-full flex items-center justify-between p-3.5 hover:bg-zinc-900/40 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <HelpCircle className="w-4 h-4 text-zinc-400" />
+                  <span className="text-xs font-semibold text-zinc-250">Help</span>
                 </div>
-                <div>
-                  <h4 className="text-xs font-semibold text-zinc-200">Payments & Co-Pay Ledger</h4>
-                  <span className="text-[9px] font-mono text-[#ff8b66] uppercase font-bold">Available balance • ₹{walletBalance.toFixed(0)}</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-zinc-500" />
-            </button>
+                <ChevronRight className="w-4 h-4 text-zinc-500" />
+              </button>
 
-            <button
-              onClick={() => setActiveProfileSubView("privacy")}
-              className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-sky-500/10 text-sky-400 flex items-center justify-center">
-                  <Shield className="w-4 h-4" />
+              <button
+                onClick={() => {
+                  triggerToast("Switching profile sessions... Bye! 👋");
+                  setTimeout(() => {
+                    onLogout();
+                  }, 500);
+                }}
+                className="w-full flex items-center justify-between p-3.5 hover:bg-zinc-900/40 transition-colors text-left text-red-400"
+              >
+                <div className="flex items-center gap-3">
+                  <LogOut className="w-4 h-4 text-red-400/80" />
+                  <span className="text-xs font-semibold">Logout</span>
                 </div>
-                <div>
-                  <h4 className="text-xs font-semibold text-zinc-200">Privacy & Coordinate Lock</h4>
-                  <span className="text-[9px] font-mono text-zinc-500 uppercase">Hide map drift and active indicators</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-zinc-500" />
-            </button>
-
-            <button
-              onClick={() => setActiveProfileSubView("help")}
-              className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
-                  <HelpCircle className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-semibold text-zinc-200">Planless FAQ & Guides</h4>
-                  <span className="text-[9px] font-mono text-zinc-500 uppercase">Bill split rules & circles info</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-zinc-500" />
-            </button>
-
-            <button
-              onClick={() => {
-                setShowDbExplorer(true);
-                triggerToast("Opened SQLite Relational Console! 📊");
-              }}
-              className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl p-4 flex items-center justify-between transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
-                  <Database className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-semibold text-zinc-200">System Relational Terminal</h4>
-                  <span className="text-[9px] font-mono text-zinc-550 uppercase">Inspect Live SQL-Like Schema Tables</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-zinc-500" />
-            </button>
-
-            <button
-              onClick={() => {
-                triggerToast("Switching profile sessions... Bye! 👋");
-                setTimeout(() => {
-                  onLogout();
-                }, 500);
-              }}
-              className="w-full bg-[#ff5d41]/5 hover:bg-[#ff5d41]/10 border border-[#ff5d41]/20 rounded-2xl p-4 flex items-center justify-between transition-colors text-left text-[#ff5d41]"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-[#ff5d41]/10 flex items-center justify-center">
-                  <LogOut className="w-4 h-4 text-[#ff5d41]" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-semibold">Exit Session / Log Out</h4>
-                  <span className="text-[9px] font-mono text-[#ff8b66]/60 uppercase">Reset onboarding profile database</span>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-[#ff5d41]/60" />
-            </button>
+                <ChevronRight className="w-4 h-4 text-red-500/60" />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -563,10 +536,10 @@ export const ProfileScreen = ({
         <div id="subview_account_details" className="space-y-5 animate-slide-up text-left">
           <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
             <button
-              onClick={() => setActiveProfileSubView("settings")}
+              onClick={() => setActiveProfileSubView("none")}
               className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
             >
-              <ChevronLeft className="w-3.5 h-3.5" /> Settings
+              <ChevronLeft className="w-3.5 h-3.5" /> Back
             </button>
             <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Identity Node Info</span>
             <div className="w-8 shrink-0" />
@@ -583,19 +556,19 @@ export const ProfileScreen = ({
 
               <div className="space-y-2 border-t border-zinc-900 pt-3">
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-mono text-[10px]">VERIFIED PHONE:</span>
+                  <span className="text-zinc-550 font-mono text-[10px]">VERIFIED PHONE:</span>
                   <span className="text-zinc-300 font-semibold">{userProfile.phone || "+91 90002 00001"}</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-mono text-[10px]">VERIFIED GROUP:</span>
+                  <span className="text-zinc-550 font-mono text-[10px]">VERIFIED GROUP:</span>
                   <span className="text-zinc-300 font-semibold">{userProfile.college_or_work || "SRM Chennai"}</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-mono text-[10px]">AUTHENTICATED AT:</span>
+                  <span className="text-zinc-550 font-mono text-[10px]">AUTHENTICATED AT:</span>
                   <span className="text-zinc-300 font-mono text-[10px]">May 2026</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-mono text-[10px]">IDENTITY TOKEN:</span>
+                  <span className="text-zinc-550 font-mono text-[10px]">IDENTITY TOKEN:</span>
                   <span className="text-zinc-300 font-mono text-[9px] select-all uppercase">{activeUserId}_VERIFIED_SEC_SSL</span>
                 </div>
               </div>
@@ -616,10 +589,10 @@ export const ProfileScreen = ({
         <div id="subview_notifications_settings" className="space-y-5 animate-slide-up text-left">
           <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
             <button
-              onClick={() => setActiveProfileSubView("settings")}
+              onClick={() => setActiveProfileSubView("none")}
               className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
             >
-              <ChevronLeft className="w-3.5 h-3.5" /> Settings
+              <ChevronLeft className="w-3.5 h-3.5" /> Back
             </button>
             <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Spontaneous Alerts</span>
             <div className="w-8 shrink-0" />
@@ -692,124 +665,15 @@ export const ProfileScreen = ({
         </div>
       )}
 
-      {/* DIRECT SUBMENU: PAYMENTS, balances & LEDGER HISTORY (3) */}
-      {activeProfileSubView === "payments" && (
-        <div id="subview_payments_wallet" className="space-y-6 animate-slide-up text-left">
-          <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
-            <button
-              onClick={() => setActiveProfileSubView("settings")}
-              className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" /> Settings
-            </button>
-            <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Spontaneous Pocket</span>
-            <div className="w-8 shrink-0" />
-          </div>
-
-          <div id="wallet_balance_card" className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-900 rounded-3xl p-6 relative overflow-hidden shadow-xl text-center space-y-4">
-            <div className="space-y-1">
-              <span className="text-[10px] font-mono text-zinc-550 uppercase tracking-[0.25em]">SPONTANEOUS BALANCE</span>
-              <h1 className="text-4xl font-display font-black text-white select-all">
-                ₹{walletBalance.toLocaleString("en-IN")}
-              </h1>
-            </div>
-
-            <div className="flex justify-center gap-3">
-              <button
-                id="add_money_btn"
-                onClick={() => setShowDepositModal(true)}
-                className="bg-zinc-100 hover:bg-white text-black font-semibold text-xs px-6 py-2.5 rounded-full transition-all shadow-md cursor-pointer"
-              >
-                Deposit Cash (UPI)
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-[10.5px] font-display uppercase tracking-[0.15em] text-zinc-500 font-bold px-1 text-left">
-              Active Plan Co-pays
-            </h3>
-
-            {(() => {
-              const activePaidPlans = plans.filter(p => p.status !== "cancelled" && p.cost > 0 && p.joinedUsers.some(u => u.name === userProfile.name));
-              if (activePaidPlans.length === 0) {
-                return (
-                  <p className="text-[10px] text-zinc-500 italic p-3 text-center bg-zinc-950 rounded-2xl border border-zinc-900">
-                    No active plan co-pays yet. Join a plan with a ticket/shuffled split!
-                  </p>
-                );
-              }
-              return (
-                <div className="space-y-2">
-                  {activePaidPlans.map(p => (
-                    <div key={p.id} className="bg-zinc-950 border border-zinc-900/60 rounded-2xl p-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-lg shrink-0">⚡</span>
-                        <div className="min-w-0 text-left">
-                          <h4 className="text-xs font-sans font-bold text-zinc-200 truncate">{p.title}</h4>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[8.5px] text-emerald-400 font-mono font-bold uppercase">SOCIALLY SETTLED</span>
-                            <span className="text-[8px] text-zinc-650">•</span>
-                            <div className="flex -space-x-1">
-                              {p.joinedUsers.slice(0, 3).map((u, ui) => (
-                                <img key={ui} src={u.avatar} className="w-3.5 h-3.5 rounded-full object-cover border border-zinc-950" alt="avatar" />
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="font-mono text-xs font-bold text-emerald-400 shrink-0">
-                        ₹{p.cost}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between px-1">
-              <h3 className="text-[10.5px] font-display uppercase tracking-[0.15em] text-zinc-500 font-bold">
-                Spontaneous Peer Ledger
-              </h3>
-              <span className="text-[7.5px] font-mono text-[#ff8b66] bg-[#ff8b66]/10 px-2 py-0.5 rounded border border-[#ff8b66]/15 font-bold">
-                Settle & Share History
-              </span>
-            </div>
-
-            <div id="transactions_list" className="space-y-2 max-h-[190px] overflow-y-auto no-scrollbar">
-              {transactions.map(tx => (
-                <div key={tx.id} className="bg-zinc-900/40 border border-zinc-900 rounded-2xl p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold font-mono text-sm leading-none ${tx.type === "credit" ? "bg-emerald-500/10 text-emerald-400 font-black" : "bg-[#ff5d41]/10 text-brand-peach"}`}>
-                      {tx.type === "credit" ? "+" : "−"}
-                    </div>
-                    <div className="text-left">
-                      <h4 className="text-xs font-sans font-semibold text-zinc-200">{tx.title}</h4>
-                      <span className="text-[9px] font-mono text-zinc-550 block mt-0.5 uppercase">{tx.timestamp}</span>
-                    </div>
-                  </div>
-
-                  <div className="font-mono text-xs font-bold text-zinc-200">
-                    {tx.type === "credit" ? "+" : "−"} ₹{tx.amount}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* DIRECT SUBMENU: PRIVACY & MAP indicators (4) */}
       {activeProfileSubView === "privacy" && (
         <div id="subview_privacy_rules" className="space-y-5 animate-slide-up text-left">
           <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
             <button
-              onClick={() => setActiveProfileSubView("settings")}
+              onClick={() => setActiveProfileSubView("none")}
               className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
             >
-              <ChevronLeft className="w-3.5 h-3.5" /> Settings
+              <ChevronLeft className="w-3.5 h-3.5" /> Back
             </button>
             <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Privacy Rules</span>
             <div className="w-8 shrink-0" />
@@ -871,10 +735,10 @@ export const ProfileScreen = ({
         <div id="subview_help_faqs" className="space-y-5 animate-slide-up text-left">
           <div className="flex items-center justify-between pb-2 border-b border-zinc-900">
             <button
-              onClick={() => setActiveProfileSubView("settings")}
+              onClick={() => setActiveProfileSubView("none")}
               className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] uppercase font-mono font-bold"
             >
-              <ChevronLeft className="w-3.5 h-3.5" /> Settings
+              <ChevronLeft className="w-3.5 h-3.5" /> Back
             </button>
             <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase">Help Desk FAQ</span>
             <div className="w-8 shrink-0" />

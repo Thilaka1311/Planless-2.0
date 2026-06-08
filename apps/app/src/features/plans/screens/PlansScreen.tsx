@@ -106,9 +106,8 @@ export const PlansScreen = ({
     if (plansFilter === "going") match = isGoing && !p.isHappened && !autoPassed && !isSkipped;
     else if (plansFilter === "waitlist") match = isWaitlisted && !p.isHappened && !isSkipped;
     else if (plansFilter === "passed") {
-      // Passed = explicitly skipped by user OR auto-passed OR historically joined
-      const historicallyJoined = p.isHappened && (isGoing || isWaitlisted);
-      match = isSkipped || autoPassed || historicallyJoined;
+      // Passed = explicitly skipped by user OR auto-passed
+      match = isSkipped || autoPassed;
     }
     else if (plansFilter === "hosted") match = isHosted;
 
@@ -234,7 +233,7 @@ export const PlansScreen = ({
       const isWait = myNormalizedStatus === "waitlist";
       const isHosted = plan.creatorId === "u_self" || plan.creatorName === userProfile.name;
       const isPassed =
-        (passedByPlanId[plan.id] || []).includes(userProfile.name) || (plan.isHappened && (isGoing || isWait)) || myNormalizedStatus === "skipped";
+        (passedByPlanId[plan.id] || []).includes(userProfile.name) || myNormalizedStatus === "skipped";
       if (isPassed) badge = getStatusBadge("passed");
       else if (isHosted) badge = getStatusBadge("hosted");
       else if (isGoing) badge = getStatusBadge("going");
@@ -585,8 +584,7 @@ export const PlansScreen = ({
               if (seg.key === "going") return isGoing && !p.isHappened && !autoPassed && !isSkipped;
               if (seg.key === "waitlist") return isWaitlisted && !p.isHappened && !isSkipped;
               if (seg.key === "passed") {
-                const historicallyJoined = p.isHappened && (isGoing || isWaitlisted);
-                return isSkipped || autoPassed || historicallyJoined;
+                return isSkipped || autoPassed;
               }
               if (seg.key === "hosted") return isHosted;
               return false;

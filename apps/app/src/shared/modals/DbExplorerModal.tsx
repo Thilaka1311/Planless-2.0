@@ -1,6 +1,6 @@
 import React from "react";
 import { Database } from "lucide-react";
-import { User, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory, DbMemoryAttendee, DbMemoryRating, DbMemoryMatch } from "../../core/types";
+import { User, DbCircle, DbCircleMember, DbPlan, DbPlanParticipant, DbTransaction, DbMemory, DbMemoryAttendee, DbMemoryMovieVerdict, DbMemoryRestaurantVote, DbMemoryMatchResult, DbMemoryMvpVote } from "../../core/types";
 
 interface DbExplorerModalProps {
   isOpen: boolean;
@@ -15,8 +15,10 @@ interface DbExplorerModalProps {
   dbTransactions: DbTransaction[];
   dbMemories: DbMemory[];
   dbMemoryAttendees: DbMemoryAttendee[];
-  dbMemoryRatings: DbMemoryRating[];
-  dbMemoryMatches: DbMemoryMatch[];
+  dbMemoryMovieVerdicts: DbMemoryMovieVerdict[];
+  dbMemoryRestaurantVotes: DbMemoryRestaurantVote[];
+  dbMemoryMatchResults: DbMemoryMatchResult[];
+  dbMemoryMvpVotes: DbMemoryMvpVote[];
 }
 
 export default function DbExplorerModal({
@@ -32,8 +34,10 @@ export default function DbExplorerModal({
   dbTransactions,
   dbMemories,
   dbMemoryAttendees,
-  dbMemoryRatings,
-  dbMemoryMatches
+  dbMemoryMovieVerdicts,
+  dbMemoryRestaurantVotes,
+  dbMemoryMatchResults,
+  dbMemoryMvpVotes
 }: DbExplorerModalProps) {
   if (!isOpen) return null;
 
@@ -46,8 +50,10 @@ export default function DbExplorerModal({
     "transactions",
     "memories",
     "memory_attendees",
-    "memory_ratings",
-    "memory_matches"
+    "movie_verdicts",
+    "restaurant_votes",
+    "match_results",
+    "mvp_votes"
   ];
 
   return (
@@ -70,9 +76,9 @@ export default function DbExplorerModal({
           <button
             key={table}
             onClick={() => setSelectedDbTable(table)}
-            className={`flex-1 min-w-[70px] py-3 text-center text-[9px] font-mono uppercase focus:outline-none relative ${selectedDbTable === table ? "text-brand-orange bg-zinc-900/40 font-bold" : "text-zinc-550"}`}
+            className={`flex-grow min-w-[70px] py-3 px-1 text-center text-[9px] font-mono uppercase focus:outline-none relative ${selectedDbTable === table ? "text-brand-orange bg-zinc-900/40 font-bold" : "text-zinc-500"}`}
           >
-            {table.substring(0, 8)}
+            {table.substring(0, 10)}
           </button>
         ))}
       </div>
@@ -87,8 +93,10 @@ export default function DbExplorerModal({
           {selectedDbTable === "transactions" && JSON.stringify(dbTransactions, null, 2)}
           {selectedDbTable === "memories" && JSON.stringify(dbMemories, null, 2)}
           {selectedDbTable === "memory_attendees" && JSON.stringify(dbMemoryAttendees, null, 2)}
-          {selectedDbTable === "memory_ratings" && JSON.stringify(dbMemoryRatings, null, 2)}
-          {selectedDbTable === "memory_matches" && JSON.stringify(dbMemoryMatches, null, 2)}
+          {selectedDbTable === "movie_verdicts" && JSON.stringify(dbMemoryMovieVerdicts, null, 2)}
+          {selectedDbTable === "restaurant_votes" && JSON.stringify(dbMemoryRestaurantVotes, null, 2)}
+          {selectedDbTable === "match_results" && JSON.stringify(dbMemoryMatchResults, null, 2)}
+          {selectedDbTable === "mvp_votes" && JSON.stringify(dbMemoryMvpVotes, null, 2)}
         </pre>
       </div>
     </div>

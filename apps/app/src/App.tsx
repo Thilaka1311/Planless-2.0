@@ -10,6 +10,7 @@ import { PlansProvider } from "./features/plans/state/PlansContext";
 import { ProfileProvider, useProfileStore } from "./features/profile/state/ProfileContext";
 import { WalletProvider } from "./features/wallet/state/WalletContext";
 import { CirclesProvider } from "./features/circles/state/CirclesContext";
+import { DeveloperPanel } from "./components/dev/DeveloperPanel";
 
 export default function App() {
   const query = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
@@ -139,35 +140,47 @@ function AppContent({
       />
 
       <div className="flex-1 w-full flex items-center justify-center py-6 sm:py-8 z-10">
-        <div 
-          className={`transition-all duration-500 ${
-            isSimulatorMode 
-              ? "w-[390px] h-[780px] bg-[#121214] border-[12px] border-[#222225] rounded-[3rem] shadow-2xl relative iphone-frame overflow-hidden flex flex-col"
-              : "w-full max-w-md h-[740px] bg-[#0A0A0B] border border-zinc-900 rounded-3xl shadow-xl overflow-hidden flex flex-col"
-          }`}
-        >
-          {isSimulatorMode && <SimulatorStatusBar currentTime={currentTime} />}
-
-          <div className="flex-1 overflow-hidden relative">
-            {!userProfile ? (
+        {!userProfile ? (
+          <div className="w-[390px] h-[780px] bg-[#121214] border-[12px] border-[#222225] rounded-[3rem] shadow-2xl relative iphone-frame overflow-hidden flex flex-col">
+            <SimulatorStatusBar currentTime={currentTime} />
+            <div className="flex-1 overflow-hidden relative">
               <OnboardingFlow onComplete={handleOnboardingComplete} />
-            ) : (
-              <WalletProvider userId={userProfile.dbUuid}>
-                <CirclesProvider userId={userProfile.dbUuid}>
-                  <PlansProvider userId={userProfile.dbUuid}>
-                    <MainApp 
-                      userProfile={userProfile} 
-                      activeUserId={userProfile.dbUuid || "U001"} 
-                      onLogout={handleLogoutReset} 
-                    />
-                  </PlansProvider>
-                </CirclesProvider>
-              </WalletProvider>
-            )}
+            </div>
+            <SimulatorHomeBar />
           </div>
+        ) : (
+          <WalletProvider userId={userProfile.dbUuid}>
+            <CirclesProvider userId={userProfile.dbUuid}>
+              <PlansProvider userId={userProfile.dbUuid}>
+                <div className="flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8 max-w-6xl w-full mx-auto">
+                  {/* Developer Testing Panel (Desktop Layout) */}
+                  <DeveloperPanel />
 
-          {isSimulatorMode && <SimulatorHomeBar />}
-        </div>
+                  {/* Phone Frame */}
+                  <div 
+                    className={`transition-all duration-500 shrink-0 ${
+                      isSimulatorMode 
+                        ? "w-[390px] h-[780px] bg-[#121214] border-[12px] border-[#222225] rounded-[3rem] shadow-2xl relative iphone-frame overflow-hidden flex flex-col"
+                        : "w-full max-w-md h-[740px] bg-[#0A0A0B] border border-zinc-900 rounded-3xl shadow-xl overflow-hidden flex flex-col"
+                    }`}
+                  >
+                    {isSimulatorMode && <SimulatorStatusBar currentTime={currentTime} />}
+
+                    <div className="flex-1 overflow-hidden relative">
+                      <MainApp 
+                        userProfile={userProfile} 
+                        activeUserId={userProfile.dbUuid || "U001"} 
+                        onLogout={handleLogoutReset} 
+                      />
+                    </div>
+
+                    {isSimulatorMode && <SimulatorHomeBar />}
+                  </div>
+                </div>
+              </PlansProvider>
+            </CirclesProvider>
+          </WalletProvider>
+        )}
       </div>
 
       <WorkspaceFooter />

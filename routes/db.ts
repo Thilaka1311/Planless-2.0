@@ -10,7 +10,7 @@ router.get("/fetch-all", async (req, res) => {
       res.json({
         configured: false,
         tables_missing: true,
-        missing_tables: ["users", "circles", "circle_members", "plans", "plan_participants", "transactions", "memories", "memory_attendees", "memory_ratings", "memory_matches", "friendships"],
+        missing_tables: ["users", "circles", "circle_members", "plans", "plan_participants", "transactions", "memories", "memory_attendees", "memory_movie_verdicts", "memory_restaurant_votes", "memory_match_results", "memory_mvp_votes", "friendships"],
         data: null
       });
       return;
@@ -28,8 +28,10 @@ router.get("/fetch-all", async (req, res) => {
       "transactions",
       "memories",
       "memory_attendees",
-      "memory_ratings",
-      "memory_matches",
+      "memory_movie_verdicts",
+      "memory_restaurant_votes",
+      "memory_match_results",
+      "memory_mvp_votes",
       "user_stats",
       "notifications",
       "user_data",
@@ -250,40 +252,126 @@ router.post("/upsert", async (req, res) => {
 
     console.log(`[Supabase DB Write] Table: ${table}, Payload before write:`, records);
 
-    const isInsert = records.every(r => r.id === undefined || r.id === null) && table !== "user_stats" && table !== "user_data";
-    
+    // Per-table write strategy.
+    // memories / memory_attendees / memory_ratings use upsert with onConflict so that
+    // retrying completePlan (or a double-click) never causes a 23505 unique violation.
+    // These tables receive client-generated UUIDs in the `id` field, which would
+    // otherwise route them into the UPDATE path — silently writing 0 rows since
+    // the row doesn't exist yet.
     let data, error;
-    if (isInsert) {
-      const { data: resData, error: resErr } = await client.from(table).insert(records).select("*");
-      data = resData;
-      error = resErr;
-    } else {
-      const updatedRows = [];
+
+    if (table === "memories") {
+      const results: any[] = [];
       for (const rec of records) {
-        if (rec.id) {
-          const { data: resData, error: resErr } = await client
-            .from(table)
+        if (rec.plan_id) {
+          // Check if memory already exists for this plan_id
+          const { data: existing } = await client
+            .from("memories")
+            .select("*")
+            .eq("plan_id", rec.plan_id);
+          
+          if (existing && existing.length > 0) {
+            // Keep the existing database ID to preserve foreign key references
+            const updatePayload = { ...rec, id: existing[0].id };
+            const { data: d, error: e } = await client
+              .from("memories")
+              .update(updatePayload)
+              .eq("id", existing[0].id)
+              .select("*");
+            if (e) { error = e; break; }
+            if (d) results.push(...d);
+          } else {
+            // Insert new memory row
+            const { data: d, error: e } = await client
+              .from("memories")
+              .insert([rec])
+              .select("*");
+            if (e) { error = e; break; }
+            if (d) results.push(...d);
+          }
+        } else if (rec.id) {
+          // Update by id (e.g. host saving football/badminton score)
+          const { data: d, error: e } = await client
+            .from("memories")
             .update(rec)
             .eq("id", rec.id)
             .select("*");
-          if (resErr) {
-            error = resErr;
-            break;
-          }
-          if (resData) updatedRows.push(...resData);
-        } else {
-          const { data: resData, error: resErr } = await client
-            .from(table)
-            .upsert([rec])
-            .select("*");
-          if (resErr) {
-            error = resErr;
-            break;
-          }
-          if (resData) updatedRows.push(...resData);
+          if (e) { error = e; break; }
+          if (d) results.push(...d);
         }
       }
-      data = updatedRows;
+      data = results;
+    } else if (table === "memory_attendees") {
+      // (memory_id, user_id) is UNIQUE
+      const { data: d, error: e } = await client
+        .from("memory_attendees")
+        .upsert(records, { onConflict: "memory_id,user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_movie_verdicts") {
+      // (memory_id, user_id) is UNIQUE
+      const { data: d, error: e } = await client
+        .from("memory_movie_verdicts")
+        .upsert(records, { onConflict: "memory_id,user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_restaurant_votes") {
+      // (memory_id, user_id) is UNIQUE
+      const { data: d, error: e } = await client
+        .from("memory_restaurant_votes")
+        .upsert(records, { onConflict: "memory_id,user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_match_results") {
+      // memory_id is UNIQUE (one match result per memory)
+      const { data: d, error: e } = await client
+        .from("memory_match_results")
+        .upsert(records, { onConflict: "memory_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_mvp_votes") {
+      // (memory_id, voter_user_id) is UNIQUE
+      const { data: d, error: e } = await client
+        .from("memory_mvp_votes")
+        .upsert(records, { onConflict: "memory_id,voter_user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else {
+      const isInsert = records.every((r: any) => r.id === undefined || r.id === null) &&
+        table !== "user_stats" &&
+        table !== "user_data";
+
+      if (isInsert) {
+        const { data: resData, error: resErr } = await client.from(table).insert(records).select("*");
+        data = resData;
+        error = resErr;
+      } else {
+        const updatedRows: any[] = [];
+        for (const rec of records) {
+          if (rec.id) {
+            const { data: resData, error: resErr } = await client
+              .from(table)
+              .update(rec)
+              .eq("id", rec.id)
+              .select("*");
+            if (resErr) { error = resErr; break; }
+            if (resData) updatedRows.push(...resData);
+          } else {
+            const { data: resData, error: resErr } = await client
+              .from(table)
+              .upsert([rec])
+              .select("*");
+            if (resErr) { error = resErr; break; }
+            if (resData) updatedRows.push(...resData);
+          }
+        }
+        data = updatedRows;
+      }
     }
 
     if (error) {

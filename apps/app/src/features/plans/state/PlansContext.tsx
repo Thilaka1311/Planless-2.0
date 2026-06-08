@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
-import { Plan, PlanMember, DbPlan, DbPlanParticipant, DbMemory, DbMemoryAttendee, DbMemoryRating, DbMemoryMatch, User } from "../../../core/types";
+import { Plan, PlanMember, DbPlan, DbPlanParticipant, DbMemory, DbMemoryAttendee, DbMemoryMovieVerdict, DbMemoryRestaurantVote, DbMemoryMatchResult, DbMemoryMvpVote, DbMemoryBadmintonResult, User } from "../../../core/types";
 import { useProfileStore } from "../../profile/state/ProfileContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
 import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats, createRazorpayOrder, verifyRazorpayPayment, insertTransaction } from "../../../lib/db";
@@ -29,10 +29,16 @@ interface PlansContextType {
   setDbMemories: React.Dispatch<React.SetStateAction<DbMemory[]>>;
   dbMemoryAttendees: DbMemoryAttendee[];
   setDbMemoryAttendees: React.Dispatch<React.SetStateAction<DbMemoryAttendee[]>>;
-  dbMemoryRatings: DbMemoryRating[];
-  setDbMemoryRatings: React.Dispatch<React.SetStateAction<DbMemoryRating[]>>;
-  dbMemoryMatches: DbMemoryMatch[];
-  setDbMemoryMatches: React.Dispatch<React.SetStateAction<DbMemoryMatch[]>>;
+  dbMemoryMovieVerdicts: DbMemoryMovieVerdict[];
+  setDbMemoryMovieVerdicts: React.Dispatch<React.SetStateAction<DbMemoryMovieVerdict[]>>;
+  dbMemoryRestaurantVotes: DbMemoryRestaurantVote[];
+  setDbMemoryRestaurantVotes: React.Dispatch<React.SetStateAction<DbMemoryRestaurantVote[]>>;
+  dbMemoryMatchResults: DbMemoryMatchResult[];
+  setDbMemoryMatchResults: React.Dispatch<React.SetStateAction<DbMemoryMatchResult[]>>;
+  dbMemoryMvpVotes: DbMemoryMvpVote[];
+  setDbMemoryMvpVotes: React.Dispatch<React.SetStateAction<DbMemoryMvpVote[]>>;
+  dbMemoryBadmintonResults: DbMemoryBadmintonResult[];
+  setDbMemoryBadmintonResults: React.Dispatch<React.SetStateAction<DbMemoryBadmintonResult[]>>;
   createPlan: (plan: DbPlan, invitees: string[]) => Promise<any>;
   joinPlan: (planId: string, userProfile: any) => Promise<void>;
   leavePlan: (planId: string, leaverId: string) => Promise<void>;
@@ -56,6 +62,11 @@ interface PlansContextType {
   cancelPlan: (planId: string) => Promise<void>;
   updatePlanDetails: (planId: string, updates: Partial<DbPlan>) => Promise<void>;
   completePlan: (planId: string) => Promise<void>;
+  submitMovieVerdict: (memoryId: string, verdict: "loved_it" | "good" | "not_for_me", userUuid: string) => Promise<void>;
+  submitRestaurantVote: (memoryId: string, vote: "yes" | "maybe" | "no", userUuid: string) => Promise<void>;
+  submitMatchResult: (memoryId: string, teamAScore: number, teamBScore: number, recordedByUuid: string) => Promise<void>;
+  submitMvpVote: (memoryId: string, voterUuid: string, mvpUuid: string) => Promise<void>;
+  submitBadmintonResult: (memoryId: string, wins: number, losses: number, userUuid: string) => Promise<void>;
 }
 
 const PlansContext = createContext<PlansContextType | undefined>(undefined);
@@ -66,8 +77,11 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [dbPlanParticipants, setDbPlanParticipants] = useState<DbPlanParticipant[]>([]);
   const [dbMemories, setDbMemories] = useState<DbMemory[]>([]);
   const [dbMemoryAttendees, setDbMemoryAttendees] = useState<DbMemoryAttendee[]>([]);
-  const [dbMemoryRatings, setDbMemoryRatings] = useState<DbMemoryRating[]>([]);
-  const [dbMemoryMatches, setDbMemoryMatches] = useState<DbMemoryMatch[]>([]);
+  const [dbMemoryMovieVerdicts, setDbMemoryMovieVerdicts] = useState<DbMemoryMovieVerdict[]>([]);
+  const [dbMemoryRestaurantVotes, setDbMemoryRestaurantVotes] = useState<DbMemoryRestaurantVote[]>([]);
+  const [dbMemoryMatchResults, setDbMemoryMatchResults] = useState<DbMemoryMatchResult[]>([]);
+  const [dbMemoryMvpVotes, setDbMemoryMvpVotes] = useState<DbMemoryMvpVote[]>([]);
+  const [dbMemoryBadmintonResults, setDbMemoryBadmintonResults] = useState<DbMemoryBadmintonResult[]>([]);
 
   const { activeUserId: userId, dbUsers } = useProfileStore();
 
@@ -91,8 +105,11 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (d.plan_participants !== undefined) setDbPlanParticipants(d.plan_participants);
           if (d.memories !== undefined) setDbMemories(d.memories);
           if (d.memory_attendees !== undefined) setDbMemoryAttendees(d.memory_attendees);
-          if (d.memory_ratings !== undefined) setDbMemoryRatings(d.memory_ratings);
-          if (d.memory_matches !== undefined) setDbMemoryMatches(d.memory_matches);
+          if (d.memory_movie_verdicts !== undefined) setDbMemoryMovieVerdicts(d.memory_movie_verdicts);
+          if (d.memory_restaurant_votes !== undefined) setDbMemoryRestaurantVotes(d.memory_restaurant_votes);
+          if (d.memory_match_results !== undefined) setDbMemoryMatchResults(d.memory_match_results);
+          if (d.memory_mvp_votes !== undefined) setDbMemoryMvpVotes(d.memory_mvp_votes);
+          if (d.memory_badminton_results !== undefined) setDbMemoryBadmintonResults(d.memory_badminton_results);
 
           // Trigger plans update with latest values combined from state and fetched subset
           setDbPlans(currentPlans => {
@@ -994,7 +1011,16 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const completePlan = async (planId: string) => {
-    console.log(`[completePlan] Starting completion flow for planId:`, planId);
+    console.log("COMPLETE_PLAN_START", { planId });
+    console.log("COMPLETE_PLAN_FUNCTION_ENTERED", {
+      planId,
+      matchedPlan: plans.find(p => p.id === planId || p.dbUuid === planId)
+        ? { id: plans.find(p => p.id === planId || p.dbUuid === planId)?.id,
+            dbUuid: plans.find(p => p.id === planId || p.dbUuid === planId)?.dbUuid,
+            status: plans.find(p => p.id === planId || p.dbUuid === planId)?.status }
+        : "NOT FOUND IN plans[]",
+      plansArrayLength: plans.length,
+    });
 
     const matchedPlan = plans.find(p => p.id === planId || p.dbUuid === planId);
     const planUuid = matchedPlan?.dbUuid || planId;
@@ -1003,16 +1029,21 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error("Cannot complete plan: invalid plan ID");
     }
 
-    // Determine memory_type from plan category or title keywords
+    // Determine memory_type from structured fields
     let memory_type = "football";
-    const category = (matchedPlan?.category || "").toLowerCase();
-    const title = (matchedPlan?.title || "").toLowerCase();
-    if (category === "movies" || title.includes("movie") || title.includes("cinema") || title.includes("film")) {
-      memory_type = "movie";
-    } else if (category === "restaurants" || title.includes("dinner") || title.includes("lunch") || title.includes("food") || title.includes("dining") || title.includes("eat")) {
-      memory_type = "dining";
-    } else if (title.includes("badminton") || title.includes("shuttle")) {
-      memory_type = "badminton";
+    const dbPlanObj = dbPlans.find(p => p.id === planUuid || p.plan_id === planUuid);
+    if (dbPlanObj) {
+      if (dbPlanObj.category === "movies") {
+        memory_type = "movie";
+      } else if (dbPlanObj.category === "dining") {
+        memory_type = "dining";
+      } else if (dbPlanObj.category === "sports") {
+        if (dbPlanObj.activity_type === "football") {
+          memory_type = "football";
+        } else if (dbPlanObj.activity_type === "badminton") {
+          memory_type = "badminton";
+        }
+      }
     }
 
     // Get going participants fresh from DB
@@ -1033,6 +1064,10 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const memoryId = crypto.randomUUID();
 
     // 1. Update plan status to completed
+    console.log("PLAN_STATUS_BEFORE_UPDATE", {
+      planUuid,
+      payload: { id: planUuid, status: "completed" },
+    });
     const planRes = await fetch("/api/db/upsert", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1041,11 +1076,26 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         records: [{ id: planUuid, status: "completed" }]
       })
     });
+    const planResBody = await planRes.clone().json().catch(() => null);
+    console.log("PLAN_UPDATE_RESPONSE", {
+      httpStatus: planRes.status,
+      ok: planRes.ok,
+      body: planResBody,
+    });
     if (!planRes.ok) {
+      console.error("PLAN_COMPLETE_STATUS_ERROR", { status: planRes.status, body: planResBody });
       throw new Error("Failed to update plan status to completed");
     }
+    console.log("PLAN_COMPLETED", { planUuid, status: planRes.status, body: planResBody });
 
     // 2. Insert memories row
+    console.log("MEMORY_PLAN_UUID_AUDIT", {
+      planId,
+      matchedPlanId: matchedPlan?.id,
+      matchedPlanDbUuid: matchedPlan?.dbUuid,
+      resolvedPlanUuid: planUuid,
+      matchedPlanStatus: matchedPlan?.status,
+    });
     const memoryRecord = {
       id: memoryId,
       plan_id: planUuid,
@@ -1055,6 +1105,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       editable_until
     };
 
+    console.log("MEMORY_INSERT_START", { memoryRecord });
+    console.log("MEMORY_INSERT_PAYLOAD", memoryRecord);
+
     const memRes = await fetch("/api/db/upsert", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1063,11 +1116,32 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         records: [memoryRecord]
       })
     });
+    const memResBody = await memRes.clone().json().catch(() => null);
+    console.log("MEMORY_INSERT_RESPONSE", {
+      httpStatus: memRes.status,
+      ok: memRes.ok,
+      body: memResBody,
+    });
     if (!memRes.ok) {
-      throw new Error("Failed to create memory record in database");
+      console.error("MEMORY_INSERT_ERROR", {
+        httpStatus: memRes.status,
+        body: memResBody,
+        supabaseCode: memResBody?.error?.code,
+        supabaseMessage: memResBody?.error?.message,
+        memoryRecord
+      });
+      throw new Error(
+        `Memory insert failed (HTTP ${memRes.status}): ${memResBody?.error || memResBody?.message || "unknown error"}`
+      );
     }
+    if (memResBody?.success === false) {
+      console.error("MEMORY_INSERT_ERROR", { reason: "API returned success=false", body: memResBody, memoryRecord });
+      throw new Error(`Memory insert rejected: ${memResBody?.error || "unknown error"}`);
+    }
+    console.log("MEMORY_INSERT_SUCCESS", { memoryId, httpStatus: memRes.status, body: memResBody });
 
     // 3. Snapshot going participants to memory_attendees
+    console.log("MEMORY_ATTENDEES_INSERT_START", { goingParticipantCount: goingParticipants.length, goingParticipants });
     if (goingParticipants.length > 0) {
       const attendeeRecords = goingParticipants.map(gp => ({
         id: crypto.randomUUID(),
@@ -1084,13 +1158,23 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           records: attendeeRecords
         })
       });
+      const attResBody = await attRes.clone().json().catch(() => null);
       if (!attRes.ok) {
-        console.error("[completePlan] Failed to write memory attendee snapshot to database");
+        console.error("MEMORY_ATTENDEES_INSERT_ERROR", {
+          httpStatus: attRes.status,
+          body: attResBody,
+          supabaseCode: attResBody?.error?.code,
+          supabaseMessage: attResBody?.error?.message,
+          attendeeRecords
+        });
+      } else {
+        console.log("MEMORY_ATTENDEES_INSERT_SUCCESS", { httpStatus: attRes.status, body: attResBody });
       }
     }
 
-    console.log(`[completePlan] SUCCESSFULLY COMPLETED PLAN. Refreshing state.`);
-    await refreshPlans(["plans", "memories", "memory_attendees", "plan_participants"]);
+    console.log("REFRESH_PLANS_START");
+    await refreshPlans(["plans", "memories", "memory_attendees", "plan_participants", "memory_movie_verdicts", "memory_restaurant_votes", "memory_match_results", "memory_mvp_votes", "memory_badminton_results"]);
+    console.log("REFRESH_PLANS_COMPLETE");
   };
 
   // Reminder System
@@ -1427,6 +1511,126 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
+  const submitMovieVerdict = async (memoryId: string, verdict: "loved_it" | "good" | "not_for_me", userUuid: string) => {
+    console.log(`[submitMovieVerdict] Submitting verdict ${verdict} for memory ${memoryId} by user ${userUuid}`);
+    const verdictRecord = {
+      id: crypto.randomUUID(),
+      memory_id: memoryId,
+      user_id: userUuid,
+      verdict,
+      created_at: new Date().toISOString()
+    };
+    const res = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "memory_movie_verdicts",
+        records: [verdictRecord]
+      })
+    });
+    if (!res.ok) {
+      throw new Error("Failed to submit movie verdict");
+    }
+    await refreshPlans(["memories", "memory_movie_verdicts", "memory_attendees"]);
+  };
+
+  const submitRestaurantVote = async (memoryId: string, vote: "yes" | "maybe" | "no", userUuid: string) => {
+    console.log(`[submitRestaurantVote] Submitting vote ${vote} for memory ${memoryId} by user ${userUuid}`);
+    const voteRecord = {
+      id: crypto.randomUUID(),
+      memory_id: memoryId,
+      user_id: userUuid,
+      vote,
+      created_at: new Date().toISOString()
+    };
+    const res = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "memory_restaurant_votes",
+        records: [voteRecord]
+      })
+    });
+    if (!res.ok) {
+      throw new Error("Failed to submit restaurant vote");
+    }
+    await refreshPlans(["memories", "memory_restaurant_votes", "memory_attendees"]);
+  };
+
+  const submitMatchResult = async (memoryId: string, teamAScore: number, teamBScore: number, recordedByUuid: string) => {
+    console.log(`[submitMatchResult] Saving score ${teamAScore}-${teamBScore} for memory ${memoryId} by ${recordedByUuid}`);
+    const resultRecord = {
+      id: crypto.randomUUID(),
+      memory_id: memoryId,
+      team_a_score: teamAScore,
+      team_b_score: teamBScore,
+      recorded_by: recordedByUuid,
+      created_at: new Date().toISOString()
+    };
+    const res = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "memory_match_results",
+        records: [resultRecord]
+      })
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error || "Failed to save match result");
+    }
+    await refreshPlans(["memories", "memory_match_results", "memory_attendees"]);
+  };
+
+  const submitMvpVote = async (memoryId: string, voterUuid: string, mvpUuid: string) => {
+    console.log(`[submitMvpVote] Submitting MVP vote for voter ${voterUuid} nominating ${mvpUuid} on memory ${memoryId}`);
+    const voteRecord = {
+      id: crypto.randomUUID(),
+      memory_id: memoryId,
+      voter_user_id: voterUuid,
+      mvp_user_id: mvpUuid,
+      created_at: new Date().toISOString()
+    };
+    const res = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "memory_mvp_votes",
+        records: [voteRecord]
+      })
+    });
+    if (!res.ok) {
+      throw new Error("Failed to submit MVP vote");
+    }
+    await refreshPlans(["memories", "memory_mvp_votes", "memory_attendees"]);
+  };
+
+  const submitBadmintonResult = async (memoryId: string, wins: number, losses: number, userUuid: string) => {
+    console.log(`[submitBadmintonResult] Submitting badminton result: wins=${wins}, losses=${losses} for memory ${memoryId} by user ${userUuid}`);
+    const resultRecord = {
+      id: crypto.randomUUID(),
+      memory_id: memoryId,
+      user_id: userUuid,
+      wins,
+      losses,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    const res = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "memory_badminton_results",
+        records: [resultRecord]
+      })
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error || "Failed to submit badminton result");
+    }
+    await refreshPlans(["memories", "memory_badminton_results", "memory_attendees"]);
+  };
+
   return (
     <PlansContext.Provider value={{ 
       plans, setPlans, 
@@ -1434,10 +1638,13 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dbPlanParticipants, setDbPlanParticipants,
       dbMemories, setDbMemories,
       dbMemoryAttendees, setDbMemoryAttendees,
-      dbMemoryRatings, setDbMemoryRatings,
-      dbMemoryMatches, setDbMemoryMatches,
+      dbMemoryMovieVerdicts, setDbMemoryMovieVerdicts,
+      dbMemoryRestaurantVotes, setDbMemoryRestaurantVotes,
+      dbMemoryMatchResults, setDbMemoryMatchResults,
+      dbMemoryMvpVotes, setDbMemoryMvpVotes,
+      dbMemoryBadmintonResults, setDbMemoryBadmintonResults,
       joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans, getParticipantCounts, refreshPlans, markPlanSeen, skipPlan, rejoinPlan,
-      acceptPlan, declinePlan, hostPay, bookNow, changePlanHost, cancelPlan, updatePlanDetails, completePlan
+      acceptPlan, declinePlan, hostPay, bookNow, changePlanHost, cancelPlan, updatePlanDetails, completePlan, submitMovieVerdict, submitRestaurantVote, submitMatchResult, submitMvpVote, submitBadmintonResult
     }}>
       {children}
     </PlansContext.Provider>

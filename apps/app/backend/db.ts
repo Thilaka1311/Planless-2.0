@@ -27,6 +27,12 @@ router.get("/fetch-all", async (req, res) => {
       "plan_participants",
       "transactions",
       "memories",
+      "memory_attendees",
+      "memory_movie_verdicts",
+      "memory_restaurant_votes",
+      "memory_match_results",
+      "memory_mvp_votes",
+      "memory_badminton_results",
       "user_stats",
       "notifications",
       "user_data",
@@ -247,41 +253,106 @@ router.post("/upsert", async (req, res) => {
 
     console.log(`[Supabase DB Write] Table: ${table}, Payload before write:`, records);
 
-    const isInsert = records.every(r => r.id === undefined || r.id === null) && table !== "user_stats" && table !== "user_data";
-    
+    // Per-table write strategy.
+    // memories / memory_attendees / memory_ratings use upsert with onConflict so that
+    // retrying completePlan (or a double-click) never causes a 23505 unique violation.
+    // notifications use plain insert.
+    // Everything else uses the legacy id-based insert vs update logic.
     let data, error;
-    if (isInsert) {
-      const { data: resData, error: resErr } = await client.from(table).insert(records).select("*");
-      data = resData;
-      error = resErr;
+
+    if (table === "memories") {
+      // plan_id is UNIQUE — upsert so retries are safe
+      const { data: d, error: e } = await client
+        .from("memories")
+        .upsert(records, { onConflict: "plan_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_attendees") {
+      // (memory_id, user_id) is UNIQUE
+      const { data: d, error: e } = await client
+        .from("memory_attendees")
+        .upsert(records, { onConflict: "memory_id,user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_ratings") {
+      // (memory_id, user_id) is UNIQUE
+      const { data: d, error: e } = await client
+        .from("memory_ratings")
+        .upsert(records, { onConflict: "memory_id,user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_movie_verdicts") {
+      const { data: d, error: e } = await client
+        .from("memory_movie_verdicts")
+        .upsert(records, { onConflict: "memory_id,user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_restaurant_votes") {
+      const { data: d, error: e } = await client
+        .from("memory_restaurant_votes")
+        .upsert(records, { onConflict: "memory_id,user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_match_results") {
+      const { data: d, error: e } = await client
+        .from("memory_match_results")
+        .upsert(records, { onConflict: "memory_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_mvp_votes") {
+      const { data: d, error: e } = await client
+        .from("memory_mvp_votes")
+        .upsert(records, { onConflict: "memory_id,voter_user_id" })
+        .select("*");
+      data = d;
+      error = e;
+    } else if (table === "memory_badminton_results") {
+      const { data: d, error: e } = await client
+        .from("memory_badminton_results")
+        .upsert(records, { onConflict: "memory_id,user_id" })
+        .select("*");
+      data = d;
+      error = e;
     } else {
-      const updatedRows = [];
-      for (const rec of records) {
-        if (rec.id) {
-          const { data: resData, error: resErr } = await client
-            .from(table)
-            .update(rec)
-            .eq("id", rec.id)
-            .select("*");
-          if (resErr) {
-            error = resErr;
-            break;
+      const isInsert =
+        records.every((r: any) => r.id === undefined || r.id === null) &&
+        table !== "user_stats" &&
+        table !== "user_data";
+
+      if (isInsert) {
+        const { data: resData, error: resErr } = await client.from(table).insert(records).select("*");
+        data = resData;
+        error = resErr;
+      } else {
+        const updatedRows: any[] = [];
+        for (const rec of records) {
+          if (rec.id) {
+            const { data: resData, error: resErr } = await client
+              .from(table)
+              .update(rec)
+              .eq("id", rec.id)
+              .select("*");
+            if (resErr) { error = resErr; break; }
+            if (resData) updatedRows.push(...resData);
+          } else {
+            const { data: resData, error: resErr } = await client
+              .from(table)
+              .upsert([rec])
+              .select("*");
+            if (resErr) { error = resErr; break; }
+            if (resData) updatedRows.push(...resData);
           }
-          if (resData) updatedRows.push(...resData);
-        } else {
-          const { data: resData, error: resErr } = await client
-            .from(table)
-            .upsert([rec])
-            .select("*");
-          if (resErr) {
-            error = resErr;
-            break;
-          }
-          if (resData) updatedRows.push(...resData);
         }
+        data = updatedRows;
       }
-      data = updatedRows;
     }
+
 
     if (error) {
       console.error(`[Supabase DB Operation Sync] Error writing to ${table}:`, error);

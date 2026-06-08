@@ -7,6 +7,7 @@ import { syncUserStats } from "../../../lib/db";
 
 // MVP 6-step Create Flow components
 import { WhatStep } from "../components/active/WhatStep";
+import { SportStep } from "../components/active/SportStep";
 import { CustomLocationStep } from "../components/CustomLocationStep";
 import { CustomDateTimeStep } from "../components/CustomDateTimeStep";
 import { InviteRecipientsStep } from "../components/active/InviteRecipientsStep";
@@ -45,7 +46,7 @@ export function parseSpontaneousDateTimeToIso(displayString: string): string {
   return targetDate.toISOString();
 }
 
-type CreateFlowStep = "WHAT" | "LOCATION" | "DATETIME" | "WHO" | "RESPONSE_CUTOFF" | "COST" | "REVIEW";
+type CreateFlowStep = "WHAT" | "SPORT" | "LOCATION" | "DATETIME" | "WHO" | "RESPONSE_CUTOFF" | "COST" | "REVIEW";
 
 interface CreatePlanScreenProps {
   setActiveTab: (tab: "home" | "plans" | "create" | "circles" | "wallet" | "profile") => void;
@@ -70,6 +71,7 @@ export const CreatePlanScreen = ({
 
   // ── Plan fields ───────────────────────────────────────────
   const [selectedActivity, setSelectedActivity] = useState<string | null>(null);
+  const [selectedSport, setSelectedSport] = useState<"Football" | "Badminton" | "Basketball" | null>(null);
   const [newPlanTitle, setNewPlanTitle] = useState("");
   const [newPlanLocation, setNewPlanLocation] = useState("");
   const [selectedLocation, setSelectedLocation] = useState<{
@@ -221,6 +223,9 @@ export const CreatePlanScreen = ({
       response_deadline_at: responseDeadlineAt,
     };
 
+    const dbCategory = created.category === "restaurants" ? "dining" : created.category;
+    const dbActivityType = dbCategory === "sports" ? (selectedSport === "Badminton" ? "badminton" : "football") : null;
+
     const newDbPlan = {
       plan_id: planId,
       title: created.title,
@@ -228,7 +233,8 @@ export const CreatePlanScreen = ({
       created_by: userProfile.dbUuid,
       host_id: userProfile.dbUuid,
       circle_id: circleUuid,
-      activity_type: created.category,
+      activity_type: dbActivityType,
+      category: dbCategory,
       location: created.location,
       datetime: parsedIsoDateTime,
       split_amount: perPerson,
@@ -415,6 +421,7 @@ export const CreatePlanScreen = ({
 
       // Reset
       setSelectedActivity(null);
+      setSelectedSport(null);
       setNewPlanTitle("");
       setNewPlanLocation("");
       setSelectedLocation(null);
@@ -492,6 +499,16 @@ export const CreatePlanScreen = ({
         />
       )}
 
+      {/* STEP 1.5 — Sport selection (only for Sports) */}
+      {createFlowStep === "SPORT" && (
+        <SportStep
+          selectedSport={selectedSport}
+          setSelectedSport={setSelectedSport}
+          setCreateFlowStep={setCreateFlowStep}
+          onNext={() => setCreateFlowStep("LOCATION")}
+        />
+      )}
+
       {/* STEP 2 — Location */}
       {createFlowStep === "LOCATION" && (
         <CustomLocationStep
@@ -500,6 +517,7 @@ export const CreatePlanScreen = ({
           selectedLocation={selectedLocation}
           setSelectedLocation={setSelectedLocation}
           setCreateFlowStep={setCreateFlowStep}
+          onBack={() => setCreateFlowStep(selectedActivity === "Sports" ? "SPORT" : "WHAT")}
           summary={summaryProps}
         />
       )}

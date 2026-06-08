@@ -32,7 +32,8 @@ export interface DbPlan {
   created_by: string;   // UUID → users.id
   host_id?: string;      // UUID → users.id (mutable host reference)
   circle_id: string | null; // UUID → circles.id
-  activity_type: string; // "movies" | "sports" | "restaurants" | "custom"
+  activity_type: string | null; // "football" | "badminton" | null
+  category: string;     // "sports" | "movies" | "dining" | "custom"
   location: string;
   datetime: string;     // ISO timestamp
   max_people: number;
@@ -99,9 +100,6 @@ export interface DbMemory {
   created_at: string;
   locked_at: string | null;
   editable_until: string;
-  team_a_score?: number | null;
-  team_b_score?: number | null;
-  mvp_user_id?: string | null;
 }
 
 export interface DbMemoryAttendee {
@@ -111,22 +109,54 @@ export interface DbMemoryAttendee {
   created_at: string;
 }
 
-export interface DbMemoryRating {
+export interface DbMemoryMovieVerdict {
   id: string;
   memory_id: string;
   user_id: string;
-  rating: number;
+  verdict: "loved_it" | "good" | "not_for_me";
   created_at: string;
 }
 
-export interface DbMemoryMatch {
+export interface DbMemoryRestaurantVote {
   id: string;
   memory_id: string;
-  match_number: number;
+  user_id: string;
+  vote: "yes" | "maybe" | "no";
+  created_at: string;
+}
+
+export interface DbMemoryMatchResult {
+  id: string;
+  memory_id: string;
   team_a_score: number;
   team_b_score: number;
-  created_by: string;
+  recorded_by: string;
   created_at: string;
+}
+
+export interface DbMemoryMvpVote {
+  id: string;
+  memory_id: string;
+  voter_user_id: string;
+  mvp_user_id: string;
+  created_at: string;
+}
+
+export interface DbMemoryBadmintonResult {
+  id: string;
+  memory_id: string;
+  user_id: string;
+  wins: number;
+  losses: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbFriendship {
+  id?: string;
+  sender_id: string;
+  receiver_id: string;
+  created_at?: string;
 }
 
 export interface DbTransaction {
@@ -154,8 +184,11 @@ export interface DbSnapshot {
   userStats: DbUserStats[];
   memories: DbMemory[];
   memoryAttendees: DbMemoryAttendee[];
-  memoryRatings: DbMemoryRating[];
-  memoryMatches: DbMemoryMatch[];
+  memoryMovieVerdicts: DbMemoryMovieVerdict[];
+  memoryRestaurantVotes: DbMemoryRestaurantVote[];
+  memoryMatchResults: DbMemoryMatchResult[];
+  memoryMvpVotes: DbMemoryMvpVote[];
+  memoryBadmintonResults: DbMemoryBadmintonResult[];
   transactions: DbTransaction[];
   notifications: any[];
   userData: any[];
@@ -184,21 +217,24 @@ export async function fetchSnapshot(): Promise<DbSnapshot | null> {
     }
 
     return {
-      users:         (json.data?.users             || []) as DbUser[],
-      plans:         rawPlans as DbPlan[],
-      participants:  rawParticipants as DbParticipant[],
-      circles:       (json.data?.circles           || []) as DbCircle[],
-      circleMembers: (json.data?.circle_members     || []) as DbCircleMember[],
-      userStats:     (json.data?.user_stats        || []) as DbUserStats[],
-      memories:      (json.data?.memories          || []) as DbMemory[],
-      memoryAttendees:(json.data?.memory_attendees  || []) as DbMemoryAttendee[],
-      memoryRatings: (json.data?.memory_ratings    || []) as DbMemoryRating[],
-      memoryMatches: (json.data?.memory_matches    || []) as DbMemoryMatch[],
-      transactions:  (json.data?.transactions      || []) as DbTransaction[],
-      notifications: (json.data?.notifications     || []) as any[],
-      userData:      (json.data?.user_data         || []) as any[],
-      planReminders: (json.data?.plan_reminders    || []) as any[],
-      friendships:   (json.data?.friendships       || []) as DbFriendship[],
+      users:                 (json.data?.users             || []) as DbUser[],
+      plans:                 rawPlans as DbPlan[],
+      participants:          rawParticipants as DbParticipant[],
+      circles:               (json.data?.circles           || []) as DbCircle[],
+      circleMembers:         (json.data?.circle_members     || []) as DbCircleMember[],
+      userStats:             (json.data?.user_stats        || []) as DbUserStats[],
+      memories:              (json.data?.memories          || []) as DbMemory[],
+      memoryAttendees:       (json.data?.memory_attendees  || []) as DbMemoryAttendee[],
+      memoryMovieVerdicts:   (json.data?.memory_movie_verdicts || []) as DbMemoryMovieVerdict[],
+      memoryRestaurantVotes: (json.data?.memory_restaurant_votes || []) as DbMemoryRestaurantVote[],
+      memoryMatchResults:    (json.data?.memory_match_results || []) as DbMemoryMatchResult[],
+      memoryMvpVotes:        (json.data?.memory_mvp_votes   || []) as DbMemoryMvpVote[],
+      memoryBadmintonResults:(json.data?.memory_badminton_results || []) as DbMemoryBadmintonResult[],
+      transactions:          (json.data?.transactions      || []) as DbTransaction[],
+      notifications:         (json.data?.notifications     || []) as any[],
+      userData:              (json.data?.user_data         || []) as any[],
+      planReminders:         (json.data?.plan_reminders    || []) as any[],
+      friendships:           (json.data?.friendships       || []) as DbFriendship[],
     };
   } catch {
     return null;

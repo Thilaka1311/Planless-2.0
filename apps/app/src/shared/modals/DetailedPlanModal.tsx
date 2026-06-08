@@ -10,6 +10,7 @@ interface DetailedPlanModalProps {
   userProfile: UserProfile;
   activeUserId?: string;
   triggerToast: (msg: string) => void;
+  setSelectedMemoryPlan?: (plan: Plan) => void;
 }
 
 export default function DetailedPlanModal({
@@ -18,6 +19,7 @@ export default function DetailedPlanModal({
   userProfile,
   activeUserId,
   triggerToast,
+  setSelectedMemoryPlan,
 }: DetailedPlanModalProps) {
   const { getParticipantCounts, dbPlanParticipants, markPlanSeen, skipPlan, rejoinPlan, acceptPlan, joinPlan, leavePlan, changePlanHost, cancelPlan, completePlan } = usePlansStore();
   const [isSkipping, setIsSkipping] = useState(false);
@@ -128,13 +130,26 @@ export default function DetailedPlanModal({
   };
 
   const handleCompletePlan = async () => {
+    console.log("COMPLETE_HANDLER_ENTERED", {
+      planId: selectedPlan.id,
+      planDbUuid: selectedPlan.dbUuid,
+      planStatus: selectedPlan.status,
+      isCompleting,
+    });
     if (isCompleting) return;
     setIsCompleting(true);
     try {
-      await completePlan(selectedPlan.id);
+      await completePlan(selectedPlan.dbUuid || selectedPlan.id);
       triggerToast("Plan marked completed successfully");
+      if (setSelectedMemoryPlan) {
+        setSelectedMemoryPlan({
+          ...selectedPlan,
+          status: "completed"
+        });
+      }
       onClose();
     } catch (err) {
+      console.error("COMPLETE_HANDLER_ERROR", err);
       triggerToast("Failed to complete plan");
     } finally {
       setIsCompleting(false);
@@ -435,7 +450,14 @@ export default function DetailedPlanModal({
             {selectedPlan.status === "active" && (
               <button
                 type="button"
-                onClick={handleCompletePlan}
+                onClick={() => {
+                  console.log("COMPLETE_BUTTON_CLICKED", {
+                    planId: selectedPlan.id,
+                    planDbUuid: selectedPlan.dbUuid,
+                    planStatus: selectedPlan.status,
+                  });
+                  handleCompletePlan();
+                }}
                 disabled={isCompleting}
                 className="w-full mt-2 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white text-xs font-mono font-bold uppercase tracking-wider active:scale-[0.98] transition-all cursor-pointer text-center shadow-[0_0_12px_rgba(16,185,129,0.2)] disabled:opacity-50"
               >

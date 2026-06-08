@@ -139,7 +139,7 @@ export const WhatStep = ({
           text={selectedActivity ? "Continue" : "SELECT AN ACTIVITY"}
           disabled={!selectedActivity}
           hideArrow={true}
-          onPress={() => setCreateFlowStep("LOCATION")}
+          onPress={() => setCreateFlowStep(selectedActivity === "Sports" ? "SPORT" : "LOCATION")}
         />
       </div>
     </div>

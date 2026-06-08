@@ -76,33 +76,34 @@ export function usePlanVisibility(plan: Plan, userProfile: UserProfile) {
   };
 
   const displayActivityName = React.useMemo(() => {
-    if (plan.title.toLowerCase().includes("football") || plan.title.toLowerCase().includes("turf") || plan.title.toLowerCase().includes("matchday")) {
-      return "Football Tonight";
-    } else if (plan.title.toLowerCase().includes("drive") || plan.title.toLowerCase().includes("sunset")) {
-      return "Sunset Drive";
-    } else if (plan.title.toLowerCase().includes("waffles") || plan.title.toLowerCase().includes("cafe")) {
-      return "Waffle Time";
-    } else if (plan.title.toLowerCase().includes("movie") || plan.title.toLowerCase().includes("screening")) {
+    if (plan.category === "sports") {
+      if (plan.sports_type === "Football") {
+        return "Football Tonight";
+      } else if (plan.sports_type === "Badminton") {
+        return "Badminton Session";
+      }
+      return "Sports Match";
+    } else if (plan.category === "movies") {
       return "Luxe IMAX";
+    } else if (plan.category === "restaurants") {
+      return "Waffle Time";
     } else {
       return plan.title.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
     }
-  }, [plan.title]);
+  }, [plan.category, plan.sports_type, plan.title]);
 
   const categoryStr = plan.category as string;
   let categoryTag = "COFFEE NIGHT";
   if (categoryStr === "sports" || plan.id === "P001") {
     categoryTag = "MATCHDAY";
-  } else if (categoryStr === "sunset") {
-    categoryTag = "SPONTY RUN";
   } else if (categoryStr === "movies") {
     categoryTag = "BLOCKBUSTER";
-  } else if (categoryStr === "brunch" || categoryStr === "restaurants") {
+  } else if (categoryStr === "restaurants") {
     categoryTag = "CAFE VENTURES";
   }
 
   let glowStyle = "from-emerald-500/15 to-emerald-600/5 text-emerald-300 border-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.25)]";
-  if (categoryStr === "sunset" || categoryStr === "brunch" || categoryStr === "restaurants" || categoryStr === "cafe") {
+  if (categoryStr === "restaurants") {
     glowStyle = "from-rose-500/15 to-pink-500/5 text-rose-300 border-rose-500/30 shadow-[0_0_12px_rgba(244,63,94,0.25)]";
   } else if (categoryStr === "movies") {
     glowStyle = "from-sky-500/15 to-blue-600/5 text-sky-300 border-sky-500/30 shadow-[0_0_12px_rgba(14,165,233,0.25)]";
@@ -110,7 +111,7 @@ export function usePlanVisibility(plan: Plan, userProfile: UserProfile) {
     glowStyle = "from-emerald-500/15 to-emerald-600/5 text-emerald-300 border-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.25)]";
   }
 
-  const coverToUse = (plan.id === "P001" || plan.category === "sports" || plan.title.toLowerCase().includes("football") || plan.title.toLowerCase().includes("turf"))
+  const coverToUse = plan.category === "sports"
     ? "/navkis_matchday.png"
     : plan.coverImage;
 
@@ -122,7 +123,7 @@ export function usePlanVisibility(plan: Plan, userProfile: UserProfile) {
   let barGradient = "from-[#ff8b66] to-[#fc5c42]";
   let categoryColorDot = "bg-[#ff8b66]";
 
-  if (categoryStr === "sunset" || categoryStr === "brunch" || categoryStr === "restaurants" || categoryStr === "cafe") {
+  if (categoryStr === "restaurants") {
     barGradient = "from-rose-400 to-pink-500";
     categoryColorDot = "bg-rose-400";
   } else if (categoryStr === "movies") {
@@ -133,11 +134,11 @@ export function usePlanVisibility(plan: Plan, userProfile: UserProfile) {
   let groupName = plan.circleName || "Custom Plan";
   let groupColor = "text-[#ff8b66]";
 
-  if (categoryStr === "sports" || (plan.category as string) === "football" || plan.title.toLowerCase().includes("football") || plan.title.toLowerCase().includes("turf")) {
+  if (categoryStr === "sports") {
     groupColor = "text-emerald-400";
-  } else if (categoryStr === "movies" || plan.title.toLowerCase().includes("movie")) {
+  } else if (categoryStr === "movies") {
     groupColor = "text-sky-400";
-  } else if (categoryStr === "sunset" || categoryStr === "brunch" || categoryStr === "restaurants" || categoryStr === "cafe" || plan.title.toLowerCase().includes("waffles") || plan.title.toLowerCase().includes("spice")) {
+  } else if (categoryStr === "restaurants") {
     groupColor = "text-rose-400";
   }
 

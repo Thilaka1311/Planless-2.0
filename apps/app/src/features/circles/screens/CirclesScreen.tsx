@@ -17,7 +17,7 @@ export const CirclesScreen = (props: any) => {
     setNewPlanCircleId, setNewPlanTitle, setSelectedExperience: setSelectedPreset,
     setAudienceType, setSelectedCircleIds, setActiveTab, setCreateFlowStep, triggerToast,
     dbUsers, setCircles, plans, setPaymentConfirmationPlan, handleToggleJoin,
-    setSelectedPlan, setActiveStoryRecap,
+    setSelectedPlan, setActiveStoryRecap, setSelectedMemoryPlan,
     handleCreateCircle
   } = props;
 
@@ -141,6 +141,7 @@ export const CirclesScreen = (props: any) => {
             onBack={() => { setSelectedCircle(null); setIsInvitingFriends(false); }}
             onOpenSettings={() => setSubView("detail")}
             setSelectedPlan={setSelectedPlan}
+            setSelectedMemoryPlan={setSelectedMemoryPlan}
             setPaymentConfirmationPlan={setPaymentConfirmationPlan}
             handleToggleJoin={handleToggleJoin}
             setActiveStoryRecap={setActiveStoryRecap}
@@ -164,6 +165,7 @@ export const CirclesScreen = (props: any) => {
             onBack={() => setSubView("chat")}
             onAddMembers={() => setSubView("add_members")}
             setSelectedPlan={setSelectedPlan}
+            setSelectedMemoryPlan={setSelectedMemoryPlan}
             setPaymentConfirmationPlan={setPaymentConfirmationPlan}
             handleToggleJoin={handleToggleJoin}
             setActiveStoryRecap={setActiveStoryRecap}

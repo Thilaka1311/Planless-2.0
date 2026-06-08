@@ -176,7 +176,7 @@ export const mapPlansToLegacyPlans = (
     const coordinatedSeatVal = p.coordinatedSeat || (p as any).coordinatedseat || (p as any).coordinated_seat;
     const userRatingVal = p.userRating !== undefined ? p.userRating : ((p as any).userrating !== undefined ? (p as any).userrating : (p as any).user_rating);
     const userReactionVal = p.userReaction || (p as any).userreaction || (p as any).user_reaction;
-    const isHappenedVal = p.isHappened !== undefined ? p.isHappened : ((p as any).ishappened !== undefined ? (p as any).ishappened : ((p as any).is_happened !== undefined ? (p as any).is_happened : false));
+    const isHappenedVal = p.status === "completed" || (p.isHappened !== undefined ? p.isHappened : ((p as any).ishappened !== undefined ? (p as any).ishappened : ((p as any).is_happened !== undefined ? (p as any).is_happened : false)));
 
     return {
       // Strict Backend Contracts
@@ -199,7 +199,7 @@ export const mapPlansToLegacyPlans = (
       response_deadline_at: p.response_deadline_at,
 
       // UI Legacy Properties
-      category: (categoryVal === "football" ? "sports" : categoryVal === "brunch" ? "restaurants" : categoryVal) as any,
+      category: (categoryVal === "football" || categoryVal === "badminton" ? "sports" : categoryVal === "dining" || categoryVal === "restaurants" || categoryVal === "brunch" ? "restaurants" : categoryVal) as any,
       cost: costVal,
       confirmedCount: goingCount,
       maxSpots: maxSpotsVal,
@@ -223,6 +223,7 @@ export const mapPlansToLegacyPlans = (
       // Sports Plan fields
       skillLevel: categoryVal === "football" ? "Competitive" : "Intermediate",
       matchFormat: categoryVal === "football" ? "7 vs 7" : "Friendly Match",
+      sports_type: (p.sports_type || (categoryVal === "football" ? "Football" : categoryVal === "badminton" ? "Badminton" : undefined)) as "Football" | "Badminton" | "Basketball" | undefined,
       waitlistUsers: [],
       attendanceLogged: false,
 

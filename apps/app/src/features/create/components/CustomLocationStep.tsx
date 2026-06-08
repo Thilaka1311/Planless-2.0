@@ -24,6 +24,7 @@ interface CustomLocationStepProps {
     placeId: string;
   } | null) => void;
   setCreateFlowStep: (step: any) => void;
+  onBack?: () => void;
   summary?: {
     title: string;
     location?: string;
@@ -48,6 +49,7 @@ export const CustomLocationStep = ({
   selectedLocation,
   setSelectedLocation,
   setCreateFlowStep,
+  onBack,
   summary,
 }: CustomLocationStepProps) => {
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
@@ -118,7 +120,7 @@ export const CustomLocationStep = ({
         {/* Back Button */}
         <button
           type="button"
-          onClick={() => setCreateFlowStep("WHAT")}
+          onClick={onBack || (() => setCreateFlowStep("WHAT"))}
           className="text-xs font-mono font-medium text-zinc-550 hover:text-zinc-200 flex items-center gap-1.5 cursor-pointer py-1"
         >
           <ArrowLeft className="w-3.5 h-3.5" />

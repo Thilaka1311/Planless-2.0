@@ -2,15 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Settings, Users, Calendar, MapPin, ChevronRight, Plus } from "lucide-react";
 import { mapPlansToLegacyPlans } from "../../../lib/mappers";
 import { usePlansStore } from "../../../features/plans/state/PlansContext";
+import { useProfileStore } from "../../../features/profile/state/ProfileContext";
+import { getMemoryContribution } from "../../../lib/memoryContribution";
+import { DbMemory, DbMemoryAttendee, DbMemoryMovieVerdict, DbMemoryRestaurantVote, DbMemoryMatchResult, DbMemoryMvpVote, DbMemoryBadmintonResult } from "../../../core/types";
 
 interface CirclePlanCardBubbleProps {
   key?: any;
   plan: any;
   activeUserId: string;
+  activeUserUuid: string;
   isCurrentUser: boolean;
   isCompleted: boolean;
   isAlreadyJoined: boolean;
+  dbMemories: DbMemory[];
+  dbMemoryAttendees: DbMemoryAttendee[];
+  dbMemoryMovieVerdicts: DbMemoryMovieVerdict[];
+  dbMemoryRestaurantVotes: DbMemoryRestaurantVote[];
+  dbMemoryMatchResults: DbMemoryMatchResult[];
+  dbMemoryMvpVotes: DbMemoryMvpVote[];
+  dbMemoryBadmintonResults: DbMemoryBadmintonResult[];
   setSelectedPlan: (plan: any) => void;
+  setSelectedMemoryPlan: (plan: any) => void;
   setPaymentConfirmationPlan: (plan: any) => void;
   handleToggleJoin: (plan: any) => void;
   triggerToast: (msg: string) => void;
@@ -19,10 +31,19 @@ interface CirclePlanCardBubbleProps {
 const CirclePlanCardBubble = ({
   plan,
   activeUserId,
+  activeUserUuid,
   isCurrentUser,
   isCompleted,
   isAlreadyJoined,
+  dbMemories,
+  dbMemoryAttendees,
+  dbMemoryMovieVerdicts,
+  dbMemoryRestaurantVotes,
+  dbMemoryMatchResults,
+  dbMemoryMvpVotes,
+  dbMemoryBadmintonResults,
   setSelectedPlan,
+  setSelectedMemoryPlan,
   setPaymentConfirmationPlan,
   handleToggleJoin,
   triggerToast
@@ -30,12 +51,42 @@ const CirclePlanCardBubble = ({
   const cardRef = React.useRef<HTMLDivElement>(null);
   const { markPlanSeen, dbPlanParticipants, dbUsers } = usePlansStore();
 
+  // Compute memory contribution status for this completed plan
+  const planUuidForMemory = plan.dbUuid || plan.id;
+  const memory = isCompleted
+    ? dbMemories.find(m => m.plan_id === planUuidForMemory) || null
+    : null;
+  const memoryAttendees = isCompleted
+    ? dbMemoryAttendees.filter(a => a.memory_id === memory?.id)
+    : [];
+  const movieVerdicts = isCompleted
+    ? dbMemoryMovieVerdicts.filter(v => v.memory_id === memory?.id)
+    : [];
+  const restaurantVotes = isCompleted
+    ? dbMemoryRestaurantVotes.filter(v => v.memory_id === memory?.id)
+    : [];
+  const matchResults = isCompleted
+    ? dbMemoryMatchResults.filter(r => r.memory_id === memory?.id)
+    : [];
+  const mvpVotes = isCompleted
+    ? dbMemoryMvpVotes.filter(v => v.memory_id === memory?.id)
+    : [];
+
+  const isHost = plan.hostId === "u_self" || plan.hostId === activeUserUuid;
+  const badmintons = isCompleted
+    ? dbMemoryBadmintonResults.filter(r => r.memory_id === memory?.id)
+    : [];
+  const contribution = isCompleted
+    ? getMemoryContribution(memory, activeUserUuid || activeUserId, isHost, memoryAttendees, movieVerdicts, restaurantVotes, matchResults, mvpVotes, badmintons)
+    : null;
+
   React.useEffect(() => {
     if (!cardRef.current || !activeUserId) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
+          if (!dbUsers || !dbPlanParticipants) return;
           const planUuid = plan.dbUuid || plan.id;
           const meUser = dbUsers.find((u: any) => u.user_id === activeUserId || u.id === activeUserId);
           const meUuid = meUser?.id || activeUserId;
@@ -47,6 +98,7 @@ const CirclePlanCardBubble = ({
             markPlanSeen(planUuid, meUuid).catch(err => console.error("Failed to mark plan seen in circle chat:", err));
           }
         }
+
       },
       { threshold: 0.6 }
     );
@@ -69,7 +121,15 @@ const CirclePlanCardBubble = ({
 
       {/* Bubble card */}
       <div
-        onClick={() => setSelectedPlan(plan)}
+        onClick={() => {
+          console.log("MEMORY_CARD_CLICK", plan.id, plan.status, plan.isHappened);
+          if (isCompleted) {
+            console.log("SET_SELECTED_MEMORY_PLAN", plan.id);
+            setSelectedMemoryPlan(plan);
+          } else {
+            setSelectedPlan(plan);
+          }
+        }}
         className={`group w-full border p-3 flex flex-col cursor-pointer transition-all duration-200 ${
           isCurrentUser
             ? "rounded-2xl rounded-tr-none bg-zinc-900 border-[#ff8b66]/20 hover:border-[#ff8b66]/40"
@@ -165,9 +225,20 @@ const CirclePlanCardBubble = ({
                 </span>
               )
             ) : (
-              <span className="text-[8px] font-mono font-bold text-zinc-500 bg-zinc-950 border border-zinc-900 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                Past
-              </span>
+              // Memory contribution status badge
+              contribution?.badgeVariant === "pending" ? (
+                <span className="text-[7.5px] font-mono font-black text-amber-400 bg-amber-950/30 border border-amber-800/40 px-1.5 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                  {contribution.badgeLabel}
+                </span>
+              ) : contribution?.badgeVariant === "recorded" ? (
+                <span className="text-[7.5px] font-mono font-bold text-emerald-400 bg-emerald-950/20 border border-emerald-800/30 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                  {contribution.badgeLabel}
+                </span>
+              ) : (
+                <span className="text-[7.5px] font-mono font-bold text-zinc-500 bg-zinc-950 border border-zinc-900 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                  {contribution?.badgeLabel || "Past"}
+                </span>
+              )
             )}
             <ChevronRight className="w-3 h-3 text-zinc-650 group-hover:text-zinc-400 transition-colors" />
           </div>
@@ -184,6 +255,7 @@ export const CircleChatScreen = (props: any) => {
     onBack,
     onOpenSettings,
     setSelectedPlan,
+    setSelectedMemoryPlan,
     setPaymentConfirmationPlan,
     handleToggleJoin,
     triggerToast,
@@ -197,39 +269,33 @@ export const CircleChatScreen = (props: any) => {
     setCreateFlowStep,
   } = props;
 
-  const [circlePlans, setCirclePlans] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { markPlanSeen } = usePlansStore();
+  const { markPlanSeen, dbMemories, dbMemoryAttendees, dbMemoryMovieVerdicts, dbMemoryRestaurantVotes, dbMemoryMatchResults, dbMemoryMvpVotes, dbMemoryBadmintonResults, plans, refreshPlans } = usePlansStore();
+  const { activeUserUuid } = useProfileStore();
+  const resolvedUuid = activeUserUuid || activeUserId;
 
   useEffect(() => {
-    async function loadCirclePlans() {
+    async function loadLatest() {
       try {
         setIsLoading(true);
-        const res = await fetch("/api/db/fetch-all");
-        if (res.ok) {
-          const json = await res.json();
-          if (json.configured && !json.tables_missing) {
-            const allPlans = json.data?.plans || [];
-            const allParticipants = json.data?.plan_participants || [];
-            const allUsers = json.data?.users || [];
-            const allCircles = json.data?.circles || [];
-
-            const mapped = mapPlansToLegacyPlans(allPlans, allParticipants, allUsers, activeUserId, allCircles);
-            const circleUuid = circle.dbUuid || circle.id;
-            const filtered = mapped.filter(
-              (p: any) => p.circleId === circleUuid || p.groupId === circleUuid
-            );
-            setCirclePlans(filtered);
-          }
-        }
+        await refreshPlans();
       } catch (err) {
-        console.error("[CircleChatScreen] Failed to load plans:", err);
+        console.error("[CircleChatScreen] Failed to refresh plans:", err);
       } finally {
         setIsLoading(false);
       }
     }
-    loadCirclePlans();
+    loadLatest();
   }, [circle.id, circle.dbUuid, activeUserId]);
+
+  const circleUuid = circle.dbUuid || circle.id;
+  const circlePlans = plans.filter((p: any) => {
+    if (p.circleId === circleUuid || p.groupId === circleUuid) return true;
+    const circleMemberUuids = circle.membersList?.map((m: any) => m.userId).filter(Boolean) || [];
+    if (circleMemberUuids.length === 0) return false;
+    const planUserIds = p.members?.map((m: any) => m.userId).filter(Boolean) || [];
+    return circleMemberUuids.every((memberUuid: string) => planUserIds.includes(memberUuid));
+  });
 
   // Chronological (oldest first) for a chat timeline
   const sortedPlans = [...circlePlans].sort((a: any, b: any) => {
@@ -346,7 +412,7 @@ export const CircleChatScreen = (props: any) => {
           <div className="space-y-3 pb-2">
             {sortedPlans.map((plan: any) => {
               const isCurrentUser = plan.creatorId === "u_self";
-              const isCompleted = plan.isHappened;
+              const isCompleted = plan.status === "completed" || plan.isHappened;
               const isAlreadyJoined = plan.joinedUsers?.some(
                 (u: any) => u.userId === activeUserId
               );
@@ -356,10 +422,19 @@ export const CircleChatScreen = (props: any) => {
                   key={plan.id}
                   plan={plan}
                   activeUserId={activeUserId}
+                  activeUserUuid={resolvedUuid}
                   isCurrentUser={isCurrentUser}
                   isCompleted={isCompleted}
                   isAlreadyJoined={isAlreadyJoined}
+                  dbMemories={dbMemories}
+                  dbMemoryAttendees={dbMemoryAttendees}
+                  dbMemoryMovieVerdicts={dbMemoryMovieVerdicts}
+                  dbMemoryRestaurantVotes={dbMemoryRestaurantVotes}
+                  dbMemoryMatchResults={dbMemoryMatchResults}
+                  dbMemoryMvpVotes={dbMemoryMvpVotes}
+                  dbMemoryBadmintonResults={dbMemoryBadmintonResults}
                   setSelectedPlan={setSelectedPlan}
+                  setSelectedMemoryPlan={setSelectedMemoryPlan}
                   setPaymentConfirmationPlan={setPaymentConfirmationPlan}
                   handleToggleJoin={handleToggleJoin}
                   triggerToast={triggerToast}
