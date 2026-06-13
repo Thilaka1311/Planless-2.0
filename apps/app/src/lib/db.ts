@@ -80,7 +80,7 @@ export interface DbCircleMember {
   id: string;           // UUID primary key
   circle_id: string;    // UUID -> circles.id
   user_id: string;      // UUID -> users.id
-  role: "admin" | "member";
+  role: "host" | "co_host" | "member";
   joined_at: string;
 }
 
@@ -159,6 +159,19 @@ export interface DbFriendship {
   created_at?: string;
 }
 
+export interface DbCircleMessage {
+  id: string;
+  circle_id: string;
+  sender_id: string | null;
+  system_actor_id: string | null;
+  parent_id: string | null;
+  plan_id: string | null;
+  content: string;
+  message_type: "user" | "system";
+  created_at: string;
+  edited_at: string | null;
+}
+
 export interface DbTransaction {
   id: string;
   transaction_id: string;
@@ -194,6 +207,7 @@ export interface DbSnapshot {
   userData: any[];
   planReminders: any[];
   friendships: DbFriendship[];
+  planTeamAssignments?: DbPlanTeamAssignment[];
 }
 
 // ─────────────────────────────────────────────
@@ -235,6 +249,7 @@ export async function fetchSnapshot(): Promise<DbSnapshot | null> {
       userData:              (json.data?.user_data         || []) as any[],
       planReminders:         (json.data?.plan_reminders    || []) as any[],
       friendships:           (json.data?.friendships       || []) as DbFriendship[],
+      planTeamAssignments:   (json.data?.plan_team_assignments || []) as DbPlanTeamAssignment[],
     };
   } catch {
     return null;
@@ -263,6 +278,12 @@ async function upsert(table: string, records: any[]): Promise<any[] | null> {
     console.error(`[DB] upsert ${table} exception:`, e);
     return null;
   }
+}
+
+/** Update an existing user profile row. */
+export async function updateDbUser(user: Partial<DbUser> & { id: string }): Promise<DbUser | null> {
+  const rows = await upsert("users", [user]);
+  return rows?.[0] ?? null;
 }
 
 /** Insert a brand-new plan row. Returns the DB-generated row (with real plan_id). */
@@ -529,3 +550,151 @@ export async function verifyRazorpayPayment(payload: {
   }
 }
 
+/** Delete a participant from a plan. */
+export async function deleteParticipant(planUuid: string, userUuid: string): Promise<boolean> {
+  const payload = {
+    table: "plan_participants",
+    match: { plan_id: planUuid, user_id: userUuid }
+  };
+  console.log("[TRACE deleteParticipant] Sending payload:", JSON.stringify(payload, null, 2));
+  try {
+    const res = await fetch("/api/db/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    console.log("[TRACE deleteParticipant] HTTP status:", res.status, "ok:", res.ok);
+    let responseBody: any = null;
+    try {
+      responseBody = await res.clone().json();
+    } catch {
+      responseBody = await res.clone().text();
+    }
+    console.log("[TRACE deleteParticipant] Response body:", JSON.stringify(responseBody, null, 2));
+    if (!res.ok) {
+      console.error("[TRACE deleteParticipant] FAILED — error.message:", responseBody?.error);
+      console.error("[TRACE deleteParticipant] FAILED — error.details:", responseBody?.details);
+      console.error("[TRACE deleteParticipant] FAILED — error.hint:", responseBody?.hint);
+    }
+    return res.ok;
+  } catch (e) {
+    console.error("[DB] deleteParticipant exception:", e);
+    return false;
+  }
+}
+
+/** Delete a member from a circle. */
+export async function deleteCircleMember(circleUuid: string, userUuid: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/db/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "circle_members",
+        match: { circle_id: circleUuid, user_id: userUuid }
+      })
+    });
+    return res.ok;
+  } catch (e) {
+    console.error("[DB] deleteCircleMember exception:", e);
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────
+// PLAN TEAM ASSIGNMENTS  (Football Team Organizer)
+// ─────────────────────────────────────────────
+
+export interface DbPlanTeamAssignment {
+  id?: string;
+  plan_id: string;
+  user_id: string;
+  team: "A" | "B";
+  created_at?: string;
+}
+
+/**
+ * Fetch all team assignments for a given plan UUID.
+ * Returns an empty array if none exist.
+ */
+export async function getPlanTeamAssignments(planUuid: string): Promise<DbPlanTeamAssignment[]> {
+  try {
+    const res = await fetch(`/api/db/team-assignments?plan_id=${encodeURIComponent(planUuid)}`);
+    if (!res.ok) return [];
+    const json = await res.json();
+    return json.data || [];
+  } catch (e) {
+    console.error("[DB] getPlanTeamAssignments exception:", e);
+    return [];
+  }
+}
+
+/**
+ * Assign or move a participant to a team (upsert on plan_id + user_id).
+ * Returns true on success.
+ */
+export async function upsertPlanTeamAssignment(
+  planUuid: string,
+  userUuid: string,
+  team: "A" | "B"
+): Promise<boolean> {
+  try {
+    const res = await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "plan_team_assignments",
+        records: [{ plan_id: planUuid, user_id: userUuid, team }]
+      })
+    });
+    return res.ok;
+  } catch (e) {
+    console.error("[DB] upsertPlanTeamAssignment exception:", e);
+    return false;
+  }
+}
+
+/**
+ * Remove a participant's team assignment (move them back to Unassigned).
+ * Returns true on success.
+ */
+export async function removePlanTeamAssignment(
+  planUuid: string,
+  userUuid: string
+): Promise<boolean> {
+  try {
+    const res = await fetch("/api/db/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "plan_team_assignments",
+        match: { plan_id: planUuid, user_id: userUuid }
+      })
+    });
+    return res.ok;
+  } catch (e) {
+    console.error("[DB] removePlanTeamAssignment exception:", e);
+    return false;
+  }
+}
+
+/**
+ * Remove all team assignments for a given plan UUID.
+ * Returns true on success.
+ */
+export async function deleteAllPlanTeamAssignments(planUuid: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/db/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "plan_team_assignments",
+        match: { plan_id: planUuid }
+      })
+    });
+    return res.ok;
+  } catch (e) {
+    console.error("[DB] deleteAllPlanTeamAssignments exception:", e);
+    return false;
+  }
+}

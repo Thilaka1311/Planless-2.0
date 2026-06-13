@@ -36,7 +36,8 @@ router.get("/fetch-all", async (req, res) => {
       "notifications",
       "user_data",
       "plan_reminders",
-      "friendships"
+      "friendships",
+      "plan_team_assignments"
     ];
 
     const results: Record<string, any[]> = {};
@@ -94,6 +95,147 @@ router.get("/fetch-all", async (req, res) => {
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (val: any) => typeof val === "string" && uuidRegex.test(val);
 
+// GET /api/db/team-assignments?plan_id=<uuid>
+// Returns all team assignments for the given plan.
+router.get("/team-assignments", async (req, res) => {
+  try {
+    const planId = req.query.plan_id as string | undefined;
+    if (!planId) {
+      res.status(400).json({ error: "Missing plan_id query parameter." });
+      return;
+    }
+    const client = getSupabaseClient();
+    if (!client) {
+      res.status(503).json({ error: "Supabase client not initialized." });
+      return;
+    }
+    const { data, error } = await client
+      .from("plan_team_assignments")
+      .select("*")
+      .eq("plan_id", planId);
+    if (error) {
+      console.error("[DB] team-assignments fetch error:", error);
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ success: true, count: data?.length || 0, data: data || [] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Internal error" });
+  }
+});
+
+// GET /api/chat/messages
+// Fetches circle messages or plan thread messages with authorization guards
+router.get("/chat/messages", async (req, res) => {
+  try {
+    const { circle_id, plan_id, parent_id, user_id } = req.query as Record<string, string | undefined>;
+    if (!user_id) {
+      res.status(400).json({ error: "Missing user_id parameter for authorization." });
+      return;
+    }
+
+    const client = getSupabaseClient();
+    if (!client) {
+      res.status(503).json({ error: "Supabase client not initialized." });
+      return;
+    }
+
+    // 1. If fetching plan thread messages
+    if (plan_id) {
+      if (!isUuid(plan_id)) {
+        res.status(400).json({ error: "Invalid plan_id UUID format." });
+        return;
+      }
+
+      // Check plan participation/host authorization
+      const { data: plan } = await client.from("plans").select("host_id, circle_id").eq("id", plan_id).single();
+      if (!plan) {
+        res.status(404).json({ error: "Plan not found." });
+        return;
+      }
+
+      const isHost = plan.host_id === user_id;
+      let isParticipant = false;
+
+      if (!isHost) {
+        const { data: participation } = await client
+          .from("plan_participants")
+          .select("status")
+          .eq("plan_id", plan_id)
+          .eq("user_id", user_id)
+          .single();
+
+        if (participation && ["going", "accepted", "waitlist", "host"].includes(participation.status)) {
+          isParticipant = true;
+        }
+      }
+
+      if (!isHost && !isParticipant) {
+        res.status(403).json({ error: "Access denied. You are not a participant of this plan." });
+        return;
+      }
+
+      // Fetch the last 50 messages of the plan thread (newest first for limit, client reverses)
+      const { data: messages, error } = await client
+        .from("circle_messages")
+        .select("*, sender:users!circle_messages_sender_id_fkey(id, username, full_name, profile_photo), systemActor:users!circle_messages_system_actor_id_fkey(id, username, full_name, profile_photo)")
+        .eq("plan_id", plan_id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+      res.json({ success: true, count: messages?.length || 0, data: messages || [] });
+      return;
+    }
+
+    // 2. If fetching general circle messages (no plan_id)
+    if (circle_id) {
+      if (!isUuid(circle_id)) {
+        res.status(400).json({ error: "Invalid circle_id UUID format." });
+        return;
+      }
+
+      // Verify circle membership
+      const { data: member } = await client
+        .from("circle_members")
+        .select("id")
+        .eq("circle_id", circle_id)
+        .eq("user_id", user_id)
+        .single();
+
+      if (!member) {
+        res.status(403).json({ error: "Access denied. You are not a member of this circle." });
+        return;
+      }
+
+      let query = client
+        .from("circle_messages")
+        .select("*, sender:users!circle_messages_sender_id_fkey(id, username, full_name, profile_photo), systemActor:users!circle_messages_system_actor_id_fkey(id, username, full_name, profile_photo)")
+        .eq("circle_id", circle_id);
+
+      if (parent_id) {
+        query = query.eq("parent_id", parent_id);
+      } else {
+        query = query.is("parent_id", null); // Root general chat
+      }
+
+      const { data: messages, error } = await query
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+      res.json({ success: true, count: messages?.length || 0, data: messages || [] });
+      return;
+    }
+
+    res.status(400).json({ error: "Specify circle_id or plan_id." });
+  } catch (err: any) {
+    console.error("[GET /api/chat/messages] Fetch error:", err);
+    res.status(500).json({ error: err.message || "Failed to fetch chat messages." });
+  }
+});
+
+
 router.post("/upsert", async (req, res) => {
   try {
     const { table, records } = req.body;
@@ -141,6 +283,86 @@ router.post("/upsert", async (req, res) => {
     const client = getSupabaseClient();
     if (!client) {
       res.status(503).json({ error: "Supabase client key or endpoint is not initialized." });
+      return;
+    }
+
+    // Guard: circle_messages validation (membership & waitlist checks)
+    if (table === "circle_messages") {
+      for (const rec of records) {
+        if (!rec.circle_id || !rec.sender_id) {
+          // Allow system messages (NULL sender_id) if circle_id is set
+          if (!rec.circle_id) {
+            res.status(400).json({ error: "Missing circle_id for message." });
+            return;
+          }
+          continue;
+        }
+
+        // Verify circle membership
+        const { data: member } = await client
+          .from("circle_members")
+          .select("id")
+          .eq("circle_id", rec.circle_id)
+          .eq("user_id", rec.sender_id)
+          .single();
+
+        if (!member) {
+          res.status(403).json({ error: "Sender is not a member of the circle." });
+          return;
+        }
+
+        // If posting to a plan thread (plan_id is set)
+        if (rec.plan_id) {
+          // Check plan host status
+          const { data: plan } = await client
+            .from("plans")
+            .select("host_id")
+            .eq("id", rec.plan_id)
+            .single();
+
+          if (!plan) {
+            res.status(404).json({ error: "Associated plan not found." });
+            return;
+          }
+
+          const isHost = plan.host_id === rec.sender_id;
+          let isAuthorizedParticipant = false;
+
+          if (!isHost) {
+            const { data: participation } = await client
+              .from("plan_participants")
+              .select("status")
+              .eq("plan_id", rec.plan_id)
+              .eq("user_id", rec.sender_id)
+              .single();
+
+            // Waitlisted users are blocked from sending (read-only)
+            if (participation && ["going", "accepted"].includes(participation.status)) {
+              isAuthorizedParticipant = true;
+            }
+          }
+
+          if (!isHost && !isAuthorizedParticipant) {
+            res.status(403).json({ error: "Access denied. Waitlisted or non-participants cannot write to plan threads." });
+            return;
+          }
+        }
+      }
+    }
+
+    // plan_team_assignments: upsert on (plan_id, user_id) conflict
+    // This allows moving a player between Team A and Team B.
+    if (table === "plan_team_assignments") {
+      const { data, error } = await client
+        .from("plan_team_assignments")
+        .upsert(records, { onConflict: "plan_id,user_id" })
+        .select("*");
+      if (error) {
+        console.error(`[Supabase DB] Error writing to plan_team_assignments:`, error);
+        res.status(500).json({ error: error.message, details: error.details });
+        return;
+      }
+      res.json({ success: true, count: data?.length || 0, data: data || [] });
       return;
     }
 
@@ -216,8 +438,14 @@ router.post("/upsert", async (req, res) => {
           .eq("circle_id", rec.circle_id)
           .eq("user_id", rec.user_id);
 
-        if (existingRows && existingRows.length > 0) {
-          duplicateMatches.push(existingRows[0]);
+        const exists = existingRows && existingRows.length > 0;
+        if (exists) {
+          const isLegitimateUpdate = rec.id && rec.id === existingRows[0].id;
+          if (isLegitimateUpdate) {
+            sanitizedRecords.push(rec);
+          } else {
+            duplicateMatches.push(existingRows[0]);
+          }
         } else {
           sanitizedRecords.push(rec);
         }
@@ -391,6 +619,8 @@ router.post("/upsert", async (req, res) => {
 router.post("/delete", async (req, res) => {
   try {
     const { table, match } = req.body;
+    console.log("[TRACE /api/db/delete] Incoming body:", JSON.stringify(req.body, null, 2));
+
     if (!table || !match || typeof match !== "object") {
       res.status(400).json({ error: "Invalid payload parameters. Expected 'table' name and 'match' object." });
       return;
@@ -402,24 +632,38 @@ router.post("/delete", async (req, res) => {
       return;
     }
 
+    console.log(`[TRACE /api/db/delete] table="${table}"  match=${JSON.stringify(match)}`);
+
     let query = client.from(table).delete();
     for (const [key, val] of Object.entries(match)) {
+      console.log(`[TRACE /api/db/delete]   .eq("${key}", "${val}")`);
       query = query.eq(key, val);
     }
 
     const { data, error } = await query.select("*");
+
+    console.log(`[TRACE /api/db/delete] Supabase error  :`, JSON.stringify(error, null, 2));
+    console.log(`[TRACE /api/db/delete] Supabase data   :`, JSON.stringify(data, null, 2));
+
     if (error) {
+      console.error(`[TRACE /api/db/delete] *** SUPABASE ERROR for table="${table}" ***`);
+      console.error(`  error.message : ${error.message}`);
+      console.error(`  error.details : ${(error as any).details}`);
+      console.error(`  error.hint    : ${(error as any).hint}`);
+      console.error(`  error.code    : ${(error as any).code}`);
       console.error(`[Supabase DB Operation Sync] Error deleting from ${table}:`, error);
-      res.status(500).json({ error: error.message, details: error.details, hint: error.hint });
+      res.status(500).json({ error: error.message, details: (error as any).details, hint: (error as any).hint });
       return;
     }
 
+    console.log(`[TRACE /api/db/delete] SUCCESS — rows deleted: ${data?.length ?? 0}`);
     res.json({ success: true, count: data?.length || 0, data });
   } catch (error: any) {
     console.error("[Supabase Sync Proxy Error]:", error);
     res.status(500).json({ error: error.message || "Internal server error deleting database changes." });
   }
 });
+
 
 router.post("/reset", async (req, res) => {
   try {

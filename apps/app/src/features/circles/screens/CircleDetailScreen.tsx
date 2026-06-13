@@ -3,6 +3,8 @@ import {
   ArrowLeft, Edit, Save, Users, UserPlus, LogOut,
   Shield, MapPin, Compass, Calendar, ChevronRight, Plus
 } from "lucide-react";
+import { useCirclesStore } from "../state/CirclesContext";
+import { useProfileStore } from "../../profile/state/ProfileContext";
 
 /**
  * CircleDetailScreen — unified Circle Info + Settings screen.
@@ -36,6 +38,21 @@ export const CircleDetailScreen = (props: any) => {
     triggerToast,
     onAddMembers,
   } = props;
+
+  const { dbCircles, removeCircleMember, updateCircleMemberRole, transferCircleHost } = useCirclesStore();
+  const { activeUserUuid } = useProfileStore();
+
+  const dbCircle = dbCircles.find(c => c.id === circle.dbUuid || c.circle_id === circle.id);
+  const isFounder = dbCircle?.created_by === activeUserUuid;
+  const activeMemberObj = circle.membersList?.find((m: any) => m.userId === activeUserUuid);
+  const isActiveUserHost = activeMemberObj?.role === "host" || isFounder;
+  const isActiveUserCoHost = activeMemberObj?.role === "co_host";
+
+  const [userToRemove, setUserToRemove] = useState<{ userId: string; name: string } | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
+
+  const [transferTarget, setTransferTarget] = useState<{ userId: string; name: string } | null>(null);
+  const [isTransferring, setIsTransferring] = useState(false);
 
   // ── editable name state ────────────────────────────────────────────────────
   const [name, setName] = useState(circle.name);
@@ -217,8 +234,8 @@ export const CircleDetailScreen = (props: any) => {
         <div className="divide-y divide-zinc-950 text-xs">
           <div className="flex justify-between items-center py-2.5">
             <div>
-              <h4 className="font-semibold text-zinc-200">Founder Authority</h4>
-              <p className="text-[9.5px] text-zinc-500">Only founders can edit details & reassign coordinates</p>
+              <h4 className="font-semibold text-zinc-200">Host Authority</h4>
+              <p className="text-[9.5px] text-zinc-500">Only hosts can edit details & reassign coordinates</p>
             </div>
             <span className="text-[8.5px] font-mono text-emerald-400 bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-900/30 font-bold uppercase select-none">
               ACTIVE
@@ -251,28 +268,72 @@ export const CircleDetailScreen = (props: any) => {
           </button>
         </div>
         <div className="space-y-2">
-          {circle.membersList?.map((m: any, idx: number) => (
-            <div
-              key={idx}
-              className="flex items-center justify-between p-2 bg-zinc-955/60 rounded-xl border border-zinc-900"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <img
-                  src={m.avatar}
-                  className="w-6 h-6 rounded-full object-cover shrink-0"
-                  alt=""
-                  referrerPolicy="no-referrer"
-                />
-                <div className="min-w-0">
-                  <span className="text-[10.5px] font-bold text-zinc-250 truncate block leading-tight">{m.name}</span>
-                  <span className="text-[8.5px] font-mono text-zinc-505 block">{m.phone}</span>
+          {circle.membersList?.map((m: any, idx: number) => {
+            const isTargetHost = m.role === "host";
+            const isTargetCoHost = m.role === "co_host";
+            const canRemoveThisMember = (isActiveUserHost && !isTargetHost) || (isActiveUserCoHost && m.role === "member");
+
+            return (
+              <div
+                key={idx}
+                className="flex items-center justify-between p-2 bg-zinc-955/60 rounded-xl border border-zinc-900"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <img
+                    src={m.avatar}
+                    className="w-6 h-6 rounded-full object-cover shrink-0"
+                    alt=""
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="min-w-0">
+                    <span className="text-[10.5px] font-bold text-zinc-250 truncate block leading-tight">{m.name}</span>
+                    <span className="text-[8.5px] font-mono text-zinc-550 block">{m.phone}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[7.5px] font-mono uppercase bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded text-zinc-550 select-none font-bold">
+                    {isTargetHost ? "Host" : isTargetCoHost ? "Co-host" : "Member"}
+                  </span>
+                  {isActiveUserHost && !isTargetHost && (
+                    <button
+                      type="button"
+                      onClick={() => setTransferTarget({ userId: m.userId, name: m.name })}
+                      className="px-2 py-0.5 rounded border border-[#ff8b66]/20 bg-[#ff8b66]/5 hover:bg-[#ff8b66]/10 active:scale-[0.97] transition-all text-[#ff8b66] text-[8.5px] font-mono font-bold uppercase tracking-wider cursor-pointer"
+                    >
+                      Transfer Host
+                    </button>
+                  )}
+                  {isActiveUserHost && !isTargetHost && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const newRole = isTargetCoHost ? "member" : "co_host";
+                          const targetCircleUuid = circle.dbUuid || dbCircle?.id || circle.id;
+                          await updateCircleMemberRole(targetCircleUuid, m.userId, newRole);
+                          triggerToast(isTargetCoHost ? `Demoted ${m.name} to Member` : `Promoted ${m.name} to Co-host`);
+                        } catch (err: any) {
+                          triggerToast(`Error: ${err.message || err}`);
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded border border-[#ff8b66]/20 bg-[#ff8b66]/5 hover:bg-[#ff8b66]/10 active:scale-[0.97] transition-all text-[#ff8b66] text-[8.5px] font-mono font-bold uppercase tracking-wider cursor-pointer"
+                    >
+                      {isTargetCoHost ? "Remove Co-host" : "Make Co-host"}
+                    </button>
+                  )}
+                  {canRemoveThisMember && (
+                    <button
+                      type="button"
+                      onClick={() => setUserToRemove({ userId: m.userId, name: m.name })}
+                      className="px-2 py-0.5 rounded border border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 active:scale-[0.97] transition-all text-rose-500 text-[8.5px] font-mono font-bold uppercase tracking-wider cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
               </div>
-              <span className="text-[7.5px] font-mono uppercase bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded text-zinc-505 select-none font-bold">
-                {idx === 0 ? "Founder" : "Member"}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -299,6 +360,128 @@ export const CircleDetailScreen = (props: any) => {
       </button>
 
       </div>
+
+      {/* Transfer Host Confirmation Dialog */}
+      {transferTarget && (
+        <div className="fixed inset-0 bg-black/95 flex flex-col items-center justify-center p-6 z-55 animate-fade-in text-center">
+          <div className="bg-[#0C0C0E]/90 backdrop-blur-md border border-zinc-900 rounded-3xl p-6 w-full max-w-xs text-center space-y-4 shadow-2xl">
+            <h3 className="text-base font-display font-black text-white uppercase tracking-wider">
+              Transfer Circle Host?
+            </h3>
+            <div className="space-y-2 text-center font-sans text-[11px] text-zinc-400">
+              <p>
+                <span className="text-zinc-200 font-semibold">{transferTarget.name}</span> will become the new Host.
+              </p>
+              <p className="text-[#ff8b66] font-semibold">
+                You will become a Co-host.
+              </p>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setTransferTarget(null)}
+                className="flex-1 py-2.5 rounded-xl border border-zinc-800 bg-zinc-950/60 text-zinc-400 text-[10px] font-mono font-bold uppercase tracking-wider hover:bg-zinc-900 transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setIsTransferring(true);
+                    const targetCircleUuid = circle.dbUuid || dbCircle?.id || circle.id;
+                    await transferCircleHost(targetCircleUuid, transferTarget.userId);
+                    triggerToast(`✓ Transferred Circle Host to ${transferTarget.name}`);
+                    
+                    // Update the local membersList and host/co_host roles
+                    circle.membersList = circle.membersList.map((m: any) => {
+                      if (m.userId === transferTarget.userId) {
+                        return { ...m, role: "host" };
+                      }
+                      if (m.userId === activeUserUuid) {
+                        return { ...m, role: "co_host" };
+                      }
+                      return m;
+                    });
+                    setSelectedCircle?.({ ...circle });
+
+                    setTransferTarget(null);
+                  } catch (err: any) {
+                    triggerToast(`Error: ${err.message || err}`);
+                  } finally {
+                    setIsTransferring(false);
+                  }
+                }}
+                disabled={isTransferring}
+                className="flex-1 py-2.5 rounded-xl bg-[#ff8b66] hover:bg-[#ff9a7c] text-black text-[10px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer disabled:opacity-40"
+              >
+                {isTransferring ? "Transferring…" : "Transfer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove Member Confirmation Dialog */}
+      {userToRemove && (
+        <div className="fixed inset-0 bg-black/95 flex flex-col items-center justify-center p-6 z-55 animate-fade-in text-center">
+          <div className="bg-[#0C0C0E]/90 backdrop-blur-md border border-zinc-900 rounded-3xl p-6 w-full max-w-xs text-center space-y-4 shadow-2xl">
+            <h3 className="text-base font-display font-black text-white uppercase tracking-wider">
+              Remove Member?
+            </h3>
+            <div className="space-y-2 text-left font-sans text-[11px] text-zinc-400">
+              <p className="text-center">
+                <span className="text-zinc-200 font-semibold">{userToRemove.name}</span> will:
+              </p>
+              <ul className="space-y-1 list-disc pl-5">
+                <li>Leave this circle</li>
+                <li>Lose access to circle chat</li>
+                <li>Stop receiving future plans from this circle</li>
+              </ul>
+              <p className="text-center text-[10px] text-zinc-500 pt-1">
+                Past memories will remain.
+              </p>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setUserToRemove(null)}
+                className="flex-1 py-2.5 rounded-xl border border-zinc-800 bg-zinc-950/60 text-zinc-400 text-[10px] font-mono font-bold uppercase tracking-wider hover:bg-zinc-900 transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setIsRemoving(true);
+                    const targetCircleUuid = circle.dbUuid || dbCircle?.id || circle.id;
+                    await removeCircleMember(targetCircleUuid, userToRemove.userId);
+                    triggerToast(`✓ Removed ${userToRemove.name} from circle`);
+                    
+                    // Update the local membersList of the active settings circle
+                    circle.membersList = circle.membersList.filter((m: any) => m.userId !== userToRemove.userId);
+                    circle.membersCount = circle.membersList.length;
+                    circle.avatars = circle.membersList.slice(0, 5).map((m: any) => m.avatar);
+                    setSelectedCircle?.({ ...circle });
+
+                    setUserToRemove(null);
+                  } catch (err: any) {
+                    triggerToast(`Error: ${err.message || err}`);
+                  } finally {
+                    setIsRemoving(false);
+                  }
+                }}
+                disabled={isRemoving}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer disabled:opacity-40"
+              >
+                {isRemoving ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

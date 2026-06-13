@@ -1,252 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Settings, Users, Calendar, MapPin, ChevronRight, Plus } from "lucide-react";
-import { mapPlansToLegacyPlans } from "../../../lib/mappers";
+import React, { useState, useEffect, useRef } from "react";
+import {
+  ArrowLeft,
+  Settings,
+  Users,
+  ChevronRight,
+  Plus,
+  Send,
+  AlertCircle,
+  MessageSquare
+} from "lucide-react";
 import { usePlansStore } from "../../../features/plans/state/PlansContext";
 import { useProfileStore } from "../../../features/profile/state/ProfileContext";
-import { getMemoryContribution } from "../../../lib/memoryContribution";
-import { DbMemory, DbMemoryAttendee, DbMemoryMovieVerdict, DbMemoryRestaurantVote, DbMemoryMatchResult, DbMemoryMvpVote, DbMemoryBadmintonResult } from "../../../core/types";
+import { useChatStore } from "../../../features/chat/state/ChatContext";
+import { Plan } from "../../../core/types";
 
-interface CirclePlanCardBubbleProps {
-  key?: any;
-  plan: any;
-  activeUserId: string;
-  activeUserUuid: string;
-  isCurrentUser: boolean;
-  isCompleted: boolean;
-  isAlreadyJoined: boolean;
-  dbMemories: DbMemory[];
-  dbMemoryAttendees: DbMemoryAttendee[];
-  dbMemoryMovieVerdicts: DbMemoryMovieVerdict[];
-  dbMemoryRestaurantVotes: DbMemoryRestaurantVote[];
-  dbMemoryMatchResults: DbMemoryMatchResult[];
-  dbMemoryMvpVotes: DbMemoryMvpVote[];
-  dbMemoryBadmintonResults: DbMemoryBadmintonResult[];
-  setSelectedPlan: (plan: any) => void;
-  setSelectedMemoryPlan: (plan: any) => void;
-  setPaymentConfirmationPlan: (plan: any) => void;
-  handleToggleJoin: (plan: any) => void;
-  triggerToast: (msg: string) => void;
-}
-
-const CirclePlanCardBubble = ({
-  plan,
-  activeUserId,
-  activeUserUuid,
-  isCurrentUser,
-  isCompleted,
-  isAlreadyJoined,
-  dbMemories,
-  dbMemoryAttendees,
-  dbMemoryMovieVerdicts,
-  dbMemoryRestaurantVotes,
-  dbMemoryMatchResults,
-  dbMemoryMvpVotes,
-  dbMemoryBadmintonResults,
-  setSelectedPlan,
-  setSelectedMemoryPlan,
-  setPaymentConfirmationPlan,
-  handleToggleJoin,
-  triggerToast
-}: CirclePlanCardBubbleProps) => {
-  const cardRef = React.useRef<HTMLDivElement>(null);
-  const { markPlanSeen, dbPlanParticipants, dbUsers } = usePlansStore();
-
-  // Compute memory contribution status for this completed plan
-  const planUuidForMemory = plan.dbUuid || plan.id;
-  const memory = isCompleted
-    ? dbMemories.find(m => m.plan_id === planUuidForMemory) || null
-    : null;
-  const memoryAttendees = isCompleted
-    ? dbMemoryAttendees.filter(a => a.memory_id === memory?.id)
-    : [];
-  const movieVerdicts = isCompleted
-    ? dbMemoryMovieVerdicts.filter(v => v.memory_id === memory?.id)
-    : [];
-  const restaurantVotes = isCompleted
-    ? dbMemoryRestaurantVotes.filter(v => v.memory_id === memory?.id)
-    : [];
-  const matchResults = isCompleted
-    ? dbMemoryMatchResults.filter(r => r.memory_id === memory?.id)
-    : [];
-  const mvpVotes = isCompleted
-    ? dbMemoryMvpVotes.filter(v => v.memory_id === memory?.id)
-    : [];
-
-  const isHost = plan.hostId === "u_self" || plan.hostId === activeUserUuid;
-  const badmintons = isCompleted
-    ? dbMemoryBadmintonResults.filter(r => r.memory_id === memory?.id)
-    : [];
-  const contribution = isCompleted
-    ? getMemoryContribution(memory, activeUserUuid || activeUserId, isHost, memoryAttendees, movieVerdicts, restaurantVotes, matchResults, mvpVotes, badmintons)
-    : null;
-
-  React.useEffect(() => {
-    if (!cardRef.current || !activeUserId) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          if (!dbUsers || !dbPlanParticipants) return;
-          const planUuid = plan.dbUuid || plan.id;
-          const meUser = dbUsers.find((u: any) => u.user_id === activeUserId || u.id === activeUserId);
-          const meUuid = meUser?.id || activeUserId;
-          const myPp = dbPlanParticipants.find(
-            (pp: any) => pp.plan_id === planUuid && pp.user_id === meUuid
-          );
-          if (myPp && myPp.status === "delivered") {
-            console.log(`[Circle View Trigger] Transitioning delivered -> seen for plan: ${plan.title}`);
-            markPlanSeen(planUuid, meUuid).catch(err => console.error("Failed to mark plan seen in circle chat:", err));
-          }
-        }
-
-      },
-      { threshold: 0.6 }
-    );
-
-    observer.observe(cardRef.current);
-    return () => observer.disconnect();
-  }, [plan.id, activeUserId, plan.title, markPlanSeen, dbPlanParticipants, dbUsers]);
-
-  return (
-    <div
-      ref={cardRef}
-      className={`flex flex-col max-w-[85%] ${
-        isCurrentUser ? "ml-auto items-end" : "mr-auto items-start"
-      }`}
-    >
-      {/* Creator label */}
-      <span className="text-[9px] font-bold text-zinc-500 mb-0.5 px-1">
-        {plan.creatorName || (isCurrentUser ? "You" : "Member")}
-      </span>
-
-      {/* Bubble card */}
-      <div
-        onClick={() => {
-          console.log("MEMORY_CARD_CLICK", plan.id, plan.status, plan.isHappened);
-          if (isCompleted) {
-            console.log("SET_SELECTED_MEMORY_PLAN", plan.id);
-            setSelectedMemoryPlan(plan);
-          } else {
-            setSelectedPlan(plan);
-          }
-        }}
-        className={`group w-full border p-3 flex flex-col cursor-pointer transition-all duration-200 ${
-          isCurrentUser
-            ? "rounded-2xl rounded-tr-none bg-zinc-900 border-[#ff8b66]/20 hover:border-[#ff8b66]/40"
-            : "rounded-2xl rounded-tl-none bg-zinc-900 border-zinc-850 hover:border-zinc-750"
-        }`}
-      >
-        {/* Title + cost */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h4
-              className={`text-[11px] font-sans font-black uppercase tracking-wide truncate ${
-                isCompleted ? "text-zinc-550" : "text-white"
-              }`}
-            >
-              {plan.title}
-            </h4>
-            <div className="text-[9px] font-mono mt-1 space-y-0.5 text-zinc-500">
-              <div className="flex items-center gap-1.5">
-                <Calendar className="w-2.5 h-2.5 text-[#ff8b66]" />
-                <span className={isCompleted ? "" : "text-zinc-300"}>
-                  {plan.date} • {plan.time}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <MapPin className="w-2.5 h-2.5 text-zinc-650" />
-                <span className="truncate">{plan.location}</span>
-              </div>
-            </div>
-          </div>
-          <div className="text-right shrink-0">
-            <span
-              className={`text-[10px] font-black font-mono block ${
-                isCompleted ? "text-zinc-550" : "text-zinc-200"
-              }`}
-            >
-              ₹{plan.cost}
-            </span>
-            <span className="text-[7px] font-mono text-zinc-600 uppercase tracking-wider">
-              Split/Head
-            </span>
-          </div>
-        </div>
-
-        {/* Footer: avatars + action */}
-        <div className="flex items-center justify-between pt-2 mt-2 border-t border-zinc-950/50">
-          <div className="flex items-center gap-1">
-            <div className="flex -space-x-1">
-              {plan.joinedUsers
-                ?.filter(
-                  (u: any) =>
-                    u.joinState === "going"
-                )
-                .slice(0, 3)
-                .map((u: any, ui: number) => (
-                  <img
-                    key={ui}
-                    src={u.avatar}
-                    className="w-4 h-4 rounded-full object-cover border border-zinc-950"
-                    alt=""
-                    referrerPolicy="no-referrer"
-                  />
-                ))}
-            </div>
-            <span className="text-[8px] font-mono text-zinc-500">
-              {plan.confirmedCount || 0} joined
-              {plan.maxSpots
-                ? ` (${plan.maxSpots - (plan.confirmedCount || 0)} left)`
-                : ""}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            {!isCompleted ? (
-              !isAlreadyJoined ? (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (plan.cost > 0) {
-                      setPaymentConfirmationPlan(plan);
-                    } else {
-                      handleToggleJoin(plan);
-                      triggerToast("Joined active coordination! ⚡");
-                    }
-                  }}
-                  className="px-2 py-0.5 bg-[#ff8b66] hover:bg-[#ff9a7c] text-black text-[8px] font-black uppercase tracking-wider rounded transition-all cursor-pointer shadow"
-                >
-                  Join
-                </button>
-              ) : (
-                <span className="text-[8px] font-mono font-bold text-emerald-400 bg-emerald-950/20 px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-0.5">
-                  Joined
-                </span>
-              )
-            ) : (
-              // Memory contribution status badge
-              contribution?.badgeVariant === "pending" ? (
-                <span className="text-[7.5px] font-mono font-black text-amber-400 bg-amber-950/30 border border-amber-800/40 px-1.5 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
-                  {contribution.badgeLabel}
-                </span>
-              ) : contribution?.badgeVariant === "recorded" ? (
-                <span className="text-[7.5px] font-mono font-bold text-emerald-400 bg-emerald-950/20 border border-emerald-800/30 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                  {contribution.badgeLabel}
-                </span>
-              ) : (
-                <span className="text-[7.5px] font-mono font-bold text-zinc-500 bg-zinc-950 border border-zinc-900 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                  {contribution?.badgeLabel || "Past"}
-                </span>
-              )
-            )}
-            <ChevronRight className="w-3 h-3 text-zinc-650 group-hover:text-zinc-400 transition-colors" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+// ActiveThread type as specified in the requirements
+type ActiveThread =
+  | null
+  | { type: "general" }
+  | { type: "plan"; plan: Plan };
 
 export const CircleChatScreen = (props: any) => {
   const {
@@ -254,11 +26,8 @@ export const CircleChatScreen = (props: any) => {
     activeUserId,
     onBack,
     onOpenSettings,
-    setSelectedPlan,
-    setSelectedMemoryPlan,
-    setPaymentConfirmationPlan,
-    handleToggleJoin,
     triggerToast,
+    setSelectedPlan,
     // Create plan navigation
     setNewPlanCircleId,
     setNewPlanTitle,
@@ -269,39 +38,258 @@ export const CircleChatScreen = (props: any) => {
     setCreateFlowStep,
   } = props;
 
-  const [isLoading, setIsLoading] = useState(true);
-  const { markPlanSeen, dbMemories, dbMemoryAttendees, dbMemoryMovieVerdicts, dbMemoryRestaurantVotes, dbMemoryMatchResults, dbMemoryMvpVotes, dbMemoryBadmintonResults, plans, refreshPlans } = usePlansStore();
+  const { plans, refreshPlans } = usePlansStore();
   const { activeUserUuid } = useProfileStore();
   const resolvedUuid = activeUserUuid || activeUserId;
 
+  // Chat Context integration
+  const {
+    messages,
+    isLoading: isChatLoading,
+    connectionStatus,
+    setActiveRoom,
+    sendMessage,
+    unreadCounts,
+    markThreadRead
+  } = useChatStore();
+
+  // Screen state
+  const [activeThread, setActiveThread] = useState<ActiveThread>(null);
+  const [archivedExpanded, setArchivedExpanded] = useState(false);
+  const [inputText, setInputText] = useState("");
+  const [allCircleMessages, setAllCircleMessages] = useState<any[]>([]);
+
+  const circleUuid = circle.dbUuid || circle.id;
+
+  // Synchronize activeThread with activePlanId from ChatContext (for external navigation triggers)
+  const chatStore = useChatStore();
+  const currentChatPlanId = chatStore.activePlanId;
+
+  // Sync active room in ChatContext with activeThread state
+  useEffect(() => {
+    if (activeThread === null) {
+      if (!currentChatPlanId) {
+        setActiveRoom(null, null);
+      }
+    } else if (activeThread.type === "general") {
+      setActiveRoom(circleUuid, null);
+    } else if (activeThread.type === "plan") {
+      setActiveRoom(circleUuid, activeThread.plan.dbUuid);
+    }
+  }, [activeThread, circleUuid, setActiveRoom, currentChatPlanId]);
+
+  // Mark thread as read when entering the thread view
+  useEffect(() => {
+    if (activeThread !== null) {
+      const pId = activeThread.type === "plan" ? activeThread.plan.dbUuid : null;
+      markThreadRead(circleUuid, pId);
+    }
+  }, [activeThread, circleUuid, markThreadRead]);
+
+  useEffect(() => {
+    if (currentChatPlanId) {
+      const matchedPlan = plans.find(p => p.dbUuid === currentChatPlanId || p.id === currentChatPlanId);
+      if (matchedPlan) {
+        setActiveThread({ type: "plan", plan: matchedPlan });
+      } else {
+        // Missing thread handling: create context automatically and show empty discussion thread
+        const mockPlan: Plan = {
+          id: currentChatPlanId,
+          dbUuid: currentChatPlanId,
+          title: "Discussion Thread",
+          groupId: circleUuid,
+          circleId: circleUuid,
+          hostId: "",
+          members: [],
+          capacity: 10,
+          date: "",
+          time: "",
+          location: "",
+          paymentAmount: 0,
+          status: "active",
+          datetime: "",
+          createdAt: "",
+          coverImage: "",
+          creatorId: "",
+          creatorName: "Host",
+          creatorAvatar: "",
+          joinedUsers: [],
+          timeline: "today",
+          seatsLeft: 10,
+          category: "custom",
+          cost: 0,
+          confirmedCount: 0
+        };
+        setActiveThread({ type: "plan", plan: mockPlan });
+      }
+    }
+  }, [currentChatPlanId, plans, circleUuid]);
+
+  // Load plans belonging to the circle
   useEffect(() => {
     async function loadLatest() {
       try {
-        setIsLoading(true);
         await refreshPlans();
       } catch (err) {
         console.error("[CircleChatScreen] Failed to refresh plans:", err);
-      } finally {
-        setIsLoading(false);
       }
     }
     loadLatest();
-  }, [circle.id, circle.dbUuid, activeUserId]);
+  }, [circleUuid]);
 
-  const circleUuid = circle.dbUuid || circle.id;
+  // Fetch all circle messages to build previews & last message timestamps
+  const fetchPreviews = async () => {
+    if (!circleUuid || !activeUserId) return;
+    const url = `/api/db/chat/messages?circle_id=${circleUuid}&user_id=${activeUserId}`;
+    try {
+      console.log(`[CircleChatScreen Previews] Fetching preview url: ${url}`);
+      const res = await fetch(url);
+      
+      console.log(`[CircleChatScreen Previews] Response status: ${res.status}`);
+      const contentType = res.headers.get("content-type") || "";
+      console.log(`[CircleChatScreen Previews] Response Content-Type: ${contentType}`);
+
+      if (!res.ok) {
+        console.warn(`[CircleChatScreen] Failed to fetch previews. Status: ${res.status}`);
+        return;
+      }
+
+      if (!contentType.includes("application/json")) {
+        console.warn(`[CircleChatScreen] Received non-JSON response from previews fetch:`, contentType);
+        return;
+      }
+
+      const json = await res.json();
+      setAllCircleMessages(json.data || []);
+    } catch (err) {
+      console.error("[CircleChatScreen] Failed to fetch previews:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchPreviews();
+    const interval = setInterval(fetchPreviews, 5000);
+    return () => clearInterval(interval);
+  }, [circleUuid, activeUserId]);
+
+  useEffect(() => {
+    fetchPreviews();
+  }, [messages.length]);
+
+  // Filter plans by circle
   const circlePlans = plans.filter((p: any) => {
-    if (p.circleId === circleUuid || p.groupId === circleUuid) return true;
-    const circleMemberUuids = circle.membersList?.map((m: any) => m.userId).filter(Boolean) || [];
-    if (circleMemberUuids.length === 0) return false;
-    const planUserIds = p.members?.map((m: any) => m.userId).filter(Boolean) || [];
-    return circleMemberUuids.every((memberUuid: string) => planUserIds.includes(memberUuid));
+    return p.circleId === circleUuid || p.groupId === circleUuid;
   });
 
-  // Chronological (oldest first) for a chat timeline
-  const sortedPlans = [...circlePlans].sort((a: any, b: any) => {
-    return (new Date(a.date).getTime() || 0) - (new Date(b.date).getTime() || 0);
+  // Thread Visibility Filter: Host, Going, and Waitlisted users can see plan threads. Non-participants cannot.
+  const isParticipantOfPlan = (plan: Plan) => {
+    const isHost = plan.hostId === resolvedUuid || plan.creatorId === resolvedUuid;
+    const isJoined = plan.joinedUsers?.some(
+      (u: any) => u.userId === resolvedUuid && (u.joinState === "going" || u.joinState === "waitlist")
+    );
+    return isHost || isJoined;
+  };
+
+  const visiblePlans = circlePlans.filter(isParticipantOfPlan);
+
+  // Group plans by active and archived
+  const activePlans = visiblePlans.filter(
+    (p: Plan) => p.status !== "completed" && p.status !== "cancelled"
+  );
+  const archivedPlans = visiblePlans.filter(
+    (p: Plan) => p.status === "completed" || p.status === "cancelled"
+  );
+
+  // Emojis based on plan categories
+  const getPlanEmoji = (plan: Plan) => {
+    const cat = (plan.category || "").toLowerCase();
+    const title = (plan.title || "").toLowerCase();
+    if (cat.includes("badminton") || title.includes("badminton")) return "🏸";
+    if (cat.includes("football") || cat.includes("sports") || title.includes("football") || title.includes("soccer")) return "⚽";
+    if (cat.includes("movie") || cat.includes("film") || title.includes("movie")) return "🎬";
+    if (cat.includes("dining") || cat.includes("restaurant") || cat.includes("brunch") || title.includes("food") || title.includes("restaurant")) return "🍔";
+    return "📅";
+  };
+
+  // Sort Active Plan Threads:
+  // 1. Most recently messaged thread first
+  // 2. If no messages exist, newest plan first
+  const getPlanLastMessageTime = (plan: Plan) => {
+    const planMsgs = allCircleMessages.filter((m) => m.plan_id === plan.dbUuid);
+    if (planMsgs.length > 0) {
+      return new Date(planMsgs[0].created_at).getTime();
+    }
+    return new Date(plan.createdAt || plan.datetime).getTime();
+  };
+
+  const sortedActivePlans = [...activePlans].sort((a, b) => {
+    return getPlanLastMessageTime(b) - getPlanLastMessageTime(a);
   });
 
+  const formatTime = (timeStr?: string) => {
+    if (!timeStr) return "";
+    try {
+      const date = new Date(timeStr);
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return "";
+    }
+  };
+
+  // Composer authorization checks
+  const getComposerState = (thread: ActiveThread) => {
+    if (!thread) return { canSend: false, banner: null };
+    if (thread.type === "general") {
+      return { canSend: true, banner: null };
+    }
+
+    const plan = thread.plan;
+    if (plan.status === "completed") {
+      return { canSend: false, banner: "This thread is archived." };
+    }
+    if (plan.status === "cancelled") {
+      return { canSend: false, banner: "This plan was cancelled." };
+    }
+
+    const isHost = plan.hostId === resolvedUuid || plan.creatorId === resolvedUuid;
+    const myMemberObj = plan.joinedUsers?.find((u: any) => u.userId === resolvedUuid);
+    const isGoing = myMemberObj?.joinState === "going";
+    const isWaitlist = myMemberObj?.joinState === "waitlist";
+
+    if (isHost || isGoing) {
+      return { canSend: true, banner: null };
+    }
+    if (isWaitlist) {
+      return {
+        canSend: false,
+        banner: "You are currently waitlisted. You can follow the conversation but cannot send messages."
+      };
+    }
+    return { canSend: false, banner: "You are not participating in this plan." };
+  };
+
+  const composerState = getComposerState(activeThread);
+
+  // Send message handler
+  const handleSend = async () => {
+    if (!inputText.trim()) return;
+    try {
+      await sendMessage(inputText.trim());
+      setInputText("");
+    } catch (err) {
+      console.error("[CircleChatScreen] Failed to send message:", err);
+    }
+  };
+
+  // Scroll timeline to bottom
+  const messageEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (messageEndRef.current) {
+      messageEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length, activeThread]);
+
+  // Handle plan hosting navigation
   const handleHostPlan = () => {
     setNewPlanCircleId?.(circle.id);
     setNewPlanTitle?.(`Meetup with ${circle.name}`);
@@ -313,154 +301,413 @@ export const CircleChatScreen = (props: any) => {
     triggerToast?.(`Creating plan for ${circle.name} ⚡`);
   };
 
-  const timelineRef = React.useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (timelineRef.current) {
-      console.log("[CircleChatScreen Logs]");
-      console.log("- Number of plans rendered:", sortedPlans.length);
-      console.log("- Timeline container clientHeight (visible):", timelineRef.current.clientHeight);
-      console.log("- Timeline scrollHeight (total content height):", timelineRef.current.scrollHeight);
+  // Filter local messages for thread isolation rendering
+  const filteredMessages = messages.filter((msg) => {
+    if (activeThread?.type === "general") {
+      return !msg.planId;
+    } else if (activeThread?.type === "plan") {
+      return msg.planId === activeThread.plan.dbUuid;
     }
-  }, [sortedPlans]);
+    return false;
+  });
+
+  // Extract preview data for general chat card
+  const generalMessages = allCircleMessages.filter((m) => !m.plan_id);
+  const lastGeneralMsg = generalMessages[0]; // newest since API returns DESC
+
+  // Helpers for text truncation and timestamps
+  const truncate = (str: string, len: number) => {
+    if (!str) return "";
+    return str.length > len ? str.slice(0, len) + "..." : str;
+  };
+
+  const isDev = (import.meta as any).env?.DEV || true;
+  const generalKey = `general:${circleUuid}`;
+  const genUnread = unreadCounts[generalKey] || 0;
 
   return (
-    /**
-     * Outer shell: h-full, flex column.
-     * Three rows: [header | scrollable timeline | fixed footer]
-     * No nested scroll containers.
-     */
-    <div
-      id="circle_plans_container"
-      className="flex flex-col animate-fade-in select-none h-full"
-    >
-      {/* ── 1. COMPACT HEADER ────────────────────────────────────────── */}
-      <div
-        id="circle_plans_header"
-        className="shrink-0 flex items-center justify-between bg-zinc-950/80 border border-zinc-900 rounded-2xl p-2 backdrop-blur-md shadow-md"
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <button
-            type="button"
-            onClick={onBack}
-            className="p-1 text-zinc-400 hover:text-white hover:bg-zinc-900 rounded-full transition-all cursor-pointer"
-            aria-label="Back to circles list"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-
-          <div
-            onClick={onOpenSettings}
-            className="flex items-center gap-2 cursor-pointer group min-w-0"
-            title="Open Group Settings"
-          >
-            <img
-              src={
-                circle.groupImage ||
-                circle.avatars?.[0] ||
-                "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=200"
-              }
-              className="w-8 h-8 rounded-lg object-cover border border-zinc-800 group-hover:border-[#ff8b66] transition-colors"
-              alt=""
-              referrerPolicy="no-referrer"
-            />
-            <div className="min-w-0">
-              <h3 className="text-xs font-display font-black text-white tracking-tight truncate group-hover:text-[#ff8b66] transition-colors uppercase">
-                {circle.name}
-              </h3>
-              <span className="text-[9px] text-zinc-500 font-mono flex items-center gap-1">
-                <Users className="w-2.5 h-2.5 text-[#ff8b66]" />
-                {circle.membersCount || circle.membersList?.length || 0} members • Settings
-              </span>
+    <div className="flex flex-col h-full bg-[#0C0C0E] text-zinc-100 select-none animate-fade-in px-4 py-2">
+      {/* ── CASE 1: COMMUNICATION HUB (activeThread === null) ────────────────────────── */}
+      {activeThread === null && (
+        <div className="flex flex-col h-full justify-between">
+          {/* Header */}
+          <div className="shrink-0 flex items-center justify-between pt-4 pb-6">
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={onBack}
+                className="w-10 h-10 bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800 rounded-full flex items-center justify-center transition-all cursor-pointer"
+              >
+                <ArrowLeft className="w-4 h-4 text-zinc-400 hover:text-white" />
+              </button>
+              <div>
+                <h3 className="text-xl font-display font-black text-white tracking-tight uppercase">
+                  {circle.name}
+                </h3>
+                <span className="text-[10px] text-zinc-500 font-mono">
+                  {circle.membersCount || circle.membersList?.length || 0} members
+                </span>
+              </div>
             </div>
+
+            <div className="flex items-center gap-3">
+              {/* Realtime Status Indicator */}
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-850">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    connectionStatus === "Connected"
+                      ? "bg-emerald-500"
+                      : connectionStatus === "Reconnecting"
+                      ? "bg-amber-500 animate-pulse"
+                      : "bg-zinc-500"
+                  }`}
+                />
+                <span className="text-[8px] font-mono font-bold text-zinc-400">
+                  {connectionStatus}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="w-10 h-10 bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800 rounded-full flex items-center justify-center transition-all cursor-pointer"
+              >
+                <Settings className="w-4 h-4 text-zinc-400 hover:text-white" />
+              </button>
+            </div>
+          </div>
+
+          {/* List Content */}
+          <div className="flex-1 overflow-y-auto no-scrollbar space-y-6">
+            {/* GENERAL CHAT CARD */}
+            <div
+              onClick={() => setActiveThread({ type: "general" })}
+              className="bg-zinc-900/60 border border-zinc-850 p-4.5 rounded-2xl flex items-center justify-between cursor-pointer hover:border-zinc-750 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-lg">💬</span>
+                <span className="text-sm font-bold text-[#ff8b66]">General Chat</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {genUnread > 0 && (
+                  <span className="text-xs font-bold text-[#ff8b66] flex items-center gap-1 font-mono">
+                    ● {genUnread}
+                  </span>
+                )}
+                <ChevronRight className="w-4 h-4 text-zinc-500" />
+              </div>
+            </div>
+
+            {/* ACTIVE PLAN THREADS */}
+            <div>
+              <span className="text-[10px] font-sans font-black uppercase tracking-wider text-zinc-500 block mb-3">
+                ACTIVE PLANS
+              </span>
+              {sortedActivePlans.length === 0 ? (
+                <div className="py-6 text-center text-zinc-550 text-[10px] font-mono">
+                  No active plans.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {sortedActivePlans.map((plan) => {
+                    const planKey = `plan:${plan.dbUuid}`;
+                    const planUnread = unreadCounts[planKey] || 0;
+                    return (
+                      <div
+                        key={plan.id}
+                        onClick={() => setActiveThread({ type: "plan", plan })}
+                        className="bg-zinc-900/60 border border-zinc-850 p-4.5 rounded-2xl flex items-center justify-between cursor-pointer hover:border-zinc-750 transition-all"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">{getPlanEmoji(plan)}</span>
+                          <span className="text-sm font-bold text-white">{plan.title}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {planUnread > 0 && (
+                            <span className="text-xs font-bold text-[#ff8b66] flex items-center gap-1 font-mono">
+                              ● {planUnread}
+                            </span>
+                          )}
+                          <ChevronRight className="w-4 h-4 text-zinc-550" />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* COLLAPSIBLE ARCHIVED THREADS */}
+            {archivedPlans.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setArchivedExpanded(!archivedExpanded)}
+                  className="w-full flex items-center justify-between py-2 text-[10px] font-sans font-black uppercase tracking-wider text-zinc-500 hover:text-zinc-300"
+                >
+                  <span>Archived Threads ({archivedPlans.length})</span>
+                  <ChevronRight className={`w-3.5 h-3.5 transform transition-transform ${archivedExpanded ? "rotate-90" : ""}`} />
+                </button>
+
+                {archivedExpanded && (
+                  <div className="space-y-2.5 mt-2">
+                    {archivedPlans.map((plan) => (
+                      <div
+                        key={plan.id}
+                        onClick={() => setActiveThread({ type: "plan", plan })}
+                        className="bg-zinc-950/40 border border-zinc-900 p-3.5 rounded-xl flex items-center justify-between cursor-pointer hover:border-zinc-800 transition-all"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-sm opacity-60">{getPlanEmoji(plan)}</span>
+                          <span className="text-xs font-bold text-zinc-400">{plan.title}</span>
+                        </div>
+                        <span className="text-[8px] font-mono bg-zinc-900 text-zinc-500 border border-zinc-850 px-1.5 py-0.5 rounded uppercase">
+                          {plan.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Create Plan CTA */}
+          <div className="shrink-0 pt-4 pb-4">
+            <button
+              type="button"
+              onClick={handleHostPlan}
+              className="w-full py-4 border border-dashed border-[#ff8b66]/30 hover:border-[#ff8b66]/60 text-[#ff8b66] font-sans font-black text-xs tracking-widest uppercase rounded-2xl flex items-center justify-center gap-1.5 transition-all hover:bg-zinc-900/30 cursor-pointer"
+            >
+              <Plus className="w-4.5 h-4.5" />
+              <span>CREATE PLAN</span>
+            </button>
           </div>
         </div>
+      )}
 
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="p-1.5 text-zinc-400 hover:text-white bg-zinc-900/60 border border-zinc-850 hover:border-zinc-750 rounded-lg transition-all cursor-pointer"
-        >
-          <Settings className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
-      {/* ── 2. SINGLE SCROLLABLE TIMELINE ────────────────────────────── */}
-      <div
-        id="circle_plans_timeline"
-        ref={timelineRef}
-        className="flex-1 overflow-y-auto no-scrollbar mt-2 mb-2 rounded-2xl border border-zinc-900/30 bg-zinc-950/20 p-2"
-      >
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">
-              Loading plans...
-            </span>
-          </div>
-        ) : sortedPlans.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full py-4 text-center space-y-1.5">
-            <div className="w-8 h-8 rounded-full bg-zinc-900/50 border border-zinc-850 flex items-center justify-center text-zinc-500">
-              <Calendar className="w-3.5 h-3.5" />
+      {/* ── CASE 2: THREAD MESSAGE MODE (activeThread !== null) ────────────────────── */}
+      {activeThread !== null && (
+        <div className="flex flex-col h-full">
+          {/* Header */}
+          {activeThread.type === "general" ? (
+            <div className="shrink-0 flex items-center gap-4 pt-4 pb-6">
+              <button
+                type="button"
+                onClick={() => setActiveThread(null)}
+                className="w-10 h-10 bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800 rounded-full flex items-center justify-center transition-all cursor-pointer"
+              >
+                <ArrowLeft className="w-4 h-4 text-zinc-400 hover:text-white" />
+              </button>
+              <div>
+                <h3 className="text-lg font-display font-black text-white tracking-tight uppercase leading-tight">
+                  General Chat
+                </h3>
+                <span className="text-[9.5px] font-sans font-black tracking-widest text-[#ff8b66] uppercase block mt-0.5">
+                  CIRCLE CHAT
+                </span>
+              </div>
             </div>
-            <p className="text-[11px] text-zinc-400 font-semibold">No plans posted yet</p>
-            <p className="text-[9.5px] text-zinc-500 max-w-[200px]">
-              Tap "Host a Plan" below to create the first plan for this circle.
-            </p>
-          </div>
-        ) : (
-          /* Small bottom padding so the last card clears the composer */
-          <div className="space-y-3 pb-2">
-            {sortedPlans.map((plan: any) => {
-              const isCurrentUser = plan.creatorId === "u_self";
-              const isCompleted = plan.status === "completed" || plan.isHappened;
-              const isAlreadyJoined = plan.joinedUsers?.some(
-                (u: any) => u.userId === activeUserId
-              );
+          ) : (
+            /* Compact Hero Header for Plan Threads */
+            <div className="relative w-full overflow-hidden rounded-3xl border border-zinc-900 bg-zinc-950 shrink-0 mb-3" style={{ height: "200px" }}>
+              {/* Banner Image */}
+              <img
+                src={activeThread.plan.coverImage || "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&q=80&w=600"}
+                className="absolute inset-0 w-full h-full object-cover"
+                alt=""
+              />
+              {/* Dark Gradient Overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-[#0C0C0E] via-[#0C0C0E]/60 to-transparent" />
+              
+              {/* Content Container */}
+              <div className="absolute inset-0 p-4 flex flex-col justify-between">
+                {/* Top Row: Back button + View Plan Button */}
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setActiveThread(null)}
+                    className="w-8 h-8 bg-zinc-950/60 border border-zinc-850 hover:bg-zinc-800 rounded-full flex items-center justify-center transition-all cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4 text-zinc-300" />
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPlan?.(activeThread.plan)}
+                    className="px-3 py-1.5 bg-zinc-950/80 hover:bg-zinc-900 border border-zinc-850 rounded-xl text-[9px] font-mono font-bold tracking-wider text-[#ff8b66] uppercase cursor-pointer flex items-center gap-1.5 transition-all"
+                  >
+                    <span>📋</span> VIEW PLAN
+                  </button>
+                </div>
 
-              return (
-                <CirclePlanCardBubble
-                  key={plan.id}
-                  plan={plan}
-                  activeUserId={activeUserId}
-                  activeUserUuid={resolvedUuid}
-                  isCurrentUser={isCurrentUser}
-                  isCompleted={isCompleted}
-                  isAlreadyJoined={isAlreadyJoined}
-                  dbMemories={dbMemories}
-                  dbMemoryAttendees={dbMemoryAttendees}
-                  dbMemoryMovieVerdicts={dbMemoryMovieVerdicts}
-                  dbMemoryRestaurantVotes={dbMemoryRestaurantVotes}
-                  dbMemoryMatchResults={dbMemoryMatchResults}
-                  dbMemoryMvpVotes={dbMemoryMvpVotes}
-                  dbMemoryBadmintonResults={dbMemoryBadmintonResults}
-                  setSelectedPlan={setSelectedPlan}
-                  setSelectedMemoryPlan={setSelectedMemoryPlan}
-                  setPaymentConfirmationPlan={setPaymentConfirmationPlan}
-                  handleToggleJoin={handleToggleJoin}
-                  triggerToast={triggerToast}
-                />
-              );
-            })}
-          </div>
-        )}
-      </div>
+                {/* Bottom Details Row */}
+                <div className="space-y-1 text-left">
+                  <span className="inline-block text-[8px] font-mono font-black tracking-widest text-[#ff8b66] uppercase bg-[#ff8b66]/10 px-2 py-0.5 rounded border border-[#ff8b66]/20">
+                    [{circle.name.toUpperCase()}]
+                  </span>
+                  <h3 className="text-base font-display font-black text-white uppercase tracking-tight leading-tight">
+                    {activeThread.plan.title}
+                  </h3>
+                  <p className="text-[10px] text-zinc-400">
+                    Hosted by <span className="text-zinc-200 font-semibold">{activeThread.plan.creatorName || "Host"}</span>
+                  </p>
+                  
+                  {/* Quick metadata row */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[9.5px] font-mono text-zinc-400">
+                    <span className="flex items-center gap-1">📍 {truncate(activeThread.plan.location, 20)}</span>
+                    <span className="flex items-center gap-1">🕒 {activeThread.plan.date} • {activeThread.plan.time}</span>
+                    <span className="flex items-center gap-1 text-emerald-400">👥 {activeThread.plan.confirmedCount || 0} Going</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
-      {/* ── 3. FIXED FOOTER ─────────────────────────────────────────── */}
-      <div
-        id="circle_plans_footer"
-        className="shrink-0 pt-1 bg-[#0C0C0E]"
-      >
-        <button
-          id="circle_host_plan_button"
-          type="button"
-          onClick={handleHostPlan}
-          className="w-full h-11 bg-[#ff8b66] hover:bg-[#ff9a7c] text-black font-sans font-black text-xs tracking-widest uppercase rounded-2xl flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] shadow-[0_4px_20px_rgba(255,139,102,0.15)] cursor-pointer"
-          aria-label="Host a Plan"
-        >
-          <Plus className="w-4.5 h-4.5 stroke-[3]" />
-          <span>HOST PLAN</span>
-        </button>
-      </div>
+          {/* Messages Feed */}
+          <div className="flex-1 overflow-y-auto no-scrollbar py-3 space-y-4">
+            {/* ONLY render beginning log for General Chat */}
+            {activeThread.type === "general" && (
+              <div className="flex justify-center text-center px-4 py-2 border-b border-zinc-950/40 pb-4">
+                <span className="text-[9px] font-sans font-black tracking-wider text-zinc-600 uppercase">
+                  BEGINNING OF SECURE THREAD WORKSPACE
+                </span>
+              </div>
+            )}
+
+            {isChatLoading ? (
+              <div className="flex justify-center py-6 text-zinc-500 text-[10px] font-mono uppercase tracking-wider">
+                Loading messages...
+              </div>
+            ) : filteredMessages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center text-zinc-500">
+                <MessageSquare className="w-8 h-8 text-zinc-700 mb-2" />
+                <p className="text-[11px] font-bold text-zinc-400">
+                  {activeThread.type === "general" ? "Start the conversation." : "No messages yet."}
+                </p>
+                {activeThread.type !== "general" && (
+                  <p className="text-[9px] text-zinc-650 max-w-[200px] mt-1">
+                    Coordinate with your group here.
+                  </p>
+                )}
+              </div>
+            ) : (
+              filteredMessages.map((msg) => {
+                if (msg.type === "system") {
+                  return (
+                    <div key={msg.id} className="flex items-center justify-center gap-2 py-2 w-full px-4">
+                      <div className="h-[1px] bg-zinc-800 grow"></div>
+                      <span className="text-[10px] text-zinc-500 font-medium px-2 text-center">
+                        {msg.content}
+                      </span>
+                      <div className="h-[1px] bg-zinc-800 grow"></div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex items-start gap-3 max-w-[85%] ${
+                      msg.isOwn ? "ml-auto flex-row-reverse" : "mr-auto"
+                    }`}
+                  >
+                    {/* Avatar */}
+                    <img
+                      src={
+                        msg.sender?.avatar ||
+                        "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100"
+                      }
+                      className="w-8 h-8 rounded-full object-cover border border-zinc-900 shrink-0"
+                      alt=""
+                      referrerPolicy="no-referrer"
+                    />
+
+                    {/* Bubble Content */}
+                    <div className={`flex flex-col ${msg.isOwn ? "items-end" : "items-start"}`}>
+                      <div className="flex items-center gap-1.5 mb-1 px-1">
+                        <span className="text-[10px] font-bold text-zinc-400">
+                          {msg.sender?.name || "Member"}
+                        </span>
+                        <span className="text-[8px] font-mono text-zinc-550">
+                          {formatTime(msg.createdAt)}
+                        </span>
+                      </div>
+                      <div
+                        className={`px-4 py-3 rounded-2xl text-xs break-words leading-relaxed ${
+                          msg.isOwn
+                            ? "bg-[#ff8b66] text-black font-semibold rounded-tr-none"
+                            : "bg-zinc-900 text-zinc-200 rounded-tl-none border border-zinc-850"
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div ref={messageEndRef} />
+          </div>
+
+          {/* Composer Rules Banner & Message Input */}
+          <div className="shrink-0 pt-3 border-t border-zinc-900 bg-zinc-950/60 pb-4">
+            {!composerState.canSend && composerState.banner && (
+              <div className="flex items-center gap-2 mb-3 p-3 rounded-xl bg-zinc-900 border border-zinc-850">
+                <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                <span className="text-[10px] text-zinc-400 font-mono">
+                  {composerState.banner}
+                </span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                disabled={!composerState.canSend}
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSend();
+                }}
+                placeholder={
+                  composerState.canSend
+                    ? activeThread.type === "general"
+                      ? "Message general..."
+                      : "Coordinate active plan..."
+                    : "Messaging disabled"
+                }
+                className={`flex-1 h-11 rounded-full px-4 text-xs bg-zinc-900 border text-zinc-200 placeholder-zinc-550 focus:outline-none focus:border-[#ff8b66]/60 ${
+                  !composerState.canSend ? "opacity-50 cursor-not-allowed border-zinc-850" : "border-zinc-800"
+                }`}
+              />
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!composerState.canSend || !inputText.trim()}
+                className={`w-11 h-11 rounded-full flex items-center justify-center transition-all ${
+                  composerState.canSend && inputText.trim()
+                    ? "bg-[#ff8b66] hover:bg-[#ff9a7c] text-black cursor-pointer shadow-md"
+                    : "bg-zinc-900 text-zinc-600 cursor-not-allowed border border-zinc-850"
+                }`}
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Developer visibility Debug panel */}
+            {isDev && (
+              <div className="mt-4 p-2.5 rounded-xl bg-zinc-900/40 border border-zinc-900/60 font-mono text-[8px] text-zinc-500 space-y-0.5">
+                <div>[DEBUG COMPONENT DATA]</div>
+                <div>• Message Count: {filteredMessages.length}</div>
+                <div>• Thread Type: {activeThread.type}</div>
+                <div>• Thread ID: {activeThread.type === "general" ? "NULL" : activeThread.plan.dbUuid}</div>
+                <div>• Circle ID: {circleUuid}</div>
+                <div>• Plan ID: {activeThread.type === "general" ? "NULL" : activeThread.plan.dbUuid}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

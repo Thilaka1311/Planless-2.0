@@ -81,7 +81,7 @@ export default function MemoryDetailModal({
     }
   }, [myBadmintonResult]);
 
-  const isHost = plan.hostId === "u_self" || plan.hostId === activeUserId;
+  const isHost = plan.hostId === activeUserId || plan.creatorId === activeUserId;
   const isEditWindowOpen = new Date().getTime() < new Date(memory.editable_until).getTime();
 
   // Attendees list

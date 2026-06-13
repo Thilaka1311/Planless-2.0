@@ -1,10 +1,12 @@
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo, useEffect } from "react";
 import { Plan, PlanMember, DbPlan, DbPlanParticipant, DbMemory, DbMemoryAttendee, DbMemoryMovieVerdict, DbMemoryRestaurantVote, DbMemoryMatchResult, DbMemoryMvpVote, DbMemoryBadmintonResult, User } from "../../../core/types";
+import { DbPlanTeamAssignment } from "../../../lib/db";
 import { useProfileStore } from "../../profile/state/ProfileContext";
 import { useCirclesStore } from "../../circles/state/CirclesContext";
-import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats, createRazorpayOrder, verifyRazorpayPayment, insertTransaction } from "../../../lib/db";
+import { insertParticipant, updateParticipantStatus, insertPlanReminder, syncUserStats, createRazorpayOrder, verifyRazorpayPayment, insertTransaction, deleteParticipant, getPlanTeamAssignments, upsertPlanTeamAssignment, removePlanTeamAssignment, deleteAllPlanTeamAssignments } from "../../../lib/db";
 import { mapPlansToLegacyPlans } from "../../../lib/mappers";
 import { calculateParticipantBreakdown, parseTimeToMinutes, normalizeStatus } from "../../../lib/participantStatus";
+import { supabase } from "../../../lib/supabaseClient";
 
 interface ParticipantCounts {
   host: number;
@@ -67,6 +69,12 @@ interface PlansContextType {
   submitMatchResult: (memoryId: string, teamAScore: number, teamBScore: number, recordedByUuid: string) => Promise<void>;
   submitMvpVote: (memoryId: string, voterUuid: string, mvpUuid: string) => Promise<void>;
   submitBadmintonResult: (memoryId: string, wins: number, losses: number, userUuid: string) => Promise<void>;
+  dbPlanTeamAssignments: DbPlanTeamAssignment[];
+  setDbPlanTeamAssignments: React.Dispatch<React.SetStateAction<DbPlanTeamAssignment[]>>;
+  getTeamAssignments: (planUuid: string) => Promise<DbPlanTeamAssignment[]>;
+  assignTeam: (planUuid: string, userUuid: string, team: "A" | "B") => Promise<void>;
+  unassignTeam: (planUuid: string, userUuid: string) => Promise<void>;
+  removeParticipant: (planId: string, participantUserUuid: string) => Promise<void>;
 }
 
 const PlansContext = createContext<PlansContextType | undefined>(undefined);
@@ -82,8 +90,21 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [dbMemoryMatchResults, setDbMemoryMatchResults] = useState<DbMemoryMatchResult[]>([]);
   const [dbMemoryMvpVotes, setDbMemoryMvpVotes] = useState<DbMemoryMvpVote[]>([]);
   const [dbMemoryBadmintonResults, setDbMemoryBadmintonResults] = useState<DbMemoryBadmintonResult[]>([]);
+  const [dbPlanTeamAssignments, setDbPlanTeamAssignments] = useState<DbPlanTeamAssignment[]>([]);
 
   const { activeUserId: userId, dbUsers } = useProfileStore();
+  const { dbCircles, dbCircleMembers } = useCirclesStore();
+
+  const dbPlansRef = React.useRef(dbPlans);
+  dbPlansRef.current = dbPlans;
+  const dbPlanParticipantsRef = React.useRef(dbPlanParticipants);
+  dbPlanParticipantsRef.current = dbPlanParticipants;
+  const dbUsersRef = React.useRef(dbUsers);
+  dbUsersRef.current = dbUsers;
+  const userIdRef = React.useRef(userId);
+  userIdRef.current = userId;
+  const dbCirclesRef = React.useRef(dbCircles);
+  dbCirclesRef.current = dbCircles;
 
   const resolveUserUuid = (uId: string) => {
     const userObj = dbUsers.find(u => u.user_id === uId || u.id === uId);
@@ -93,7 +114,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const isUuid = (val: any) => typeof val === "string" && uuidRegex.test(val);
 
-  const refreshPlans = async (targetTables?: string[]) => {
+  const refreshPlans = useCallback(async (targetTables?: string[]) => {
     try {
       const url = targetTables ? `/api/db/fetch-all?tables=${targetTables.join(",")}` : "/api/db/fetch-all";
       const res = await fetch(url);
@@ -110,22 +131,221 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (d.memory_match_results !== undefined) setDbMemoryMatchResults(d.memory_match_results);
           if (d.memory_mvp_votes !== undefined) setDbMemoryMvpVotes(d.memory_mvp_votes);
           if (d.memory_badminton_results !== undefined) setDbMemoryBadmintonResults(d.memory_badminton_results);
+          if (d.plan_team_assignments !== undefined) setDbPlanTeamAssignments(d.plan_team_assignments);
 
-          // Trigger plans update with latest values combined from state and fetched subset
-          setDbPlans(currentPlans => {
-            const finalPlans = d.plans !== undefined ? d.plans : currentPlans;
-            setDbPlanParticipants(currentParticipants => {
-              const finalParticipants = d.plan_participants !== undefined ? d.plan_participants : currentParticipants;
-              setPlans(mapPlansToLegacyPlans(finalPlans, finalParticipants, dbUsers, userId, useCirclesStore().dbCircles));
-              return finalParticipants;
-            });
-            return finalPlans;
-          });
           console.log(`[PlansContext refreshPlans] Successfully refreshed plans state (targeted: ${targetTables?.join(",") || "all"}).`);
         }
       }
     } catch (err) {
       console.error("[PlansContext refreshPlans] Failed to fetch updated state:", err);
+    }
+  }, []);
+
+  // Recovery from backgrounding, sleep, or network offline transitions
+  const lastRecoveryRef = React.useRef<number>(0);
+  useEffect(() => {
+    const triggerRecovery = () => {
+      const now = Date.now();
+      if (now - lastRecoveryRef.current < 10000) {
+        console.log("[PlansContext Recovery] Debounced duplicate recovery event.");
+        return;
+      }
+      lastRecoveryRef.current = now;
+      console.log("[PlansContext Recovery] App active/online. Running reconciliation fetch...");
+      refreshPlans(["plans", "plan_participants", "plan_team_assignments"]);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        triggerRecovery();
+      }
+    };
+
+    window.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", triggerRecovery);
+    window.addEventListener("online", triggerRecovery);
+
+    return () => {
+      window.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", triggerRecovery);
+      window.removeEventListener("online", triggerRecovery);
+    };
+  }, [refreshPlans]);
+
+  // Realtime subscription
+  useEffect(() => {
+    console.log("[PlansContext Realtime] Setting up plans and participants subscriptions...");
+    const lastStatusRef = { current: "" };
+
+    const channel = supabase.channel("plans-realtime-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "plans" },
+        (payload: any) => {
+          const { eventType, new: newRec, old: oldRec } = payload;
+
+          if (eventType === "INSERT" || eventType === "UPDATE") {
+            const planId = newRec.id || newRec.plan_id;
+            const exists = dbPlansRef.current.some(p => p.id === planId || p.plan_id === planId);
+            if (!exists) {
+              return;
+            }
+
+            setDbPlans(prev => {
+              const matchIndex = prev.findIndex(p => p.id === planId || p.plan_id === planId);
+              if (matchIndex > -1) {
+                const updated = [...prev];
+                updated[matchIndex] = newRec;
+                return updated;
+              } else {
+                return [...prev, newRec];
+              }
+            });
+          } else if (eventType === "DELETE") {
+            const planId = oldRec.id || oldRec.plan_id;
+            const exists = dbPlansRef.current.some(p => p.id === planId || p.plan_id === planId);
+            if (!exists) return;
+
+            setDbPlans(prev => {
+              return prev.filter(p => p.id !== planId && p.plan_id !== planId);
+            });
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "plan_participants" },
+        (payload: any) => {
+          const { eventType, new: newRec, old: oldRec } = payload;
+
+          if (eventType === "INSERT" || eventType === "UPDATE") {
+            const planId = newRec.plan_id;
+            const userIdVal = newRec.user_id;
+
+            const planExists = dbPlansRef.current.some(p => p.id === planId || p.plan_id === planId);
+            if (!planExists) {
+              return;
+            }
+
+            setDbPlanParticipants(prev => {
+              const matchIndex = prev.findIndex(pp => pp.plan_id === planId && pp.user_id === userIdVal);
+              if (matchIndex > -1) {
+                const updated = [...prev];
+                updated[matchIndex] = newRec;
+                return updated;
+              } else {
+                return [...prev, newRec];
+              }
+            });
+          } else if (eventType === "DELETE") {
+            const planId = oldRec.plan_id;
+            const userIdVal = oldRec.user_id;
+
+            const planExists = dbPlansRef.current.some(p => p.id === planId || p.plan_id === planId);
+            if (!planExists) return;
+
+            setDbPlanParticipants(prev => {
+              return prev.filter(pp => !(pp.plan_id === planId && pp.user_id === userIdVal));
+            });
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "plan_team_assignments" },
+        (payload: any) => {
+          const { eventType, new: newRec, old: oldRec } = payload;
+
+          if (eventType === "INSERT" || eventType === "UPDATE") {
+            const planId = newRec.plan_id;
+            const userIdVal = newRec.user_id;
+
+            const planExists = dbPlansRef.current.some(p => p.id === planId || p.plan_id === planId);
+            if (!planExists) {
+              return;
+            }
+
+            setDbPlanTeamAssignments(prev => {
+              const matchIndex = prev.findIndex(a => a.plan_id === planId && a.user_id === userIdVal);
+              if (matchIndex > -1) {
+                const updated = [...prev];
+                updated[matchIndex] = newRec;
+                return updated;
+              } else {
+                return [...prev, newRec];
+              }
+            });
+          } else if (eventType === "DELETE") {
+            const planId = oldRec.plan_id;
+            const userIdVal = oldRec.user_id;
+
+            const planExists = dbPlansRef.current.some(p => p.id === planId || p.plan_id === planId);
+            if (!planExists) return;
+
+            setDbPlanTeamAssignments(prev => {
+              return prev.filter(a => !(a.plan_id === planId && a.user_id === userIdVal));
+            });
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log("[PlansContext Realtime] Subscription status change:", status);
+        const prevStatus = lastStatusRef.current;
+        lastStatusRef.current = status;
+
+        if (status === "SUBSCRIBED") {
+          if (prevStatus && prevStatus !== "SUBSCRIBED") {
+            console.log("[Realtime] Recovered");
+            refreshPlans(["plans", "plan_participants", "plan_team_assignments"]);
+          } else {
+            console.log("[Realtime] Connected");
+          }
+        } else if (status === "CLOSED" || status === "CHANNEL_ERROR") {
+          console.log("[Realtime] Reconnecting");
+        }
+      });
+
+    return () => {
+      console.log("[PlansContext Realtime] Cleaning up subscriptions...");
+      channel.unsubscribe();
+    };
+  }, [refreshPlans]);
+
+  // Consolidated Derived plans mapping pipeline
+  useEffect(() => {
+    setPlans(mapPlansToLegacyPlans(dbPlans, dbPlanParticipants, dbUsers, userId, dbCircles));
+  }, [dbPlans, dbPlanParticipants, dbUsers, userId, dbCircles]);
+
+  const insertSystemMessage = async (planUuid: string, content: string, actorUuid: string | null) => {
+    try {
+      const dbPlan = dbPlans.find(p => p.id === planUuid || p.plan_id === planUuid);
+      const circleId = dbPlan?.circle_id;
+      if (!circleId) {
+        console.warn("[PlansContext] Cannot send system message: plan has no circle_id", planUuid);
+        return;
+      }
+
+      const payload = {
+        circle_id: circleId,
+        sender_id: null,
+        system_actor_id: actorUuid,
+        content,
+        message_type: "system",
+        plan_id: planUuid,
+        parent_id: null
+      };
+
+      console.log(`[PlansContext] Inserting system message:`, payload);
+      const res = await fetch("/api/db/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "circle_messages", records: [payload] })
+      });
+      if (!res.ok) {
+        console.error("[PlansContext] Failed to upsert system message:", await res.text());
+      }
+    } catch (err) {
+      console.error("[PlansContext] Exception during system message insert:", err);
     }
   };
 
@@ -186,6 +406,15 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ table: "notifications", records: [notifRecord] })
       }).catch(err => console.error("[PlansContext handleParticipantStatusChange] Failed to save notification:", err));
+    }
+
+    // Phase 7: System message insertion on status changes
+    if (normOld === "waitlist" && normNew === "going") {
+      await insertSystemMessage(planUuid, `${participantName} moved from waitlist to confirmed`, participantUuid);
+    } else if (normOld !== "going" && normOld !== "waitlist" && normNew === "going") {
+      await insertSystemMessage(planUuid, `${participantName} joined the plan`, participantUuid);
+    } else if ((normOld === "going" || normOld === "waitlist") && normNew === "skipped") {
+      await insertSystemMessage(planUuid, `${participantName} left the plan`, participantUuid);
     }
   };
 
@@ -310,7 +539,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     console.log(`[PlansContext] Participant status BEFORE action:`, existingBefore ? existingBefore.status : "none (not invited/joined)");
 
     const hostUuid = matchedPlan?.hostId || matchedPlan?.creatorId;
-    const isHost = hostUuid === userUuid || hostUuid === "u_self";
+    const isHost = hostUuid === userUuid;
     if (matchedPlan && matchedPlan.payment_required && !isHost) {
       // 1. Create Razorpay Order
       const amount = matchedPlan.cost;
@@ -573,6 +802,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         await updateParticipantStatus(existingBefore.id, "skipped", existingBefore.payment_status);
         console.log(`[leavePlan] Updated participant row ${existingBefore.id} status to 'skipped'`);
         await handleParticipantStatusChange(planUuid, userUuid, existingBefore.status, "skipped");
+        // Clean up team assignment as they are no longer actively participating
+        await removePlanTeamAssignment(planUuid, userUuid);
+        setDbPlanTeamAssignments(prev => prev.filter(a => !(a.plan_id === planUuid && a.user_id === userUuid)));
         await promoteWaitlistIfSpotsAvailable(planUuid);
       } catch (err) {
         console.error(`[PlansContext] leavePlan DB write failed:`, err);
@@ -609,6 +841,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (planUuid && userUuid) {
       if (existingBefore && existingBefore.id) {
         await updateParticipantStatus(existingBefore.id, "passed", "unpaid");
+        // Clean up team assignment as they are no longer actively participating
+        await removePlanTeamAssignment(planUuid, userUuid);
+        setDbPlanTeamAssignments(prev => prev.filter(a => !(a.plan_id === planUuid && a.user_id === userUuid)));
         await promoteWaitlistIfSpotsAvailable(planUuid);
       } else {
         await insertParticipant({
@@ -618,6 +853,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           payment_status: "unpaid",
           joined_at: new Date().toISOString()
         });
+        // Clean up team assignment as they are no longer actively participating
+        await removePlanTeamAssignment(planUuid, userUuid);
+        setDbPlanTeamAssignments(prev => prev.filter(a => !(a.plan_id === planUuid && a.user_id === userUuid)));
         await promoteWaitlistIfSpotsAvailable(planUuid);
       }
     }
@@ -687,7 +925,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     const hostUuid = matchedPlan?.hostId || matchedPlan?.creatorId;
-    const isHost = hostUuid === userUuid || hostUuid === "u_self";
+    const isHost = hostUuid === userUuid;
     if (isHost) {
       console.log(`[PlansContext] User is host. Skip transition aborted.`);
       console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_FAILED: user is host`);
@@ -709,6 +947,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (result && normalizeStatus(result.status) === "skipped") {
           console.log(`[DetailedPlanModal] SKIP_DB_UPDATE_SUCCESS: status updated to skipped`);
           await handleParticipantStatusChange(planUuid, userUuid, existingBefore.status, "skipped");
+          // Clean up team assignment as they are no longer actively participating
+          await removePlanTeamAssignment(planUuid, userUuid);
+          setDbPlanTeamAssignments(prev => prev.filter(a => !(a.plan_id === planUuid && a.user_id === userUuid)));
           await promoteWaitlistIfSpotsAvailable(planUuid);
         } else {
           throw new Error("Update returned invalid row or status wasn't skipped");
@@ -746,7 +987,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     const hostUuid = matchedPlan?.hostId || matchedPlan?.creatorId;
-    const isHost = hostUuid === userUuid || hostUuid === "u_self";
+    const isHost = hostUuid === userUuid;
     if (isHost) {
       console.log(`[PlansContext] User is host. Rejoin transition aborted.`);
       return;
@@ -899,6 +1140,11 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       body: JSON.stringify({ table: "notifications", records: hostTransNotifications })
     }).catch(err => console.error("[PlansContext changePlanHost] Failed to save host transfer notifications:", err));
 
+    // Phase 7: System message for host transfer
+    const newHostUser = dbUsers.find(u => u.id === resolvedNewHostUuid || u.user_id === resolvedNewHostUuid || (u as any).dbUuid === resolvedNewHostUuid);
+    const newHostName = newHostUser?.name || "Someone";
+    await insertSystemMessage(planUuid, `Host transferred to ${newHostName}`, resolvedNewHostUuid);
+
     await promoteWaitlistIfSpotsAvailable(planUuid);
 
     console.log(`[PlansContext] CHANGE HOST SUCCESS. Refreshing plans state.`);
@@ -912,6 +1158,10 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const planUuid = matchedPlan?.dbUuid || planId;
 
     console.log(`[cancelPlan] Payload after mapper/sync transformation:`, { planUuid });
+
+    // Clean up all team assignments for this plan in DB and local state
+    await deleteAllPlanTeamAssignments(planUuid);
+    setDbPlanTeamAssignments(prev => prev.filter(a => a.plan_id !== planUuid));
 
     const planUpdate = {
       id: planUuid,
@@ -951,6 +1201,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         body: JSON.stringify({ table: "notifications", records: cancelNotifications })
       }).catch(err => console.error("[PlansContext cancelPlan] Failed to save cancel notifications:", err));
     }
+
+    // Phase 7: System message for plan cancellation
+    await insertSystemMessage(planUuid, "Plan cancelled", null);
 
     console.log(`[PlansContext] CANCEL PLAN SUCCESS. Refreshing plans state.`);
     await refreshPlans(["plans"]);
@@ -1010,6 +1263,105 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await refreshPlans(["plans"]);
   };
 
+  const removeParticipant = async (planId: string, participantUserUuid: string) => {
+    const matchedPlan = plans.find(p => p.id === planId || p.dbUuid === planId);
+    const planUuid = matchedPlan?.dbUuid || planId;
+    const resolvedParticipantUuid = resolveUserUuid(participantUserUuid);
+
+    const beforeRemovalParticipantCount = dbPlanParticipants.filter(pp => pp.plan_id === planUuid).length;
+    console.log("REMOVE FLOW", {
+      participantId: resolvedParticipantUuid,
+      planId: planUuid,
+      beforeRemovalParticipantCount,
+    });
+
+    if (!planUuid || !resolvedParticipantUuid) {
+      console.error("[PlansContext removeParticipant] Missing plan UUID or participant UUID");
+      return;
+    }
+
+    // host validation
+    const dbPlanObj = dbPlans.find(p => p.id === planUuid || p.plan_id === planUuid);
+    const hostUuid = resolveUserUuid(matchedPlan?.hostId || matchedPlan?.creatorId || dbPlanObj?.host_id || dbPlanObj?.created_by || "");
+    const activeUserUuidResolved = resolveUserUuid(userId || "");
+
+    const isHost = hostUuid === activeUserUuidResolved;
+
+    if (!isHost) {
+      console.error("[PlansContext removeParticipant] Unauthorized: Only the Plan Host can manage or remove participants.");
+      throw new Error("Unauthorized: Only the Plan Host can manage or remove participants.");
+    }
+
+    if (resolvedParticipantUuid === hostUuid) {
+      console.error("[PlansContext removeParticipant] Host cannot be removed.");
+      throw new Error("Cannot remove the Plan Host.");
+    }
+
+    // 1. Pre-emptively clean up any team assignment before deleting participant
+    //    This prevents orphaned rows and ensures football plan removals never fail
+    //    due to an existing team assignment. Errors are suppressed — a missing
+    //    assignment should never block the participant removal.
+    try {
+      await removePlanTeamAssignment(planUuid, resolvedParticipantUuid);
+    } catch (teamErr) {
+      console.warn("[PlansContext removeParticipant] Team assignment cleanup warning (non-blocking):", teamErr);
+    }
+    setDbPlanTeamAssignments(prev => prev.filter(a => !(a.plan_id === planUuid && a.user_id === resolvedParticipantUuid)));
+
+    // 2. Delete participant record
+    const uuidRegexTrace = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    console.log(`[TRACE removeParticipant] ── deleteParticipant call ──`);
+    console.log(`[TRACE removeParticipant]   planUuid            = "${planUuid}"`);
+    console.log(`[TRACE removeParticipant]   resolvedParticipant = "${resolvedParticipantUuid}"`);
+    console.log(`[TRACE removeParticipant]   planUuid is UUID?   = ${uuidRegexTrace.test(planUuid)}`);
+    console.log(`[TRACE removeParticipant]   participant is UUID? = ${uuidRegexTrace.test(resolvedParticipantUuid)}`);
+    console.log(`[PlansContext removeParticipant] Deleting participant from Plan: ${planUuid}, User: ${resolvedParticipantUuid}`);
+    const deleteSuccess = await deleteParticipant(planUuid, resolvedParticipantUuid);
+    console.log(`[TRACE removeParticipant]   deleteParticipant returned: ${deleteSuccess}`);
+    if (!deleteSuccess) {
+      console.error("[PlansContext removeParticipant] Deletion failed.");
+      throw new Error("Failed to delete participant record from DB.");
+    }
+
+    console.log("REMOVE FLOW - participant removed");
+
+    // 2. Insert PARTICIPANT_REMOVED notification for the removed user
+    const planTitle = matchedPlan?.title || dbPlanObj?.title || "meetup";
+    const notifRecord = {
+      user_id: resolvedParticipantUuid,
+      type: "PARTICIPANT_REMOVED",
+      title: `You were removed from "${planTitle}"`,
+      body: "The host removed you from this plan.",
+      reference_id: planUuid,
+      is_read: false,
+      created_at: new Date().toISOString()
+    };
+
+    console.log("[PlansContext removeParticipant] Writing PARTICIPANT_REMOVED notification to DB:", notifRecord);
+    await fetch("/api/db/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "notifications", records: [notifRecord] })
+    }).catch(err => console.error("[PlansContext removeParticipant] Failed to save notification:", err));
+
+    // Phase 7: System message for participant removal
+    const participantUserObj = dbUsers.find(u => u.id === resolvedParticipantUuid || u.user_id === resolvedParticipantUuid || (u as any).dbUuid === resolvedParticipantUuid);
+    const participantName = participantUserObj?.name || "Someone";
+    await insertSystemMessage(planUuid, `${participantName} was removed from the plan`, resolvedParticipantUuid);
+
+    console.log("REMOVE FLOW - promoting waitlist");
+
+    // 3. Promote waitlist if spots available
+    await promoteWaitlistIfSpotsAvailable(planUuid);
+
+    console.log("REMOVE FLOW - waitlist promotion success");
+
+    // 4. Refresh plans/participants state
+    await refreshPlans(["plan_participants"]);
+
+    console.log("REMOVE FLOW - refresh complete");
+  };
+
   const completePlan = async (planId: string) => {
     console.log("COMPLETE_PLAN_START", { planId });
     console.log("COMPLETE_PLAN_FUNCTION_ENTERED", {
@@ -1029,9 +1381,32 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error("Cannot complete plan: invalid plan ID");
     }
 
+    // host or moderator validation
+    const dbPlanObj = dbPlans.find(p => p.id === planUuid || p.plan_id === planUuid);
+    const hostUuid = resolveUserUuid(matchedPlan?.hostId || matchedPlan?.creatorId || dbPlanObj?.host_id || dbPlanObj?.created_by || "");
+    const activeUserUuidResolved = resolveUserUuid(userId || "");
+
+    const isHost = hostUuid === activeUserUuidResolved;
+
+    // Circle co-host / Host check
+    const circleUuid = dbPlanObj?.circle_id;
+    let isCircleHost = false;
+    let isCircleCoHost = false;
+
+    if (circleUuid) {
+      const circleObj = dbCircles.find(c => c.id === circleUuid || c.circle_id === circleUuid);
+      isCircleHost = circleObj?.created_by === activeUserUuidResolved;
+      const circleMemberObj = dbCircleMembers.find(cm => (cm.circle_id === circleUuid || cm.circle_id === circleObj?.id) && cm.user_id === activeUserUuidResolved);
+      isCircleCoHost = circleMemberObj?.role === "co_host";
+    }
+
+    const isAuthorized = isHost || isCircleHost || isCircleCoHost;
+    if (!isAuthorized) {
+      throw new Error("Unauthorized: Only Plan Host, Circle Host, or Circle Co-hosts can complete plans.");
+    }
+
     // Determine memory_type from structured fields
     let memory_type = "football";
-    const dbPlanObj = dbPlans.find(p => p.id === planUuid || p.plan_id === planUuid);
     if (dbPlanObj) {
       if (dbPlanObj.category === "movies") {
         memory_type = "movie";
@@ -1175,6 +1550,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     console.log("REFRESH_PLANS_START");
     await refreshPlans(["plans", "memories", "memory_attendees", "plan_participants", "memory_movie_verdicts", "memory_restaurant_votes", "memory_match_results", "memory_mvp_votes", "memory_badminton_results"]);
     console.log("REFRESH_PLANS_COMPLETE");
+
+    // Phase 7: System message for plan completion
+    await insertSystemMessage(planUuid, "Plan completed", null);
   };
 
   // Reminder System
@@ -1341,6 +1719,9 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const oldStatus = existing.status;
       await updateParticipantStatus(existing.id, "skipped", "unpaid");
       await handleParticipantStatusChange(planUuid, userUuid, oldStatus, "skipped");
+      // Clean up team assignment as they are no longer actively participating
+      await removePlanTeamAssignment(planUuid, userUuid);
+      setDbPlanTeamAssignments(prev => prev.filter(a => !(a.plan_id === planUuid && a.user_id === userUuid)));
       await promoteWaitlistIfSpotsAvailable(planUuid);
     }
 
@@ -1433,12 +1814,6 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const host = rows.some(r => r.user_id === hostUuid && normalizeStatus(r.status) === "going") ? 1 : 0;
     const going = rows.filter(r => normalizeStatus(r.status) === "going" && r.user_id !== hostUuid).length;
 
-    const joinedCountVal = host + going;
-    console.log(`[getParticipantCounts] PlanUuid: ${planUuid}`);
-    console.log(`[getParticipantCounts] DB raw participants count: ${rows.length}`);
-    console.log(`[getParticipantCounts] breakdown - host: ${host}, going: ${going}, waitlist: ${waitlist}, delivered: ${delivered}, seen: ${seen}, skipped: ${skipped}, pending: ${pending}`);
-    console.log(`[getParticipantCounts] Joined count calculation (host + going): ${joinedCountVal}`);
-
     return { host, going, waitlist, delivered, seen, skipped, passed, pending, total };
   };
 
@@ -1503,7 +1878,7 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Show all plans where user is a participant (host or going) — for the Plans hub tab
     return plans.filter(plan => {
       if (plan.status === "cancelled") return false;
-      if (plan.hostId === "u_self") return true; // hosted by logged-in user
+      if (plan.hostId === userIdStr || plan.creatorId === userIdStr) return true; // hosted by logged-in user
       const member = plan.members.find(
          m => m.userId === userIdStr || (m as any).userUuid === userIdStr
       );
@@ -1631,21 +2006,144 @@ export const PlansProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await refreshPlans(["memories", "memory_badminton_results", "memory_attendees"]);
   };
 
+  // ─── Team Assignment Actions ───────────────────────────────────────────────
+
+  /** Fetch (and cache) team assignments for a plan from the server. */
+  const getTeamAssignments = async (planUuid: string): Promise<DbPlanTeamAssignment[]> => {
+    const assignments = await getPlanTeamAssignments(planUuid);
+    setDbPlanTeamAssignments(prev => {
+      const withoutPlan = prev.filter(a => a.plan_id !== planUuid);
+      return [...withoutPlan, ...assignments];
+    });
+    return assignments;
+  };
+
+  /** Assign or move a participant to Team A or B. */
+  const assignTeam = async (planUuid: string, userUuid: string, team: "A" | "B"): Promise<void> => {
+    // Optimistic update
+    setDbPlanTeamAssignments(prev => {
+      const withoutEntry = prev.filter(a => !(a.plan_id === planUuid && a.user_id === userUuid));
+      return [...withoutEntry, { plan_id: planUuid, user_id: userUuid, team }];
+    });
+    const ok = await upsertPlanTeamAssignment(planUuid, userUuid, team);
+    if (!ok) {
+      console.error("[PlansContext] assignTeam failed — rolling back optimistic state");
+      // Re-fetch to restore truth
+      await getTeamAssignments(planUuid);
+    } else {
+      // Phase 7: System message for team assignment
+      const userObj = dbUsers.find(u => u.id === userUuid || u.user_id === userUuid || (u as any).dbUuid === userUuid);
+      const userName = userObj?.name || "Someone";
+      await insertSystemMessage(planUuid, `${userName} assigned to Team ${team}`, userUuid);
+    }
+  };
+
+  /** Remove a participant from their team (back to Unassigned). */
+  const unassignTeam = async (planUuid: string, userUuid: string): Promise<void> => {
+    // Optimistic update
+    setDbPlanTeamAssignments(prev => prev.filter(a => !(a.plan_id === planUuid && a.user_id === userUuid)));
+    const ok = await removePlanTeamAssignment(planUuid, userUuid);
+    if (!ok) {
+      console.error("[PlansContext] unassignTeam failed — rolling back optimistic state");
+      await getTeamAssignments(planUuid);
+    } else {
+      // Phase 7: System message for team removal
+      const userObj = dbUsers.find(u => u.id === userUuid || u.user_id === userUuid || (u as any).dbUuid === userUuid);
+      const userName = userObj?.name || "Someone";
+      await insertSystemMessage(planUuid, `${userName} removed from team assignment`, userUuid);
+    }
+  };
+
+  const memoizedGetTeamAssignments = useCallback(getTeamAssignments, []);
+  const memoizedAssignTeam = useCallback(assignTeam, []);
+  const memoizedUnassignTeam = useCallback(unassignTeam, []);
+  const memoizedJoinPlan = useCallback(joinPlan, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedLeavePlan = useCallback(leavePlan, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedPassPlan = useCallback(passPlan, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedWaitlistPlan = useCallback(waitlistPlan, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedSendReminder = useCallback(sendReminder, [plans, userId, dbUsers]);
+  const memoizedIgnoreReminder = useCallback(ignoreReminder, [passPlan]);
+  const memoizedGetHomeFeedPlans = useCallback(getHomeFeedPlans, [dbPlanParticipants, plans, userId, dbUsers]);
+  const memoizedGetHubPlans = useCallback(getHubPlans, [plans]);
+  const memoizedGetParticipantCounts = useCallback(getParticipantCounts, [dbPlanParticipants, dbPlans]);
+  const memoizedMarkPlanSeen = useCallback(markPlanSeen, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedSkipPlan = useCallback(skipPlan, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedRejoinPlan = useCallback(rejoinPlan, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedAcceptPlan = useCallback(acceptPlan, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedDeclinePlan = useCallback(declinePlan, [plans, dbPlanParticipants, userId, dbUsers]);
+  const memoizedHostPay = useCallback(hostPay, [plans, userId, dbUsers]);
+  const memoizedBookNow = useCallback(bookNow, [plans, userId, dbUsers]);
+  const memoizedChangePlanHost = useCallback(changePlanHost, [plans, dbPlans, userId, dbUsers]);
+  const memoizedCancelPlan = useCallback(cancelPlan, [plans, dbPlans, userId, dbUsers]);
+  const memoizedUpdatePlanDetails = useCallback(updatePlanDetails, [plans, dbPlans, userId, dbUsers]);
+  const memoizedCompletePlan = useCallback(completePlan, [plans, dbPlans, userId, dbUsers, dbCircles, dbCircleMembers]);
+  const memoizedSubmitMovieVerdict = useCallback(submitMovieVerdict, []);
+  const memoizedSubmitRestaurantVote = useCallback(submitRestaurantVote, []);
+  const memoizedSubmitMatchResult = useCallback(submitMatchResult, []);
+  const memoizedSubmitMvpVote = useCallback(submitMvpVote, []);
+  const memoizedSubmitBadmintonResult = useCallback(submitBadmintonResult, []);
+  const memoizedRemoveParticipant = useCallback(removeParticipant, [plans, dbPlans, userId, dbCircles, dbCircleMembers, dbPlanParticipants]);
+
+  const contextValue = useMemo(() => ({
+    plans, setPlans,
+    dbPlans, setDbPlans,
+    dbPlanParticipants, setDbPlanParticipants,
+    dbMemories, setDbMemories,
+    dbMemoryAttendees, setDbMemoryAttendees,
+    dbMemoryMovieVerdicts, setDbMemoryMovieVerdicts,
+    dbMemoryRestaurantVotes, setDbMemoryRestaurantVotes,
+    dbMemoryMatchResults, setDbMemoryMatchResults,
+    dbMemoryMvpVotes, setDbMemoryMvpVotes,
+    dbMemoryBadmintonResults, setDbMemoryBadmintonResults,
+    dbPlanTeamAssignments, setDbPlanTeamAssignments,
+    getTeamAssignments: memoizedGetTeamAssignments,
+    assignTeam: memoizedAssignTeam,
+    unassignTeam: memoizedUnassignTeam,
+    joinPlan: memoizedJoinPlan,
+    leavePlan: memoizedLeavePlan,
+    passPlan: memoizedPassPlan,
+    waitlistPlan: memoizedWaitlistPlan,
+    sendReminder: memoizedSendReminder,
+    ignoreReminder: memoizedIgnoreReminder,
+    getHomeFeedPlans: memoizedGetHomeFeedPlans,
+    getHubPlans: memoizedGetHubPlans,
+    getParticipantCounts: memoizedGetParticipantCounts,
+    refreshPlans,
+    markPlanSeen: memoizedMarkPlanSeen,
+    skipPlan: memoizedSkipPlan,
+    rejoinPlan: memoizedRejoinPlan,
+    acceptPlan: memoizedAcceptPlan,
+    declinePlan: memoizedDeclinePlan,
+    hostPay: memoizedHostPay,
+    bookNow: memoizedBookNow,
+    changePlanHost: memoizedChangePlanHost,
+    cancelPlan: memoizedCancelPlan,
+    updatePlanDetails: memoizedUpdatePlanDetails,
+    completePlan: memoizedCompletePlan,
+    submitMovieVerdict: memoizedSubmitMovieVerdict,
+    submitRestaurantVote: memoizedSubmitRestaurantVote,
+    submitMatchResult: memoizedSubmitMatchResult,
+    submitMvpVote: memoizedSubmitMvpVote,
+    submitBadmintonResult: memoizedSubmitBadmintonResult,
+    removeParticipant: memoizedRemoveParticipant
+  }), [
+    plans, dbPlans, dbPlanParticipants, dbMemories, dbMemoryAttendees,
+    dbMemoryMovieVerdicts, dbMemoryRestaurantVotes, dbMemoryMatchResults,
+    dbMemoryMvpVotes, dbMemoryBadmintonResults, dbPlanTeamAssignments,
+    memoizedGetTeamAssignments, memoizedAssignTeam, memoizedUnassignTeam,
+    memoizedJoinPlan, memoizedLeavePlan, memoizedPassPlan, memoizedWaitlistPlan,
+    memoizedSendReminder, memoizedIgnoreReminder, memoizedGetHomeFeedPlans,
+    memoizedGetHubPlans, memoizedGetParticipantCounts, refreshPlans,
+    memoizedMarkPlanSeen, memoizedSkipPlan, memoizedRejoinPlan,
+    memoizedAcceptPlan, memoizedDeclinePlan, memoizedHostPay, memoizedBookNow,
+    memoizedChangePlanHost, memoizedCancelPlan, memoizedUpdatePlanDetails,
+    memoizedCompletePlan, memoizedSubmitMovieVerdict, memoizedSubmitRestaurantVote,
+    memoizedSubmitMatchResult, memoizedSubmitMvpVote, memoizedSubmitBadmintonResult,
+    memoizedRemoveParticipant
+  ]);
+
   return (
-    <PlansContext.Provider value={{ 
-      plans, setPlans, 
-      dbPlans, setDbPlans, 
-      dbPlanParticipants, setDbPlanParticipants,
-      dbMemories, setDbMemories,
-      dbMemoryAttendees, setDbMemoryAttendees,
-      dbMemoryMovieVerdicts, setDbMemoryMovieVerdicts,
-      dbMemoryRestaurantVotes, setDbMemoryRestaurantVotes,
-      dbMemoryMatchResults, setDbMemoryMatchResults,
-      dbMemoryMvpVotes, setDbMemoryMvpVotes,
-      dbMemoryBadmintonResults, setDbMemoryBadmintonResults,
-      joinPlan, leavePlan, passPlan, waitlistPlan, sendReminder, ignoreReminder, getHomeFeedPlans, getHubPlans, getParticipantCounts, refreshPlans, markPlanSeen, skipPlan, rejoinPlan,
-      acceptPlan, declinePlan, hostPay, bookNow, changePlanHost, cancelPlan, updatePlanDetails, completePlan, submitMovieVerdict, submitRestaurantVote, submitMatchResult, submitMvpVote, submitBadmintonResult
-    }}>
+    <PlansContext.Provider value={contextValue}>
       {children}
     </PlansContext.Provider>
   );

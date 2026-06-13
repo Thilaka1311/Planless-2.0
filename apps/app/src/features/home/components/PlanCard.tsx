@@ -254,7 +254,7 @@ export const PlanCard: React.FC<PlanCardProps> = ({
               </span>
             </span>
             {(() => {
-              const isHost = plan.hostId === "u_self" || plan.creatorId === "u_self" || plan.creatorName === userProfile.name;
+              const isHost = plan.hostId === userProfile.dbUuid || plan.creatorId === userProfile.dbUuid || plan.hostId === userProfile.user_id || plan.creatorId === userProfile.user_id;
               return isHost ? (
                 <span className="text-zinc-400 select-none">
                   Joined: <strong className="text-white font-extrabold">{currentCount}</strong> | Waitlist: <strong className="text-amber-400 font-extrabold">{plan.waitlistUsers ? plan.waitlistUsers.length : 0}</strong>

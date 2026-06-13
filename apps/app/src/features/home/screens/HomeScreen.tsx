@@ -29,7 +29,7 @@ export interface HomeScreenProps {
   homeFeedRef: React.RefObject<HTMLDivElement | null>;
 }
 
-export const HomeScreen: React.FC<HomeScreenProps> = ({
+export const HomeScreen: React.FC<HomeScreenProps> = React.memo(({
   discoverablePlans,
   userProfile,
   interestedPlanIds,
@@ -75,7 +75,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       const results = dbMemoryMatchResults.filter(r => r.memory_id === memory.id);
       const mvps = dbMemoryMvpVotes.filter(v => v.memory_id === memory.id);
       const badmintons = dbMemoryBadmintonResults.filter(r => r.memory_id === memory.id);
-      const isHost = plan.hostId === "u_self" || plan.hostId === userId;
+      const isHost = plan.hostId === userId || plan.creatorId === userId;
 
       const contrib = getMemoryContribution(
         memory,
@@ -212,4 +212,4 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       )}
     </div>
   );
-};
+});

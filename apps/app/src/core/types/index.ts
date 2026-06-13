@@ -42,7 +42,7 @@ export interface DbCircleMember {
   circle_member_id?: string;
   circle_id: string;
   user_id: string;
-  role: "admin" | "member";
+  role: "host" | "co_host" | "member";
   joined_at: string;
 }
 
@@ -184,6 +184,15 @@ export interface DbFriendship {
   created_at?: string;
 }
 
+// 8. PLAN_TEAM_ASSIGNMENTS TABLE (Football Team Organizer)
+export interface DbPlanTeamAssignment {
+  id?: string;       // UUID primary key
+  plan_id: string;   // UUID → plans.id
+  user_id: string;   // UUID → users.id
+  team: "A" | "B";
+  created_at?: string;
+}
+
 // ---------------------------------------------
 // COMPATIBLE FRONTEND INTERACTIVES VIEW MODELS
 // ---------------------------------------------
@@ -218,6 +227,7 @@ export interface Plan {
   location: string;
   paymentAmount: number;
   status: "active" | "completed" | "cancelled" | "PENDING" | "BOOKING_READY" | "CONFIRMED" | "SLOT_UNAVAILABLE";
+  datetime?: string;
   createdAt: string;
   waitlistEnabled?: boolean;
   joinLimit?: number;
@@ -346,3 +356,26 @@ export interface ActivityVenue {
   image: string;
   venue_cost: number;
 }
+
+export interface ChatMessage {
+  id: string;
+  circleId: string;
+  parentId: string | null;
+  planId: string | null;
+  sender: {
+    id: string;
+    name: string;
+    avatar: string;
+  } | null;
+  systemActor: {
+    id: string;
+    name: string;
+    avatar: string;
+  } | null;
+  content: string;
+  type: "user" | "system";
+  createdAt: string;
+  editedAt: string | null;
+  isOwn: boolean;
+}
+

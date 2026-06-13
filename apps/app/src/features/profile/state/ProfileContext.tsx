@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo } from "react";
 import { UserProfile, User, DbFriendship } from "../../../core/types";
+import { updateDbUser } from "../../../lib/db";
 
 interface ProfileState {
   userProfile: UserProfile | null;
@@ -47,18 +48,31 @@ export const ProfileProvider = ({
     return [];
   });
 
-  const setUserProfile = (newProfile: UserProfile | null | ((prev: UserProfile | null) => UserProfile | null)) => {
+  const setUserProfile = useCallback((newProfile: UserProfile | null | ((prev: UserProfile | null) => UserProfile | null)) => {
     setUserProfileState(prev => {
       const val = typeof newProfile === "function" ? newProfile(prev) : newProfile;
       if (onProfileChange) onProfileChange(val);
       return val;
     });
-  };
+  }, [onProfileChange]);
 
-  const updateProfile = (updated: UserProfile) => {
+  const updateProfile = useCallback((updated: UserProfile) => {
     setUserProfile(updated);
+    
+    if (updated.dbUuid) {
+      updateDbUser({
+        id: updated.dbUuid,
+        full_name: updated.name,
+        bio: updated.bio || "",
+        profile_photo: updated.avatar || "",
+        college_or_work: updated.college_or_work || ""
+      }).catch(err => {
+        console.error("[ProfileContext] Failed to persist profile updates to DB:", err);
+      });
+    }
+
     setDbUsers(prev => prev.map(u => {
-      if (u.user_id === updated.user_id) {
+      if (u.id === updated.dbUuid || u.user_id === updated.user_id) {
         return {
           ...u,
           full_name: updated.name,
@@ -69,10 +83,36 @@ export const ProfileProvider = ({
       }
       return u;
     }));
-  };
+  }, [setUserProfile]);
+
+  const activeUserId = userProfile?.dbUuid || "";
+  const activeUserUuid = userProfile?.dbUuid || "";
+
+  const contextValue = useMemo(() => ({
+    userProfile,
+    setUserProfile,
+    activeUserId,
+    activeUserUuid,
+    dbUsers,
+    setDbUsers,
+    dbUserData,
+    setDbUserData,
+    dbFriendships,
+    setDbFriendships,
+    updateProfile
+  }), [
+    userProfile,
+    setUserProfile,
+    activeUserId,
+    activeUserUuid,
+    dbUsers,
+    dbUserData,
+    dbFriendships,
+    updateProfile
+  ]);
 
   return (
-    <ProfileContext.Provider value={{ userProfile, setUserProfile, activeUserId: userProfile?.dbUuid || "", activeUserUuid: userProfile?.dbUuid || "", dbUsers, setDbUsers, dbUserData, setDbUserData, dbFriendships, setDbFriendships, updateProfile }}>
+    <ProfileContext.Provider value={contextValue}>
       {children}
     </ProfileContext.Provider>
   );

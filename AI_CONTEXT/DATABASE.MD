@@ -282,7 +282,8 @@ Plan has ended.
 Valid roles:
 
 ```text
-admin
+host
+co_host
 member
 ```
 

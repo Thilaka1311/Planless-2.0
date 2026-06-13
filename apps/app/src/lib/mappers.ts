@@ -184,7 +184,7 @@ export const mapPlansToLegacyPlans = (
       dbUuid: p.id || p.plan_id || "",
       title: p.title,
       groupId: p.circle_id,
-      hostId: isOwner ? "u_self" : hostIdVal,
+      hostId: hostIdVal,
       members: members,
       capacity: maxSpotsVal,
       date: dateVal,
@@ -192,6 +192,7 @@ export const mapPlansToLegacyPlans = (
       location: p.location,
       paymentAmount: costVal,
       status: p.status as "active" | "completed" | "cancelled",
+      datetime: p.datetime || p.created_at,
       createdAt: p.created_at,
       waitlistEnabled: p.waitlist_enabled,
       joinLimit: p.join_limit,
@@ -252,7 +253,8 @@ export const mapCirclesToLegacyCircles = (
         userId: (u as any).id || u.user_id,
         name: u.full_name,
         phone: u.phone_number,
-        avatar: u.profile_photo
+        avatar: u.profile_photo,
+        role: cmr.role
       };
     }).filter(Boolean) as any[];
 

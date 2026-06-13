@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useMemo } from "react";
 import { Transaction, DbTransaction, User } from "../../../core/types";
 import { mapTransactionsToLegacy } from "../../../lib/mappers";
 import { useProfileStore } from "../../profile/state/ProfileContext";
@@ -130,14 +130,23 @@ export const WalletProvider = ({
     await refreshTransactions();
   };
 
+  const memoizedDepositFunds = useCallback(depositFunds, []);
+  const memoizedDeductFunds = useCallback(deductFunds, []);
+
+  const contextValue = useMemo(() => ({
+    walletBalance, setWalletBalance,
+    transactions, setTransactions,
+    dbTransactions, setDbTransactions,
+    depositFunds: memoizedDepositFunds,
+    deductFunds: memoizedDeductFunds,
+    refreshTransactions
+  }), [
+    walletBalance, transactions, dbTransactions,
+    memoizedDepositFunds, memoizedDeductFunds, refreshTransactions
+  ]);
+
   return (
-    <WalletContext.Provider value={{
-      walletBalance, setWalletBalance,
-      transactions, setTransactions,
-      dbTransactions, setDbTransactions,
-      depositFunds, deductFunds,
-      refreshTransactions
-    }}>
+    <WalletContext.Provider value={contextValue}>
       {children}
     </WalletContext.Provider>
   );

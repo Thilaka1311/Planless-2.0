@@ -25,7 +25,7 @@ export const AddMembersScreen: React.FC<AddMembersScreenProps> = ({
   setSelectedCircle,
   triggerToast
 }) => {
-  const { setDbCircleMembers } = useCirclesStore();
+  const { setDbCircleMembers, insertCircleSystemMessage } = useCirclesStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -84,6 +84,15 @@ export const AddMembersScreen: React.FC<AddMembersScreenProps> = ({
 
       if (insertedMembers && setDbCircleMembers) {
         setDbCircleMembers((prev) => [...prev, ...insertedMembers]);
+      }
+
+      // Phase 7: System messages for added members
+      if (insertCircleSystemMessage) {
+        for (const m of membersToInsert) {
+          const joinedUser = dbUsers.find(u => u.id === m.user_id || u.user_id === m.user_id || (u as any).dbUuid === m.user_id);
+          const userName = joinedUser?.full_name || joinedUser?.name || "Someone";
+          await insertCircleSystemMessage(circleUuid, `${userName} joined the circle`, m.user_id);
+        }
       }
 
       // Trigger stats update

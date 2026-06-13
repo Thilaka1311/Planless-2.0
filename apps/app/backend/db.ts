@@ -10,7 +10,7 @@ router.get("/fetch-all", async (req, res) => {
       res.json({
         configured: false,
         tables_missing: true,
-        missing_tables: ["users", "circles", "circle_members", "plans", "plan_participants", "transactions", "memories", "friendships"],
+        missing_tables: ["users", "circles", "circle_members", "plans", "plan_participants", "transactions", "memories", "friendships", "plan_team_assignments"],
         data: null
       });
       return;
@@ -37,7 +37,8 @@ router.get("/fetch-all", async (req, res) => {
       "notifications",
       "user_data",
       "plan_reminders",
-      "friendships"
+      "friendships",
+      "plan_team_assignments"
     ];
 
     const results: Record<string, any[]> = {};
@@ -142,6 +143,22 @@ router.post("/upsert", async (req, res) => {
     const client = getSupabaseClient();
     if (!client) {
       res.status(503).json({ error: "Supabase client key or endpoint is not initialized." });
+      return;
+    }
+
+    // plan_team_assignments: upsert on (plan_id, user_id) conflict
+    // This allows moving a player between Team A and Team B.
+    if (table === "plan_team_assignments") {
+      const { data, error } = await client
+        .from("plan_team_assignments")
+        .upsert(records, { onConflict: "plan_id,user_id" })
+        .select("*");
+      if (error) {
+        console.error(`[Supabase DB] Error writing to plan_team_assignments:`, error);
+        res.status(500).json({ error: error.message, details: error.details });
+        return;
+      }
+      res.json({ success: true, count: data?.length || 0, data: data || [] });
       return;
     }
 
@@ -400,6 +417,7 @@ router.post("/delete", async (req, res) => {
     res.status(500).json({ error: error.message || "Internal server error deleting database changes." });
   }
 });
+
 
 router.post("/reset", async (req, res) => {
   try {

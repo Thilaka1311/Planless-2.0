@@ -250,20 +250,20 @@ export const initialCircles: DbCircle[] = [
 // ----------------------------------------------------
 export const initialCircleMembers: DbCircleMember[] = [
   // C001 Navkis Members
-  { circle_member_id: "CM001", circle_id: "C001", user_id: "U002", role: "admin", joined_at: "2026-05-15T17:05:00Z" }, // Keval
+  { circle_member_id: "CM001", circle_id: "C001", user_id: "U002", role: "host", joined_at: "2026-05-15T17:05:00Z" }, // Keval
   { circle_member_id: "CM002", circle_id: "C001", user_id: "U003", role: "member", joined_at: "2026-05-15T17:10:00Z" }, // Medhaj
   { circle_member_id: "CM003", circle_id: "C001", user_id: "U001", role: "member", joined_at: "2026-05-15T17:15:00Z" }, // Thilaka (You)
   { circle_member_id: "CM004", circle_id: "C001", user_id: "U012", role: "member", joined_at: "2026-05-15T17:20:00Z" }, // Renjith
   
   // C002 Midnight Masala Members
-  { circle_member_id: "CM101", circle_id: "C002", user_id: "U005", role: "admin", joined_at: "2026-05-16T18:35:00Z" }, // Rahul
+  { circle_member_id: "CM101", circle_id: "C002", user_id: "U005", role: "host", joined_at: "2026-05-16T18:35:00Z" }, // Rahul
   { circle_member_id: "CM102", circle_id: "C002", user_id: "U001", role: "member", joined_at: "2026-05-16T18:40:00Z" }, // Thilaka
   { circle_member_id: "CM103", circle_id: "C002", user_id: "U007", role: "member", joined_at: "2026-05-16T18:42:00Z" }, // Raghavan
   { circle_member_id: "CM104", circle_id: "C002", user_id: "U008", role: "member", joined_at: "2026-05-16T18:45:00Z" }, // Pratyush
   { circle_member_id: "CM105", circle_id: "C002", user_id: "U009", role: "member", joined_at: "2026-05-16T18:50:00Z" }, // Neelesh
   
   // C003 Jobis Members
-  { circle_member_id: "CM201", circle_id: "C003", user_id: "U004", role: "admin", joined_at: "2026-05-17T11:05:00Z" }, // Guhan
+  { circle_member_id: "CM201", circle_id: "C003", user_id: "U004", role: "host", joined_at: "2026-05-17T11:05:00Z" }, // Guhan
   { circle_member_id: "CM202", circle_id: "C003", user_id: "U001", role: "member", joined_at: "2026-05-17T11:10:00Z" }, // Thilaka
   { circle_member_id: "CM203", circle_id: "C003", user_id: "U010", role: "member", joined_at: "2026-05-17T11:12:00Z" }, // Ravi
   { circle_member_id: "CM204", circle_id: "C003", user_id: "U006", role: "member", joined_at: "2026-05-17T11:15:00Z" }, // Sudeshna

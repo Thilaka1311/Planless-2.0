@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { ChevronRight, Check, X, CreditCard } from "lucide-react";
 import { motion } from "motion/react";
 import { Plan } from "../../../core/types";
@@ -13,7 +13,7 @@ interface PlansScreenProps {
   passedByPlanId?: Record<string, string[]>;
 }
 
-export const PlansScreen = ({
+export const PlansScreen = React.memo(({
   setSelectedPlan,
   passedByPlanId = {},
 }: PlansScreenProps) => {
@@ -61,80 +61,71 @@ export const PlansScreen = ({
   };
 
   const userUuid = userProfile?.dbUuid || "";
-  console.log(`[PlansScreen Visibility Filter] Current user UUID: "${userUuid}"`);
 
-  const involvedPlans = plans.filter(p => {
-    if (p.status === "cancelled") return false;
-    // A user is involved if they are in the plan's members list matching by UUID
-    const isParticipant = p.members.some(
-      m => m.userUuid && m.userUuid === userUuid
-    );
-    if (!isParticipant) {
-      console.log(`[PlansScreen EXCLUDED] Plan: "${p.title}" (ID: ${p.id}) - Current user UUID "${userUuid}" is not a participant/host.`);
-    }
-    return isParticipant;
-  });
-
-  const visiblePlanIds = involvedPlans.map(p => p.id);
-  const matchingDbParticipants = dbPlanParticipants.filter(pp => pp.user_id === userUuid);
-  console.log(`[PlansScreen INVOLVED] Visible plan IDs:`, visiblePlanIds);
-  console.log(`[PlansScreen INVOLVED] Participant records used:`, matchingDbParticipants);
+  const involvedPlans = useMemo(() => {
+    return plans.filter(p => {
+      if (p.status === "cancelled") return false;
+      return p.members.some(m => m.userUuid && m.userUuid === userUuid);
+    });
+  }, [plans, userUuid]);
 
   // Filter plans based on searchQuery and plansFilter
-  const filteredPlans = involvedPlans.filter((p) => {
-    const planCircle = p.circleId ? circles.find((c) => c.id === p.circleId) : null;
-    const circleName = planCircle?.name || "";
-    const matchesSearch =
-      p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      circleName.toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredPlans = useMemo(() => {
+    return involvedPlans.filter((p) => {
+      const planCircle = p.circleId ? circles.find((c) => c.id === p.circleId) : null;
+      const circleName = planCircle?.name || "";
+      const matchesSearch =
+        p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        circleName.toLowerCase().includes(searchQuery.toLowerCase());
 
-    if (!matchesSearch) return false;
-    if (plansFilter === "all") return true;
+      if (!matchesSearch) return false;
+      if (plansFilter === "all") return true;
 
-    const myParticipant = dbPlanParticipants.find(
-      (pp) => pp.plan_id === p.id && pp.user_id === userUuid
-    );
-    const myStatus = normalizeStatus(myParticipant?.status);
-    const isSkipped = myStatus === "skipped";
-    const isGoing = myStatus === "going";
-    const isWaitlisted = myStatus === "waitlist";
-    const isHosted = p.creatorId === "u_self" || p.creatorName === userProfile.name;
-    const autoPassed = (passedByPlanId[p.id] || []).includes(userProfile.name);
+      const myParticipant = dbPlanParticipants.find(
+        (pp) => pp.plan_id === p.id && pp.user_id === userUuid
+      );
+      const myStatus = normalizeStatus(myParticipant?.status);
+      const isSkipped = myStatus === "skipped";
+      const isGoing = myStatus === "going";
+      const isWaitlisted = myStatus === "waitlist";
+      const isHosted = p.creatorId === userUuid || p.hostId === userUuid || (activeUserId && (p.creatorId === activeUserId || p.hostId === activeUserId));
+      const autoPassed = (passedByPlanId[p.id] || []).includes(userProfile.name);
 
-    let match = false;
-    if (plansFilter === "going") match = isGoing && !p.isHappened && !autoPassed && !isSkipped;
-    else if (plansFilter === "waitlist") match = isWaitlisted && !p.isHappened && !isSkipped;
-    else if (plansFilter === "passed") {
-      // Passed = explicitly skipped by user OR auto-passed
-      match = isSkipped || autoPassed;
-    }
-    else if (plansFilter === "hosted") match = isHosted;
+      let match = false;
+      if (plansFilter === "going") match = isGoing && !p.isHappened && !autoPassed && !isSkipped;
+      else if (plansFilter === "waitlist") match = isWaitlisted && !p.isHappened && !isSkipped;
+      else if (plansFilter === "passed") {
+        match = isSkipped || autoPassed;
+      }
+      else if (plansFilter === "hosted") match = isHosted;
 
-    console.log(`[PlansScreen Tab Classification] Plan: "${p.title}"`);
-    console.log(`- Participant status from DB: ${myStatus || "none"}`);
-    console.log(`- Flags: isSkipped=${isSkipped}, isGoing=${isGoing}, isWaitlisted=${isWaitlisted}, isHosted=${isHosted}, isHappened=${p.isHappened}`);
-    console.log(`- Tab Filter: "${plansFilter}" -> Classification Result: ${match}`);
-
-    return match;
-  });
-
-  const todayPlans = filteredPlans
-    .filter((p) => getTimelineSection(p) === "Today")
-    .sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
-
-  const tomorrowPlans = filteredPlans
-    .filter((p) => getTimelineSection(p) === "Tomorrow")
-    .sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
-
-  const thisWeekPlans = filteredPlans
-    .filter((p) => getTimelineSection(p) === "This Week")
-    .sort((a, b) => {
-      const dayA = getDayIndex(a.date);
-      const dayB = getDayIndex(b.date);
-      if (dayA !== dayB) return dayA - dayB;
-      return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
+      return match;
     });
+  }, [involvedPlans, circles, searchQuery, plansFilter, dbPlanParticipants, userUuid, userProfile.name, passedByPlanId]);
+
+  const todayPlans = useMemo(() => {
+    return filteredPlans
+      .filter((p) => getTimelineSection(p) === "Today")
+      .sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
+  }, [filteredPlans]);
+
+  const tomorrowPlans = useMemo(() => {
+    return filteredPlans
+      .filter((p) => getTimelineSection(p) === "Tomorrow")
+      .sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
+  }, [filteredPlans]);
+
+  const thisWeekPlans = useMemo(() => {
+    return filteredPlans
+      .filter((p) => getTimelineSection(p) === "This Week")
+      .sort((a, b) => {
+        const dayA = getDayIndex(a.date);
+        const dayB = getDayIndex(b.date);
+        if (dayA !== dayB) return dayA - dayB;
+        return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
+      });
+  }, [filteredPlans]);
 
   // Filter button active color classes (synced to filter type)
   const getFilterTriggerClass = (key: string) => {
@@ -231,7 +222,7 @@ export const PlansScreen = ({
       const myNormalizedStatus = normalizeStatus(myPp?.status);
       const isGoing = myNormalizedStatus === "going";
       const isWait = myNormalizedStatus === "waitlist";
-      const isHosted = plan.creatorId === "u_self" || plan.creatorName === userProfile.name;
+      const isHosted = plan.creatorId === userUuid || plan.hostId === userUuid || (activeUserId && (plan.creatorId === activeUserId || plan.hostId === plan.creatorId));
       const isPassed =
         (passedByPlanId[plan.id] || []).includes(userProfile.name) || myNormalizedStatus === "skipped";
       if (isPassed) badge = getStatusBadge("passed");
@@ -246,7 +237,7 @@ export const PlansScreen = ({
     const myStatus = myParticipant?.status || "";
     const isDelivered = myStatus === "delivered" || myStatus === "seen";
     const isAccepted = myStatus === "accepted";
-    const isHostOfPlan = plan.hostId === "u_self";
+    const isHostOfPlan = plan.hostId === userUuid || (activeUserId && plan.hostId === activeUserId);
 
     const isDeadlinePassed = plan.response_deadline_at
       ? new Date().getTime() > new Date(plan.response_deadline_at).getTime()
@@ -578,7 +569,7 @@ export const PlansScreen = ({
               const isSkipped = segStatus === "skipped";
               const isGoing = segStatus === "going";
               const isWaitlisted = segStatus === "waitlist";
-              const isHosted = p.creatorId === "u_self" || p.creatorName === userProfile.name;
+              const isHosted = p.creatorId === userUuid || p.hostId === userUuid || (activeUserId && (p.creatorId === activeUserId || p.hostId === activeUserId));
               const autoPassed = (passedByPlanId[p.id] || []).includes(userProfile.name);
 
               if (seg.key === "going") return isGoing && !p.isHappened && !autoPassed && !isSkipped;
@@ -683,4 +674,4 @@ export const PlansScreen = ({
       </div>
     </div>
   );
-};
+});

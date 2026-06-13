@@ -310,7 +310,7 @@ export const DeveloperPanel: React.FC = () => {
       }
 
       const devPlans = plans.filter(
-        p => p.title.startsWith("[DEV]") && ["active", "going", "upcoming"].includes(p.status) && (p.hostId === "u_self" || p.hostId === currentUserUuid)
+        p => p.title.startsWith("[DEV]") && ["active", "going", "upcoming"].includes(p.status) && (p.hostId === currentUserUuid || p.hostId === activeUserId || p.creatorId === currentUserUuid || p.creatorId === activeUserId)
       );
       if (devPlans.length === 0) {
         throw new Error(`No active dev plans hosted by you found (searched ${plans.length} plans, statuses: ${[...new Set(plans.filter(p => p.title.startsWith("[DEV]")).map(p => p.status))].join(", ") || "none"})`);
@@ -342,7 +342,7 @@ export const DeveloperPanel: React.FC = () => {
       }
 
       const devPlans = plans.filter(
-        p => p.title.startsWith("[DEV]") && ["active", "going", "upcoming"].includes(p.status) && (p.hostId === "u_self" || p.hostId === currentUserUuid)
+        p => p.title.startsWith("[DEV]") && ["active", "going", "upcoming"].includes(p.status) && (p.hostId === currentUserUuid || p.hostId === activeUserId || p.creatorId === currentUserUuid || p.creatorId === activeUserId)
       );
       if (devPlans.length === 0) {
         throw new Error(`No active dev plans hosted by you found (searched ${plans.length} plans, statuses: ${[...new Set(plans.filter(p => p.title.startsWith("[DEV]")).map(p => p.status))].join(", ") || "none"})`);
@@ -367,7 +367,7 @@ export const DeveloperPanel: React.FC = () => {
       }
 
       const devPlans = plans.filter(
-        p => p.title.startsWith("[DEV]") && ["active", "going", "upcoming"].includes(p.status) && (p.hostId === "u_self" || p.hostId === currentUserUuid)
+        p => p.title.startsWith("[DEV]") && ["active", "going", "upcoming"].includes(p.status) && (p.hostId === currentUserUuid || p.hostId === activeUserId || p.creatorId === currentUserUuid || p.creatorId === activeUserId)
       );
       if (devPlans.length === 0) {
         throw new Error(`No active dev plans hosted by you found (searched ${plans.length} plans, statuses: ${[...new Set(plans.filter(p => p.title.startsWith("[DEV]")).map(p => p.status))].join(", ") || "none"})`);

@@ -34,7 +34,7 @@ interface MainAppProps {
 
 export default function MainApp({ userProfile, onLogout, activeUserId }: MainAppProps) {
   // --- Decoupled Context Stores ---
-  const { plans, setPlans, dbPlans, setDbPlans, dbPlanParticipants, setDbPlanParticipants, dbMemories, setDbMemories, dbMemoryAttendees, setDbMemoryAttendees, dbMemoryMovieVerdicts, setDbMemoryMovieVerdicts, dbMemoryRestaurantVotes, setDbMemoryRestaurantVotes, dbMemoryMatchResults, setDbMemoryMatchResults, dbMemoryMvpVotes, setDbMemoryMvpVotes, dbMemoryBadmintonResults, setDbMemoryBadmintonResults, joinPlan, waitlistPlan, passPlan } = usePlansStore();
+  const { plans, setPlans, dbPlans, setDbPlans, dbPlanParticipants, setDbPlanParticipants, dbMemories, setDbMemories, dbMemoryAttendees, setDbMemoryAttendees, dbMemoryMovieVerdicts, setDbMemoryMovieVerdicts, dbMemoryRestaurantVotes, setDbMemoryRestaurantVotes, dbMemoryMatchResults, setDbMemoryMatchResults, dbMemoryMvpVotes, setDbMemoryMvpVotes, dbMemoryBadmintonResults, setDbMemoryBadmintonResults, dbPlanTeamAssignments, setDbPlanTeamAssignments, joinPlan, waitlistPlan, passPlan } = usePlansStore();
   const { dbUsers, setDbUsers, setDbUserData, setDbFriendships, updateProfile, activeUserUuid } = useProfileStore();
   const { circles, setCircles, dbCircles, setDbCircles, dbCircleMembers, setDbCircleMembers } = useCirclesStore();
   const { walletBalance, setWalletBalance, transactions, setTransactions, dbTransactions, setDbTransactions, refreshTransactions } = useWalletStore();
@@ -112,6 +112,10 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   };
 
   React.useEffect(() => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(activeUserId)) {
+      return;
+    }
     async function syncData() {
       try {
         const res = await fetch("/api/db/fetch-all");
@@ -135,6 +139,7 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
             setDbMemoryMatchResults(d.memory_match_results || []);
             setDbMemoryMvpVotes(d.memory_mvp_votes || []);
             setDbMemoryBadmintonResults(d.memory_badminton_results || []);
+            setDbPlanTeamAssignments(d.plan_team_assignments || []);
             setPlans(mapPlansToLegacyPlans(d.plans || [], d.plan_participants || [], d.users || [], activeUserId, d.circles || []));
             
             // 3. Set circles context — only show circles where the current user is a member
@@ -149,7 +154,15 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
             const myCircles = allCircles.filter((c: any) => myCircleIds.includes(c.id));
             setDbCircles(allCircles);
             setDbCircleMembers(allCircleMembers);
-            setCircles(mapCirclesToLegacyCircles(myCircles, allCircleMembers, allDbUsers));
+
+            // Sync validation check: verify circles.created_by matches circle_members.role === 'host'
+            allCircles.forEach((circleObj: any) => {
+              const creatorUuid = circleObj.created_by;
+              const creatorMember = allCircleMembers.find((cm: any) => cm.circle_id === circleObj.id && cm.user_id === creatorUuid);
+              if (!creatorMember || creatorMember.role !== "host") {
+                console.warn(`[Sync Validation Warning] Circle "${circleObj.name}" (ID: ${circleObj.id}) creator (ID: ${creatorUuid}) does not have 'host' role in circle_members. (Found role: ${creatorMember?.role || 'none'})`);
+              }
+            });
             
             // 4. Set wallet context
             const fetchedTxs = d.transactions || [];
@@ -299,10 +312,46 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
 
     const allMembersList = [adminMemberObj, ...invitedMembers];
 
+    const tempCircleId = `__temp__${Date.now()}`;
+    const now = new Date().toISOString();
+
+    const tempDbCircle: DbCircle = {
+      circle_id: tempCircleId,
+      id: tempCircleId,
+      name,
+      description: description || "An active private circle for coordination.",
+      category: "custom",
+      created_by: meUuid,
+      cover_image: circleCover,
+      location_anchor: "Spontaneous",
+      privacy: "private",
+      created_at: now
+    } as any;
+
+    const tempDbCircleMembers: DbCircleMember[] = [
+      {
+        circle_member_id: `CM_temp_host_${Date.now()}`,
+        circle_id: tempCircleId,
+        user_id: meUuid,
+        role: "host",
+        joined_at: now
+      },
+      ...memberIds.map((shortId, idx) => {
+        const uObj = dbUsers.find(u => u.user_id === shortId);
+        const uUuid = uObj ? (uObj as any).id : shortId;
+        return {
+          circle_member_id: `CM_temp_member_${idx}_${Date.now()}`,
+          circle_id: tempCircleId,
+          user_id: uUuid,
+          role: "member" as const,
+          joined_at: now
+        };
+      })
+    ];
+
     // Persist to Supabase (async, non-blocking)
     const persistCircle = async () => {
       try {
-        const now = new Date().toISOString();
         const savedCircle = await insertCircle({
           circle_id: `c_${Date.now()}`,
           name,
@@ -325,7 +374,7 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
 
         // Build member rows using UUIDs
         const membersToInsert = [
-          { circle_id: circleUuid, user_id: meUuid, role: "admin" as const, joined_at: now },
+          { circle_id: circleUuid, user_id: meUuid, role: "host" as const, joined_at: now },
           ...memberIds.map(shortId => {
             const uObj = dbUsers.find(u => u.user_id === shortId);
             const uUuid = uObj ? (uObj as any).id : shortId;
@@ -341,48 +390,41 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
           await syncUserStats(m.user_id, "join_circle");
         }
 
-        // Optimistically update local state with real UUID for the circle
-        const newLegacyCircle: Circle = {
+        // Replace the temp circle in db states with real ones
+        const realDbCircle: DbCircle = {
+          circle_id: circleUuid,
           id: circleUuid,
-          dbUuid: circleUuid,
           name,
-          membersCount: allMembersList.length,
-          avatars: allMembersList.slice(0, 5).map(m => m.avatar),
-          groupImage: circleCover,
-          lastSpontaneousActivity: "Newly created circle",
-          description: description || "An active private circle for coordination.",
-          type: "Custom Group",
-          location: "Spontaneous",
-          format: "Chill crew",
-          playersOnField: allMembersList.length,
-          timeWindow: "Anytime",
-          membersList: allMembersList
-        };
-        // Replace the temp circle with the real one (identified by UUID)
-        setCircles(prev => [newLegacyCircle, ...prev.filter(c => c.id !== "__temp__" + name)]);
+          description: tempDbCircle.description,
+          category: tempDbCircle.category,
+          created_by: meUuid,
+          cover_image: circleCover,
+          location_anchor: tempDbCircle.location_anchor,
+          privacy: tempDbCircle.privacy,
+          created_at: now
+        } as any;
+
+        const realDbMembers: DbCircleMember[] = membersToInsert.map((m, idx) => ({
+          circle_member_id: `CM_real_${idx}_${Date.now()}`,
+          circle_id: circleUuid,
+          user_id: m.user_id,
+          role: m.role,
+          joined_at: m.joined_at
+        }));
+
+        setDbCircles(prev => [realDbCircle, ...prev.filter(c => c.circle_id !== tempCircleId && c.id !== tempCircleId)]);
+        setDbCircleMembers(prev => [
+          ...prev.filter(m => m.circle_id !== tempCircleId),
+          ...realDbMembers
+        ]);
       } catch (err) {
         console.error("[Circles] Failed to persist circle:", err);
       }
     };
 
-    // Show optimistic UI immediately with a temp entry
-    const tempCircle: Circle = {
-      id: "__temp__" + name,
-      dbUuid: undefined,
-      name,
-      membersCount: allMembersList.length,
-      avatars: allMembersList.slice(0, 5).map(m => m.avatar),
-      groupImage: circleCover,
-      lastSpontaneousActivity: "Newly created circle",
-      description: description || "An active private circle for coordination.",
-      type: "Custom Group",
-      location: "Spontaneous",
-      format: "Chill crew",
-      playersOnField: allMembersList.length,
-      timeWindow: "Anytime",
-      membersList: allMembersList
-    };
-    setCircles(prev => [tempCircle, ...prev]);
+    // Show optimistic UI immediately by setting db states
+    setDbCircles(prev => [tempDbCircle, ...prev]);
+    setDbCircleMembers(prev => [...prev, ...tempDbCircleMembers]);
 
     persistCircle();
 
@@ -477,141 +519,144 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
   };
 
   // Syncing countdown timers
-  const upcomingCirclePlans = plans.filter(p => !p.isHappened && p.status !== "cancelled");
+  const upcomingCirclePlans = React.useMemo(() => {
+    return plans.filter(p => !p.isHappened && p.status !== "cancelled");
+  }, [plans]);
 
   // Resolve current user's UUID
-  const meUserObj = dbUsers.find(u => u.user_id === activeUserId);
-  const meUuid = meUserObj ? (meUserObj as any).id : activeUserId;
+  const meUserObj = React.useMemo(() => {
+    return dbUsers.find(u => u.user_id === activeUserId);
+  }, [dbUsers, activeUserId]);
+
+  const meUuid = React.useMemo(() => {
+    return meUserObj ? (meUserObj as any).id : activeUserId;
+  }, [meUserObj, activeUserId]);
 
   // Filter plans based on visibility rules:
   // A plan is visible on Home strictly based on plan_participants record status.
-  const myParticipantRecords = dbPlanParticipants.filter(pp => pp.user_id === meUuid);
+  const myParticipantRecords = React.useMemo(() => {
+    return dbPlanParticipants.filter(pp => pp.user_id === meUuid);
+  }, [dbPlanParticipants, meUuid]);
 
-  console.log(`[Home Screen Data Source Audit]`);
-  console.log(`- Current User ID (Short): ${activeUserId}`);
-  console.log(`- Current User UUID: ${meUuid}`);
-  console.log(`- Participant records found:`, myParticipantRecords.map(pp => ({
-    plan_id: pp.plan_id,
-    user_id: pp.user_id,
-    status: pp.status
-  })));
+  const discoverablePlans = React.useMemo(() => {
+    return plans.filter(p => {
+      if (p.status === "cancelled") return false;
+      const planUuid = p.dbUuid || p.id;
+      const ppRecord = myParticipantRecords.find(pp => pp.plan_id === planUuid);
 
-  const discoverablePlans = plans.filter(p => {
-    if (p.status === "cancelled") return false;
-    const planUuid = p.dbUuid || p.id;
-    const ppRecord = myParticipantRecords.find(pp => pp.plan_id === planUuid);
-
-    if (!ppRecord) {
-      console.log(`[Home Screen Filter] Filtered out Plan ID: ${planUuid} ("${p.title}") - Reason: No participant record found for current user`);
-      return false;
-    }
-
-    const status = ppRecord.status;
-    const isIncluded = ["delivered", "seen", "new", "waitlist"].includes(status);
-
-    if (!isIncluded) {
-      console.log(`[Home Screen Filter] Filtered out Plan ID: ${planUuid} ("${p.title}") - Reason: status is "${status}" (not delivered/seen/new/waitlist - host excluded)`);
-      return false;
-    }
-
-    if (p.response_deadline_at) {
-      const deadline = new Date(p.response_deadline_at).getTime();
-      const now = new Date().getTime();
-      if (now > deadline) {
-        console.log(`[Home Screen Filter] Filtered out Plan ID: ${planUuid} ("${p.title}") - Reason: Deadline has passed (${p.response_deadline_at})`);
+      if (!ppRecord) {
         return false;
       }
-    }
 
-    console.log(`[Home Screen Filter] Plan returned to Home - Plan ID: ${planUuid} ("${p.title}")`);
-    return true;
-  });
+      const status = ppRecord.status;
+      const isIncluded = ["delivered", "seen", "new", "waitlist"].includes(status);
 
-  // Log visible plans
-  console.log(`[HomeScreen] plans returned to HomeScreen:`, discoverablePlans.map(p => ({ id: p.id, title: p.title })));
+      if (!isIncluded) {
+        return false;
+      }
 
-  const homeBadgeCount = discoverablePlans.length;
+      if (p.response_deadline_at) {
+        const deadline = new Date(p.response_deadline_at).getTime();
+        const now = new Date().getTime();
+        if (now > deadline) {
+          return false;
+        }
+      }
 
-  const pendingMemoryCount = dbMemories.filter(memory => {
-    const plan = plans.find(p => p.id === memory.plan_id || p.dbUuid === memory.plan_id);
-    if (!plan) return false;
-    const isHost = plan.hostId === "u_self" || plan.hostId === activeUserId || plan.hostId === activeUserUuid;
-    const attendees = dbMemoryAttendees.filter(a => a.memory_id === memory.id);
-    const verdicts = dbMemoryMovieVerdicts.filter(v => v.memory_id === memory.id);
-    const votes = dbMemoryRestaurantVotes.filter(v => v.memory_id === memory.id);
-    const results = dbMemoryMatchResults.filter(r => r.memory_id === memory.id);
-    const mvps = dbMemoryMvpVotes.filter(v => v.memory_id === memory.id);
-    const badmintons = dbMemoryBadmintonResults.filter(r => r.memory_id === memory.id);
-    const userId = activeUserUuid || activeUserId;
-    return hasOutstandingMemoryAction(
-      memory,
-      userId,
-      isHost,
-      attendees,
-      verdicts,
-      votes,
-      results,
-      mvps,
-      badmintons
-    );
-  }).length;
+      return true;
+    });
+  }, [plans, myParticipantRecords]);
 
-  const completedMemories = dbMemories.filter(memory => {
-    const plan = plans.find(p => p.id === memory.plan_id || p.dbUuid === memory.plan_id);
-    if (!plan) return false;
-    const userId = activeUserUuid || activeUserId;
-    return dbMemoryAttendees.some(a => a.memory_id === memory.id && a.user_id === userId);
-  }).map(memory => {
-    const plan = plans.find(p => p.id === memory.plan_id || p.dbUuid === memory.plan_id)!;
-    const userId = activeUserUuid || activeUserId;
-    const isHost = plan.hostId === "u_self" || plan.hostId === activeUserId || plan.hostId === activeUserUuid;
-    const attendees = dbMemoryAttendees.filter(a => a.memory_id === memory.id);
-    const verdicts = dbMemoryMovieVerdicts.filter(v => v.memory_id === memory.id);
-    const votes = dbMemoryRestaurantVotes.filter(v => v.memory_id === memory.id);
-    const results = dbMemoryMatchResults.filter(r => r.memory_id === memory.id);
-    const mvps = dbMemoryMvpVotes.filter(v => v.memory_id === memory.id);
-    const badmintons = dbMemoryBadmintonResults.filter(r => r.memory_id === memory.id);
+  const homeBadgeCount = React.useMemo(() => {
+    return discoverablePlans.length;
+  }, [discoverablePlans]);
 
-    const isPending = hasOutstandingMemoryAction(
-      memory,
-      userId,
-      isHost,
-      attendees,
-      verdicts,
-      votes,
-      results,
-      mvps,
-      badmintons
-    );
+  const pendingMemoryCount = React.useMemo(() => {
+    return dbMemories.filter(memory => {
+      const plan = plans.find(p => p.id === memory.plan_id || p.dbUuid === memory.plan_id);
+      if (!plan) return false;
+      const isHost = plan.hostId === activeUserUuid || plan.hostId === activeUserId || plan.creatorId === activeUserUuid || plan.creatorId === activeUserId;
+      const attendees = dbMemoryAttendees.filter(a => a.memory_id === memory.id);
+      const verdicts = dbMemoryMovieVerdicts.filter(v => v.memory_id === memory.id);
+      const votes = dbMemoryRestaurantVotes.filter(v => v.memory_id === memory.id);
+      const results = dbMemoryMatchResults.filter(r => r.memory_id === memory.id);
+      const mvps = dbMemoryMvpVotes.filter(v => v.memory_id === memory.id);
+      const badmintons = dbMemoryBadmintonResults.filter(r => r.memory_id === memory.id);
+      const userId = activeUserUuid || activeUserId;
+      return hasOutstandingMemoryAction(
+        memory,
+        userId,
+        isHost,
+        attendees,
+        verdicts,
+        votes,
+        results,
+        mvps,
+        badmintons
+      );
+    }).length;
+  }, [dbMemories, plans, activeUserId, activeUserUuid, dbMemoryAttendees, dbMemoryMovieVerdicts, dbMemoryRestaurantVotes, dbMemoryMatchResults, dbMemoryMvpVotes, dbMemoryBadmintonResults]);
 
-    let title = plan.title;
-    let subtitle = "";
-    const mType = (memory.memory_type || "").toLowerCase();
-    if (mType === "movie") {
-      subtitle = "✓ Memory Recorded";
-    } else if (mType === "dining") {
-      subtitle = "✓ Memory Recorded";
-    } else if (mType === "football") {
-      subtitle = "✓ Result Recorded";
-    } else if (mType === "badminton") {
-      subtitle = "✓ Results Recorded";
-    }
+  const completedMemories = React.useMemo(() => {
+    return dbMemories.filter(memory => {
+      const plan = plans.find(p => p.id === memory.plan_id || p.dbUuid === memory.plan_id);
+      if (!plan) return false;
+      const userId = activeUserUuid || activeUserId;
+      return dbMemoryAttendees.some(a => a.memory_id === memory.id && a.user_id === userId);
+    }).map(memory => {
+      const plan = plans.find(p => p.id === memory.plan_id || p.dbUuid === memory.plan_id)!;
+      const userId = activeUserUuid || activeUserId;
+      const isHost = plan.hostId === activeUserUuid || plan.hostId === activeUserId || plan.creatorId === activeUserUuid || plan.creatorId === activeUserId;
+      const attendees = dbMemoryAttendees.filter(a => a.memory_id === memory.id);
+      const verdicts = dbMemoryMovieVerdicts.filter(v => v.memory_id === memory.id);
+      const votes = dbMemoryRestaurantVotes.filter(v => v.memory_id === memory.id);
+      const results = dbMemoryMatchResults.filter(r => r.memory_id === memory.id);
+      const mvps = dbMemoryMvpVotes.filter(v => v.memory_id === memory.id);
+      const badmintons = dbMemoryBadmintonResults.filter(r => r.memory_id === memory.id);
 
-    return {
-      memory,
-      plan,
-      title,
-      subtitle,
-      isPending
-    };
-  });
+      const isPending = hasOutstandingMemoryAction(
+        memory,
+        userId,
+        isHost,
+        attendees,
+        verdicts,
+        votes,
+        results,
+        mvps,
+        badmintons
+      );
 
-  const filteredNotifications = notifications.filter(n => {
-    if (notificationFilter === "all") return true;
-    if (notificationFilter === "plans") return n.type === "general" || n.type === "invitation";
-    if (notificationFilter === "payments") return n.type === "payments" || n.type === "payment";
-    return false;
-  });
+      let title = plan.title;
+      let subtitle = "";
+      const mType = (memory.memory_type || "").toLowerCase();
+      if (mType === "movie") {
+        subtitle = "✓ Memory Recorded";
+      } else if (mType === "dining") {
+        subtitle = "✓ Memory Recorded";
+      } else if (mType === "football") {
+        subtitle = "✓ Result Recorded";
+      } else if (mType === "badminton") {
+        subtitle = "✓ Results Recorded";
+      }
+
+      return {
+        memory,
+        plan,
+        title,
+        subtitle,
+        isPending
+      };
+    });
+  }, [dbMemories, plans, activeUserId, activeUserUuid, dbMemoryAttendees, dbMemoryMovieVerdicts, dbMemoryRestaurantVotes, dbMemoryMatchResults, dbMemoryMvpVotes, dbMemoryBadmintonResults]);
+
+  const filteredNotifications = React.useMemo(() => {
+    return notifications.filter(n => {
+      if (notificationFilter === "all") return true;
+      if (notificationFilter === "plans") return n.type === "general" || n.type === "invitation";
+      if (notificationFilter === "payments") return n.type === "payments" || n.type === "payment";
+      return false;
+    });
+  }, [notifications, notificationFilter]);
 
   return (
     <div className="w-full h-full max-w-md mx-auto bg-[#0C0C0E] flex flex-col justify-between relative shadow-2xl overflow-hidden border border-zinc-900 select-none">
@@ -802,6 +847,17 @@ export default function MainApp({ userProfile, onLogout, activeUserId }: MainApp
           triggerToast={triggerToast}
           activeUserId={activeUserId}
           setSelectedMemoryPlan={setSelectedMemoryPlan}
+          onNavigateToCircle={(circleId) => {
+            const circleObj = dbCircles.find(c => c.circle_id === circleId || c.id === circleId);
+            if (circleObj) {
+              const legacyCircles = mapCirclesToLegacyCircles(dbCircles, dbCircleMembers, dbUsers);
+              const legacyCircle = legacyCircles.find(c => c.id === circleId || c.dbUuid === circleId);
+              if (legacyCircle) {
+                setSelectedCircle(legacyCircle);
+              }
+            }
+            setActiveTab("circles");
+          }}
         />
       )}
 

@@ -27,7 +27,7 @@ export const ProfileScreen = ({
   setShowDbExplorer,
   setShowDepositModal
 }: ProfileScreenProps) => {
-  const { userProfile, activeUserId, activeUserUuid, updateProfile } = useProfileStore();
+  const { userProfile, activeUserId, activeUserUuid, updateProfile, dbUsers } = useProfileStore();
   const {
     plans,
     dbMemories,
@@ -65,6 +65,103 @@ export const ProfileScreen = ({
     return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}&backgroundColor=ff8b66`;
   };
 
+  // Live Database Profile values
+  const currentUser = dbUsers.find(u => u.id === activeUserUuid || u.user_id === activeUserId);
+  const fullName = currentUser?.full_name || userProfile?.name || "";
+  const bioText = currentUser?.bio || userProfile?.bio || "";
+  const avatarUrl = currentUser?.profile_photo || userProfile?.avatar || "";
+  const finalAvatar = avatarUrl || getInitialsAvatar(fullName);
+
+  // Robust Plan Event Date Helper
+  const getPlanSortDate = (plan: any): Date => {
+    if (!plan) return new Date(0);
+    // 1. Try plan.datetime
+    if (plan.datetime) {
+      const d = new Date(plan.datetime);
+      if (!isNaN(d.getTime()) && d.getFullYear() > 2020) {
+        return d;
+      }
+    }
+    // 2. Try parsing plan.date
+    if (plan.date) {
+      if (plan.date === "TODAY") {
+        return new Date();
+      }
+      if (plan.date === "TOMORROW") {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        return tomorrow;
+      }
+      const d = new Date(plan.date);
+      if (!isNaN(d.getTime()) && d.getFullYear() > 2020) {
+        return d;
+      }
+    }
+    // 3. Fallback to plan.createdAt
+    if (plan.createdAt) {
+      const d = new Date(plan.createdAt);
+      if (!isNaN(d.getTime())) {
+        return d;
+      }
+    }
+    return new Date(0);
+  };
+
+  // Relative Date calculation helper
+  const getRelativeDateLabel = (dateInput: Date) => {
+    try {
+      if (isNaN(dateInput.getTime()) || dateInput.getFullYear() < 2020) {
+        return "Recent";
+      }
+      
+      const now = new Date();
+      // Reset hours to calculate true day difference
+      const d1 = new Date(dateInput.getFullYear(), dateInput.getMonth(), dateInput.getDate());
+      const d2 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      const diffTime = d2.getTime() - d1.getTime();
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays < 0) {
+        return "Recent";
+      }
+      if (diffDays === 0) {
+        return "Today";
+      }
+      if (diffDays === 1) {
+        return "Yesterday";
+      }
+      if (diffDays < 7) {
+        return `${diffDays} days ago`;
+      }
+      if (diffDays < 14) {
+        return "1 week ago";
+      }
+      const weeks = Math.floor(diffDays / 7);
+      return `${weeks} weeks ago`;
+    } catch {
+      return "Recent";
+    }
+  };
+
+  // Filter memories matching eligibility: memory_attendees.user_id === activeUserUuid
+  const userAttendeeRows = dbMemoryAttendees.filter(a => a.user_id === activeUserUuid);
+  const userMemoryIds = userAttendeeRows.map(a => a.memory_id);
+  const eligibleMemories = dbMemories.filter(mem => userMemoryIds.includes(mem.id));
+
+  // Sort memories by plans.datetime DESC (event date)
+  const sortedMemories = eligibleMemories
+    .map(mem => {
+      const plan = plans.find(p => p.id === mem.plan_id || p.dbUuid === mem.plan_id);
+      return { mem, plan };
+    })
+    .filter(item => !!item.plan)
+    .sort((a, b) => {
+      const timeA = getPlanSortDate(a.plan).getTime();
+      const timeB = getPlanSortDate(b.plan).getTime();
+      return timeB - timeA;
+    });
+
   if (!userProfile) return null;
 
   return (
@@ -73,77 +170,83 @@ export const ProfileScreen = ({
       {activeProfileSubView === "none" && (
         <div id="profile_view_regular" className="space-y-6">
           {/* Header Row */}
-          <div id="profile_header_row" className="flex items-center justify-between pb-2 border-b border-zinc-950">
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-brand-peach animate-pulse" />
-              <h2 className="text-xs font-display font-black text-white tracking-[0.2em] uppercase">
-                Profile Space
-              </h2>
-            </div>
+          <div id="profile_header_row" className="flex items-center justify-between pb-3 border-b border-zinc-900/40 relative">
+            <button
+              onClick={() => setActiveProfileSubView("none")}
+              className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-all cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <h2 className="text-xs font-display font-black text-white tracking-[0.3em] uppercase absolute left-1/2 -translate-x-1/2">
+              PLANLESS
+            </h2>
+            <div className="w-9 h-9" />
           </div>
 
-          {/* Profile Identity Card */}
-          <div id="profile_identity_card" className="bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-900 rounded-3xl p-5 space-y-4 relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-[#ff8b66]/5 rounded-full blur-xl pointer-events-none" />
-
-            <div className="flex items-start gap-4">
-              <div className="relative shrink-0">
+          {/* Profile Identity Card (Centered) */}
+          <div id="profile_identity_card" className="flex flex-col items-center text-center py-6 space-y-4 relative">
+            <div className="relative w-36 h-36">
+              <div className="w-full h-full rounded-full border-2 border-[#ff8b66] p-1.5 flex items-center justify-center">
                 <img
-                  src={userProfile.avatar}
-                  alt={userProfile.name}
-                  className="w-16 h-16 rounded-full border-2 border-zinc-800 object-cover"
+                  src={finalAvatar}
+                  alt={fullName}
+                  className="w-full h-full rounded-full object-cover"
                   referrerPolicy="no-referrer"
                 />
-                <span className="absolute bottom-0 right-0 w-4 h-4 bg-emerald-500 rounded-full border-2 border-zinc-900 flex items-center justify-center">
-                  <span className="w-1.5 h-1.5 rounded-full bg-white block" />
-                </span>
               </div>
-
-              <div className="space-y-1 min-w-0 flex-1 text-left">
-                <div className="flex items-center gap-1.5">
-                  <h1 className="text-base font-display font-black text-white leading-none truncate">
-                    {userProfile.name}
-                  </h1>
-                  <span className="text-[7.5px] uppercase tracking-wide font-mono bg-brand-orange/15 text-brand-peach px-1.5 py-0.5 rounded border border-brand-orange/20 select-none">
-                    PRO
-                  </span>
-                </div>
-
-                <span className="text-[10px] font-mono text-zinc-500 block">
-                  @{userProfile.name.toLowerCase().replace(/\s+/g, "") || "thilak_sundar"}
-                </span>
-
-                {userProfile.college_or_work && (
-                  <div className="inline-flex items-center gap-1 bg-zinc-950 px-2 py-0.5 rounded-full border border-zinc-90 w-fit">
-                    <span className="text-[8px] text-zinc-400 font-sans">🎓 {userProfile.college_or_work}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {userProfile.bio && (
-              <p className="text-xs text-zinc-350 leading-relaxed font-sans font-light text-left">
-                {userProfile.bio}
-              </p>
-            )}
-
-            {/* Actions Bar */}
-            <div className="flex gap-2.5 pt-1">
-              <button
-                id="edit_profile_trigger_btn"
-                onClick={() => {
-                  setEditProfileName(userProfile.name);
-                  setEditProfileBio(userProfile.bio || "");
-                  setEditProfileCollege(userProfile.college_or_work || "");
-                  setEditProfileAvatar(userProfile.avatar || "");
-                  setIsEditingProfile(true);
-                }}
-                className="w-full py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 text-zinc-200 font-sans text-xs font-semibold tracking-wide transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              <label
+                className="absolute bottom-1 right-1 w-9 h-9 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center cursor-pointer shadow-lg hover:border-zinc-700 transition-colors"
+                title="Change Avatar"
               >
-                <UserIcon className="w-3.5 h-3.5" />
-                <span>Edit Profile</span>
-              </button>
+                <Camera className="w-4 h-4 text-zinc-400" />
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        if (typeof reader.result === "string") {
+                          updateProfile({
+                            ...userProfile,
+                            avatar: reader.result
+                          } as any);
+                          triggerToast("✓ Profile avatar updated!");
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+              </label>
             </div>
+
+            <div className="space-y-1.5">
+              <h1 className="text-xl font-display font-black text-white tracking-wide">
+                {fullName}
+              </h1>
+              {bioText && (
+                <p className="text-xs text-zinc-450 leading-relaxed font-sans font-medium max-w-xs mx-auto">
+                  {bioText}
+                </p>
+              )}
+            </div>
+
+            <button
+              id="edit_profile_trigger_btn"
+              onClick={() => {
+                setEditProfileName(userProfile.name);
+                setEditProfileBio(userProfile.bio || "");
+                setEditProfileCollege(userProfile.college_or_work || "");
+                setEditProfileAvatar(userProfile.avatar || "");
+                setIsEditingProfile(true);
+              }}
+              className="px-6 py-2 rounded-full border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/40 text-[10px] font-mono tracking-widest text-zinc-300 hover:text-white uppercase transition-colors"
+            >
+              EDIT PROFILE
+            </button>
           </div>
 
           {/* Inline Profile Edit View Card */}
@@ -267,198 +370,92 @@ export const ProfileScreen = ({
             </form>
           )}
 
-          {/* SECTION 1 – STATS */}
-          <div id="profile_stats_grid" className="grid grid-cols-4 gap-2.5">
-            <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
-              <h3 className="text-base font-display font-black text-white leading-none">27</h3>
-              <p className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Hosted</p>
-            </div>
-            <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
-              <h3 className="text-base font-display font-black text-white leading-none">84</h3>
-              <p className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Attended</p>
-            </div>
-            <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
-              <h3 className="text-base font-display font-black text-white leading-none">12</h3>
-              <p className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Circles</p>
-            </div>
-            <div className="bg-zinc-900/60 border border-zinc-900/80 rounded-2xl p-3 text-center space-y-1">
-              <h3 className="text-base font-display font-black text-white leading-none">31</h3>
-              <p className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Memories</p>
-            </div>
-          </div>
-
-          {/* SECTION 2 – UPCOMING PLANS */}
-          <div id="upcoming_plans_segment" className="space-y-2.5 text-left">
-            <div className="flex items-center justify-between px-1">
-              <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
-                Upcoming Plans
-              </h4>
-            </div>
-
-            {plans.filter(p => !p.isHappened && p.status !== "cancelled" && p.joinedUsers.some(u => u.name === userProfile.name)).length === 0 ? (
-              <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-5 text-center text-zinc-500 text-xs font-sans">
-                No upcoming plans scheduled.
-              </div>
-            ) : (
-              <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1 snap-x">
-                {plans.filter(p => !p.isHappened && p.status !== "cancelled" && p.joinedUsers.some(u => u.name === userProfile.name)).map(p => (
-                  <div
-                    key={p.id}
-                    onClick={() => setSelectedPlan(p)}
-                    className="bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 rounded-2xl w-[140px] shrink-0 p-2.5 text-left snap-start cursor-pointer transition-colors space-y-2 select-none"
-                  >
-                    <div className="h-20 rounded-xl overflow-hidden relative">
-                      <img
-                        src={p.coverImage}
-                        alt={p.title}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                      {p.isLive && (
-                        <div className="absolute top-1 right-1 bg-red-600 text-[6.5px] font-mono font-black text-white px-1.5 py-0.5 rounded tracking-wider uppercase animate-pulse">
-                          LIVE
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <h5 className="text-[10px] font-display font-black text-zinc-200 truncate leading-snug">
-                        {p.title}
-                      </h5>
-                      <p className="text-[8px] font-sans text-zinc-400 truncate mt-0.5">
-                        📅 {p.date} • {p.time || "18:00"}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* SECTION 3 – RECENT MEMORIES */}
-          <div id="recent_memories_segment" className="space-y-3 text-left">
-            <div className="flex items-center justify-between px-1">
-              <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
+          {/* RECENT MEMORIES TIMELINE */}
+          <div id="recent_memories_timeline" className="space-y-4 text-left">
+            <div className="flex items-center justify-between px-1 border-b border-zinc-900 pb-2">
+              <h4 className="text-[10px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-semibold">
                 Recent Memories
               </h4>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { title: "Interstellar", category: "movie", verdict: "Loved It", icon: "🎬" },
-                { title: "Toscano", category: "dining", verdict: "Would Return", icon: "🍽️" },
-                { title: "Sunday Match", category: "football", verdict: "MVP Voted", icon: "⚽" },
-                { title: "Badminton Night", category: "badminton", verdict: "4W • 2L", icon: "🏸" }
-              ].map((mem, idx) => (
-                <div
-                  key={idx}
-                  className="bg-zinc-900/60 border border-zinc-900 rounded-2xl p-3.5 space-y-1.5 hover:border-zinc-800 transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-lg">{mem.icon}</span>
-                    <span className="text-[7.5px] font-mono text-zinc-500 uppercase tracking-wider">{mem.category}</span>
-                  </div>
-                  <div>
-                    <h5 className="text-[11px] font-display font-black text-zinc-200 truncate">
-                      {mem.title}
-                    </h5>
-                    <p className="text-[9.5px] font-mono text-brand-peach font-bold mt-0.5">
-                      {mem.verdict}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
 
-          {/* SECTION 4 – SPORTS SUMMARY */}
-          <div id="sports_summary_segment" className="space-y-3 text-left">
-            <div className="flex items-center justify-between px-1">
-              <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
-                Sports
-              </h4>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {/* Football Card */}
-              <div className="bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-900 rounded-2xl p-3.5 space-y-2 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-12 h-12 bg-emerald-500/5 rounded-full blur-lg pointer-events-none" />
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm">⚽</span>
-                  <h5 className="text-[10px] font-display font-black text-white uppercase tracking-wider">Football</h5>
+            <div className="space-y-2">
+              {sortedMemories.length === 0 ? (
+                <div className="bg-zinc-900/10 border border-zinc-900/30 border-dashed rounded-2xl p-6 text-center space-y-1">
+                  <p className="text-xs font-semibold text-zinc-400">No memories yet</p>
+                  <p className="text-[10px] text-zinc-550 font-sans leading-relaxed">
+                    Complete plans to build your memory timeline.
+                  </p>
                 </div>
-                <div className="space-y-1 font-mono">
-                  <div className="flex justify-between items-center text-[9px]">
-                    <span className="text-zinc-500">Matches Played</span>
-                    <span className="text-zinc-200 font-bold">12 Matches</span>
-                  </div>
-                  <div className="flex justify-between items-center text-[9px]">
-                    <span className="text-zinc-500">MVP Awards</span>
-                    <span className="text-brand-peach font-bold">3 MVPs</span>
-                  </div>
-                </div>
-              </div>
+              ) : (
+                sortedMemories.map(({ mem, plan }) => {
+                  const memType = (mem.memory_type || "").toLowerCase();
+                  let icon = "⚡";
+                  let verdictLabel = "Memory Recorded";
+                  
+                  if (memType === "movie") {
+                    icon = "🎬";
+                    const verdictRow = dbMemoryMovieVerdicts.find(
+                      v => v.memory_id === mem.id && v.user_id === activeUserUuid
+                    );
+                    if (verdictRow) {
+                      if (verdictRow.verdict === "loved_it") verdictLabel = "Loved It";
+                      else if (verdictRow.verdict === "good") verdictLabel = "Good";
+                      else if (verdictRow.verdict === "not_for_me") verdictLabel = "Not For Me";
+                    }
+                  } else if (memType === "dining") {
+                    icon = "🍽️";
+                    const voteRow = dbMemoryRestaurantVotes.find(
+                      v => v.memory_id === mem.id && v.user_id === activeUserUuid
+                    );
+                    if (voteRow) {
+                      if (voteRow.vote === "yes") verdictLabel = "Would Return";
+                      else if (voteRow.vote === "maybe") verdictLabel = "Maybe";
+                      else if (voteRow.vote === "no") verdictLabel = "No";
+                    }
+                  } else if (memType === "football") {
+                    icon = "⚽";
+                    verdictLabel = "Result Recorded";
+                  } else if (memType === "badminton") {
+                    icon = "🏸";
+                    const badmintonRow = dbMemoryBadmintonResults.find(
+                      r => r.memory_id === mem.id && r.user_id === activeUserUuid
+                    );
+                    if (badmintonRow) {
+                      verdictLabel = `${badmintonRow.wins}W • ${badmintonRow.losses}L`;
+                    } else {
+                      verdictLabel = "0W • 0L";
+                    }
+                  }
 
-              {/* Badminton Card */}
-              <div className="bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-900 rounded-2xl p-3.5 space-y-2 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-12 h-12 bg-sky-500/5 rounded-full blur-lg pointer-events-none" />
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm">🏸</span>
-                  <h5 className="text-[10px] font-display font-black text-white uppercase tracking-wider">Badminton</h5>
-                </div>
-                <div className="space-y-1 font-mono">
-                  <div className="flex justify-between items-center text-[9px]">
-                    <span className="text-zinc-500">Wins / Losses</span>
-                    <span className="text-zinc-200 font-bold">42W • 18L</span>
-                  </div>
-                  <div className="flex justify-between items-center text-[9px]">
-                    <span className="text-zinc-500">MVP Awards</span>
-                    <span className="text-brand-peach font-bold">7 MVPs</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* SECTION 5 – YOUR CIRCLES */}
-          <div id="your_circles_segment" className="space-y-3 text-left">
-            <div className="flex items-center justify-between px-1">
-              <h4 className="text-[9px] font-mono text-zinc-400 uppercase tracking-[0.2em] font-bold">
-                Your Circles
-              </h4>
-              <span className="text-[8.5px] font-mono text-zinc-600">
-                {circles.filter(c => c.membersList?.some((m: any) => m.name === userProfile.name)).length} Joined
-              </span>
-            </div>
-
-            {circles.filter(c => c.membersList?.some((m: any) => m.name === userProfile.name)).length === 0 ? (
-              <div className="bg-zinc-900/30 border border-zinc-900 border-dashed rounded-2xl p-5 text-center text-zinc-500 text-xs font-sans">
-                You haven't joined any circles yet.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-2.5">
-                {circles.filter(c => c.membersList?.some((m: any) => m.name === userProfile.name)).map((circle: any) => {
-                  const circleActivePlans = plans.filter((p: any) => p.circleId === circle.id && !p.isHappened && p.status !== "cancelled");
                   return (
-                    <div key={circle.id} className="bg-zinc-900/40 border border-zinc-900 rounded-2xl p-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={circle.groupImage || circle.avatars?.[0] || "https://images.unsplash.com/photo-1543351611-58f69d7c1781?auto=format&fit=crop&q=80&w=200"}
-                          className="w-8 h-8 rounded-xl object-cover border border-zinc-800"
-                          alt={circle.name}
-                        />
-                        <div>
-                          <h4 className="text-xs font-semibold text-zinc-200 uppercase tracking-wide">{circle.name}</h4>
-                          <p className="text-[9px] text-zinc-500 mt-0.5">
-                            {circleActivePlans.length > 0 ? `🔥 Next: ${circleActivePlans[0].title}` : "No active plans"}
+                    <div
+                      key={mem.id}
+                      onClick={() => {
+                        if (plan) {
+                          setSelectedMemoryPlan(plan);
+                        }
+                      }}
+                      className="bg-zinc-900/30 border border-zinc-900/40 hover:border-zinc-800/80 rounded-xl py-2.5 px-3.5 flex items-center justify-between transition-all duration-200 cursor-pointer hover:bg-zinc-900/50 active:scale-[0.985]"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-base shrink-0">{icon}</span>
+                        <div className="min-w-0">
+                          <h5 className="text-[11px] font-display font-black text-zinc-200 tracking-wide uppercase leading-none">
+                            {plan?.title || "Meetup"}
+                          </h5>
+                          <p className="text-[9.5px] font-mono text-brand-peach mt-1.5 font-bold leading-none">
+                            {verdictLabel}
                           </p>
                         </div>
                       </div>
-                      <span className="text-[9px] font-mono text-[#ff8b66] font-bold bg-[#ff8b66]/10 px-2.5 py-0.5 rounded border border-[#ff8b66]/15">
-                        {circleActivePlans.length} Active
+                      <span className="text-[8.5px] font-mono text-zinc-500/75 shrink-0 select-none">
+                        {getRelativeDateLabel(getPlanSortDate(plan))}
                       </span>
                     </div>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
+            </div>
           </div>
 
           {/* SECTION 6 – SETTINGS OPTIONS AT THE BOTTOM */}
