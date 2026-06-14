@@ -214,9 +214,40 @@ export interface DbSnapshot {
 // FETCH  — load everything the current user needs
 // ─────────────────────────────────────────────
 
+function getAuthHeader(): Record<string, string> {
+  if (typeof window === "undefined" || !window.localStorage) return {};
+  
+  const query = new URLSearchParams(window.location.search);
+  const sessionKey = query.get("session") || query.get("user") || "default";
+  const localStorageKey = `planless_active_user_${sessionKey}`;
+  
+  let saved = localStorage.getItem(localStorageKey);
+  if (!saved) {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("planless_active_user_")) {
+        saved = localStorage.getItem(key);
+        if (saved) break;
+      }
+    }
+  }
+
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.token) {
+        return { "Authorization": `Bearer ${parsed.token}` };
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  return {};
+}
+
 export async function fetchSnapshot(): Promise<DbSnapshot | null> {
   try {
-    const res = await fetch("/api/db/fetch-all");
+    const res = await fetch("/api/db/fetch-all", { headers: getAuthHeader() });
     if (!res.ok) return null;
     const json = await res.json();
     if (!json.configured || json.tables_missing) return null;
@@ -264,7 +295,7 @@ async function upsert(table: string, records: any[]): Promise<any[] | null> {
   try {
     const res = await fetch("/api/db/upsert", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeader() },
       body: JSON.stringify({ table, records }),
     });
     if (!res.ok) {
@@ -362,7 +393,7 @@ async function generateCircleFriendships(insertedMembers: DbCircleMember[]): Pro
     if (circleIds.length === 0) return;
 
     // Fetch latest snapshot to get all current circle members and existing friendships
-    const freshRes = await fetch("/api/db/fetch-all");
+    const freshRes = await fetch("/api/db/fetch-all", { headers: getAuthHeader() });
     if (!freshRes.ok) return;
     const json = await freshRes.json();
     const allMembers: DbCircleMember[] = json.data?.circle_members || [];
@@ -443,7 +474,7 @@ export async function syncUserStats(
 ): Promise<any> {
   try {
     // 1. Fetch current user_stats row
-    const res = await fetch("/api/db/fetch-all");
+    const res = await fetch("/api/db/fetch-all", { headers: getAuthHeader() });
     if (!res.ok) return null;
     const json = await res.json();
     const statsList = (json.data?.user_stats || []) as DbUserStats[];
@@ -560,7 +591,7 @@ export async function deleteParticipant(planUuid: string, userUuid: string): Pro
   try {
     const res = await fetch("/api/db/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeader() },
       body: JSON.stringify(payload)
     });
     console.log("[TRACE deleteParticipant] HTTP status:", res.status, "ok:", res.ok);
@@ -588,7 +619,7 @@ export async function deleteCircleMember(circleUuid: string, userUuid: string): 
   try {
     const res = await fetch("/api/db/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeader() },
       body: JSON.stringify({
         table: "circle_members",
         match: { circle_id: circleUuid, user_id: userUuid }
@@ -619,7 +650,7 @@ export interface DbPlanTeamAssignment {
  */
 export async function getPlanTeamAssignments(planUuid: string): Promise<DbPlanTeamAssignment[]> {
   try {
-    const res = await fetch(`/api/db/team-assignments?plan_id=${encodeURIComponent(planUuid)}`);
+    const res = await fetch(`/api/db/team-assignments?plan_id=${encodeURIComponent(planUuid)}`, { headers: getAuthHeader() });
     if (!res.ok) return [];
     const json = await res.json();
     return json.data || [];
@@ -665,7 +696,7 @@ export async function removePlanTeamAssignment(
   try {
     const res = await fetch("/api/db/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeader() },
       body: JSON.stringify({
         table: "plan_team_assignments",
         match: { plan_id: planUuid, user_id: userUuid }
@@ -686,7 +717,7 @@ export async function deleteAllPlanTeamAssignments(planUuid: string): Promise<bo
   try {
     const res = await fetch("/api/db/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeader() },
       body: JSON.stringify({
         table: "plan_team_assignments",
         match: { plan_id: planUuid }

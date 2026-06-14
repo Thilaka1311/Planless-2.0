@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { getSupabaseClient } from "../server";
+import { authMiddleware, AuthenticatedRequest } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/fetch-all", async (req, res) => {
+router.get("/fetch-all", authMiddleware, async (req: AuthenticatedRequest, res) => {
   try {
     const client = getSupabaseClient();
     if (!client) {
@@ -97,7 +98,7 @@ const isUuid = (val: any) => typeof val === "string" && uuidRegex.test(val);
 
 // GET /api/db/team-assignments?plan_id=<uuid>
 // Returns all team assignments for the given plan.
-router.get("/team-assignments", async (req, res) => {
+router.get("/team-assignments", authMiddleware, async (req: AuthenticatedRequest, res) => {
   try {
     const planId = req.query.plan_id as string | undefined;
     if (!planId) {
@@ -126,13 +127,10 @@ router.get("/team-assignments", async (req, res) => {
 
 // GET /api/chat/messages
 // Fetches circle messages or plan thread messages with authorization guards
-router.get("/chat/messages", async (req, res) => {
+router.get("/chat/messages", authMiddleware, async (req: AuthenticatedRequest, res) => {
   try {
-    const { circle_id, plan_id, parent_id, user_id } = req.query as Record<string, string | undefined>;
-    if (!user_id) {
-      res.status(400).json({ error: "Missing user_id parameter for authorization." });
-      return;
-    }
+    const { circle_id, plan_id, parent_id } = req.query as Record<string, string | undefined>;
+    const userId = req.user!.id;
 
     const client = getSupabaseClient();
     if (!client) {
@@ -154,7 +152,7 @@ router.get("/chat/messages", async (req, res) => {
         return;
       }
 
-      const isHost = plan.host_id === user_id;
+      const isHost = plan.host_id === userId;
       let isParticipant = false;
 
       if (!isHost) {
@@ -162,7 +160,7 @@ router.get("/chat/messages", async (req, res) => {
           .from("plan_participants")
           .select("status")
           .eq("plan_id", plan_id)
-          .eq("user_id", user_id)
+          .eq("user_id", userId)
           .single();
 
         if (participation && ["going", "accepted", "waitlist", "host"].includes(participation.status)) {
@@ -200,7 +198,7 @@ router.get("/chat/messages", async (req, res) => {
         .from("circle_members")
         .select("id")
         .eq("circle_id", circle_id)
-        .eq("user_id", user_id)
+        .eq("user_id", userId)
         .single();
 
       if (!member) {
@@ -236,7 +234,7 @@ router.get("/chat/messages", async (req, res) => {
 });
 
 
-router.post("/upsert", async (req, res) => {
+router.post("/upsert", authMiddleware, async (req: AuthenticatedRequest, res) => {
   try {
     const { table, records } = req.body;
     if (!table || !records || !Array.isArray(records)) {
@@ -286,16 +284,63 @@ router.post("/upsert", async (req, res) => {
       return;
     }
 
+    // Phase 9A High-Risk Checks
+    if (table === "plans") {
+      for (const rec of records) {
+        if (rec.id) {
+          const { data: currentPlan } = await client
+            .from("plans")
+            .select("host_id, created_by")
+            .eq("id", rec.id)
+            .single();
+
+          if (currentPlan) {
+            const currentHost = currentPlan.host_id || currentPlan.created_by;
+            if (currentHost !== req.user!.id) {
+              res.status(403).json({ error: "Forbidden. Only the host can modify this plan." });
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    if (table === "circle_members") {
+      for (const rec of records) {
+        if (rec.id && rec.role === "co_host") {
+          const { data: currentMember } = await client
+            .from("circle_members")
+            .select("circle_id")
+            .eq("id", rec.id)
+            .single();
+
+          if (currentMember) {
+            const { data: circle } = await client
+              .from("circles")
+              .select("created_by")
+              .eq("id", currentMember.circle_id)
+              .single();
+
+            if (circle && circle.created_by !== req.user!.id) {
+              res.status(403).json({ error: "Forbidden. Only the Circle Host can promote co-hosts." });
+              return;
+            }
+          }
+        }
+      }
+    }
+
     // Guard: circle_messages validation (membership & waitlist checks)
     if (table === "circle_messages") {
       for (const rec of records) {
-        if (!rec.circle_id || !rec.sender_id) {
-          // Allow system messages (NULL sender_id) if circle_id is set
-          if (!rec.circle_id) {
-            res.status(400).json({ error: "Missing circle_id for message." });
-            return;
-          }
-          continue;
+        // Enforce Phase 9A Chat Security
+        rec.sender_id = req.user!.id;
+        rec.message_type = "user";
+        rec.system_actor_id = null;
+
+        if (!rec.circle_id) {
+          res.status(400).json({ error: "Missing circle_id for message." });
+          return;
         }
 
         // Verify circle membership
@@ -616,7 +661,7 @@ router.post("/upsert", async (req, res) => {
   }
 });
 
-router.post("/delete", async (req, res) => {
+router.post("/delete", authMiddleware, async (req: AuthenticatedRequest, res) => {
   try {
     const { table, match } = req.body;
     console.log("[TRACE /api/db/delete] Incoming body:", JSON.stringify(req.body, null, 2));
@@ -630,6 +675,99 @@ router.post("/delete", async (req, res) => {
     if (!client) {
       res.status(503).json({ error: "Supabase client key or endpoint is not initialized." });
       return;
+    }
+
+    // Phase 9A Delete Security Checks
+    if (table === "plan_participants") {
+      const planId = match.plan_id;
+      if (!planId) {
+        res.status(400).json({ error: "Missing plan_id in deletion match criteria." });
+        return;
+      }
+      
+      const { data: plan } = await client
+        .from("plans")
+        .select("host_id, created_by")
+        .eq("id", planId)
+        .single();
+
+      if (!plan) {
+        res.status(404).json({ error: "Plan not found." });
+        return;
+      }
+
+      const planHost = plan.host_id || plan.created_by;
+      if (planHost !== req.user!.id) {
+        res.status(403).json({ error: "Forbidden. Only the host can remove participants." });
+        return;
+      }
+    }
+
+    if (table === "circles") {
+      const circleId = match.id || match.circle_id;
+      if (!circleId) {
+        res.status(400).json({ error: "Missing circle ID in deletion match criteria." });
+        return;
+      }
+
+      const { data: circle } = await client
+        .from("circles")
+        .select("created_by")
+        .eq("id", circleId)
+        .single();
+
+      if (!circle) {
+        res.status(404).json({ error: "Circle not found." });
+        return;
+      }
+
+      if (circle.created_by !== req.user!.id) {
+        res.status(403).json({ error: "Forbidden. Only the Circle Host can delete this circle." });
+        return;
+      }
+    }
+
+    if (table === "circle_members") {
+      const circleId = match.circle_id;
+      const targetUserId = match.user_id;
+
+      if (!circleId || !targetUserId) {
+        res.status(400).json({ error: "Missing circle_id or user_id in deletion match criteria." });
+        return;
+      }
+
+      // Allow self-removal (leaving circle)
+      if (targetUserId !== req.user!.id) {
+        const { data: actorMember } = await client
+          .from("circle_members")
+          .select("role")
+          .eq("circle_id", circleId)
+          .eq("user_id", req.user!.id)
+          .single();
+
+        if (!actorMember || (actorMember.role !== "host" && actorMember.role !== "co_host")) {
+          res.status(403).json({ error: "Forbidden. Only Hosts or Co-hosts can remove members." });
+          return;
+        }
+
+        const { data: targetMember } = await client
+          .from("circle_members")
+          .select("role")
+          .eq("circle_id", circleId)
+          .eq("user_id", targetUserId)
+          .single();
+
+        if (targetMember) {
+          if (targetMember.role === "host") {
+            res.status(403).json({ error: "Forbidden. Circle Host cannot be removed." });
+            return;
+          }
+          if (actorMember.role === "co_host" && targetMember.role === "co_host") {
+            res.status(403).json({ error: "Forbidden. Co-hosts cannot remove other Co-hosts." });
+            return;
+          }
+        }
+      }
     }
 
     console.log(`[TRACE /api/db/delete] table="${table}"  match=${JSON.stringify(match)}`);
@@ -667,6 +805,10 @@ router.post("/delete", async (req, res) => {
 
 router.post("/reset", async (req, res) => {
   try {
+    if (process.env.NODE_ENV !== "development") {
+      res.status(403).json({ error: "Development only" });
+      return;
+    }
     const client = getSupabaseClient();
     if (!client) {
       res.json({ success: true, message: "No Supabase client configured. Local reset only." });
@@ -692,6 +834,10 @@ router.post("/reset", async (req, res) => {
 
 router.post("/delete-users", async (req, res) => {
   try {
+    if (process.env.NODE_ENV !== "development") {
+      res.status(403).json({ error: "Development only" });
+      return;
+    }
     const client = getSupabaseClient();
     if (!client) {
       res.status(503).json({ error: "Supabase client not configured." });

@@ -106,6 +106,7 @@ function AppContent({
               college_or_work: user.college_or_work || "SRM Chennai",
               user_id: user.user_id,
               dbUuid: user.id,
+              token: result.token,
             };
             setUserProfile(updatedProfile);
             localStorage.setItem(localStorageKey, JSON.stringify(updatedProfile));

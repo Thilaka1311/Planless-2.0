@@ -1,6 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { getSupabaseClient, hashPassword, normalizePhone, findUserByPhone } from "../server";
+import { generateToken } from "../middleware/auth";
 
 const router = Router();
 
@@ -113,7 +114,8 @@ router.post("/signup", async (req, res) => {
       console.warn("[Auth Signup] Failed to initialize user_data:", dataError.message);
     }
 
-    res.json({ success: true, user: data[0] });
+    const token = generateToken(data[0].id);
+    res.json({ success: true, user: data[0], token });
   } catch (err: any) {
     console.error("[Auth Signup Exception]", err);
     res.status(500).json({ error: err.message || "Signup failed." });
@@ -151,7 +153,8 @@ router.post("/login", async (req, res) => {
       return;
     }
 
-    res.json({ success: true, user });
+    const token = generateToken(user.id);
+    res.json({ success: true, user, token });
   } catch (err: any) {
     console.error("[Auth Login Exception]", err);
     res.status(500).json({ error: err.message || "Login failed." });
@@ -188,7 +191,8 @@ router.post("/login-or-signup", async (req, res) => {
           user.full_name = updatedName;
         }
       }
-      res.json({ success: true, user, isNew: false });
+      const token = generateToken(user.id);
+      res.json({ success: true, user, isNew: false, token });
       return;
     }
 
@@ -261,7 +265,8 @@ router.post("/login-or-signup", async (req, res) => {
       console.warn("[Auth login-or-signup] Failed to initialize user_data:", dataError.message);
     }
 
-    res.json({ success: true, user: data[0], isNew: true });
+    const token = generateToken(data[0].id);
+    res.json({ success: true, user: data[0], isNew: true, token });
   } catch (err: any) {
     console.error("[Auth login-or-signup Exception]", err);
     res.status(500).json({ error: err.message || "Authentication failed." });

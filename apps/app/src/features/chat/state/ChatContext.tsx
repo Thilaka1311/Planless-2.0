@@ -2,6 +2,37 @@ import React, { createContext, useContext, useState, ReactNode, useEffect, useRe
 import { ChatMessage, DbCircleMessage } from "../../../core/types";
 import { supabase } from "../../../lib/supabaseClient";
 
+function getAuthHeader(): Record<string, string> {
+  if (typeof window === "undefined" || !window.localStorage) return {};
+  
+  const query = new URLSearchParams(window.location.search);
+  const sessionKey = query.get("session") || query.get("user") || "default";
+  const localStorageKey = `planless_active_user_${sessionKey}`;
+  
+  let saved = localStorage.getItem(localStorageKey);
+  if (!saved) {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("planless_active_user_")) {
+        saved = localStorage.getItem(key);
+        if (saved) break;
+      }
+    }
+  }
+
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.token) {
+        return { "Authorization": `Bearer ${parsed.token}` };
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  return {};
+}
+
 interface ChatState {
   activeCircleId: string | null;
   activePlanId: string | null;
@@ -65,7 +96,7 @@ export const ChatProvider = ({
         url += `&circle_id=${circleId}`;
       }
 
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: getAuthHeader() });
       if (!res.ok) {
         console.warn("[ChatContext] Failed to load messages. Server returned status:", res.status);
         return;
@@ -139,7 +170,7 @@ export const ChatProvider = ({
   const loadAllCircleMessages = useCallback(async () => {
     if (!activeCircleId) return;
     try {
-      const res = await fetch(`/api/db/chat/messages?circle_id=${activeCircleId}&user_id=${userId}`);
+      const res = await fetch(`/api/db/chat/messages?circle_id=${activeCircleId}&user_id=${userId}`, { headers: getAuthHeader() });
       if (res.ok) {
         const json = await res.json();
         const raw = json.data || [];
@@ -284,7 +315,7 @@ export const ChatProvider = ({
             let senderProfile = null;
             if (raw.sender_id) {
               try {
-                const res = await fetch(`/api/db/fetch-all?tables=users`);
+                const res = await fetch(`/api/db/fetch-all?tables=users`, { headers: getAuthHeader() });
                 if (res.ok) {
                   const json = await res.json();
                   const list = json.data?.users || [];
@@ -305,7 +336,7 @@ export const ChatProvider = ({
             let systemActorProfile = null;
             if (raw.system_actor_id) {
               try {
-                const res = await fetch(`/api/db/fetch-all?tables=users`);
+                const res = await fetch(`/api/db/fetch-all?tables=users`, { headers: getAuthHeader() });
                 if (res.ok) {
                   const json = await res.json();
                   const list = json.data?.users || [];
@@ -526,7 +557,7 @@ export const ChatProvider = ({
     try {
       const res = await fetch("/api/db/upsert", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
         body: JSON.stringify({ table: "circle_messages", records: [payload] })
       });
 

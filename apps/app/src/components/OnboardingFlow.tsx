@@ -76,7 +76,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
       const user = result.user;
       if (result.isNew) {
-        setTempUser(user);
+        setTempUser({ ...user, token: result.token });
         setProfileName(user.full_name || profileName);
         setBio(user.bio || "Always planning the next move.");
         setAvatar(user.profile_photo || getInitialsAvatar(user.full_name || profileName));
@@ -91,6 +91,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           college_or_work: user.college_or_work || "SRM Chennai",
           user_id: user.user_id,
           dbUuid: user.id,
+          token: result.token,
         });
       }
     } catch (err) {
@@ -146,6 +147,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         college_or_work: tempUser.college_or_work || "SRM Chennai",
         user_id: tempUser.user_id,
         dbUuid: tempUser.id,
+        token: tempUser.token,
       });
     } catch (err) {
       console.warn("[Onboarding] Failed to save profile:", err);
